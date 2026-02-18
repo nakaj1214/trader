@@ -13,6 +13,37 @@
 
 ---
 
+## フレームワーク選定: Laravel vs 静的サイト
+
+将来の拡張性を考慮して Laravel（PHP）での実装を検討したが、以下の理由により **静的サイト** を採用する。
+
+### Cloudflare Pages の制約
+
+| 項目 | 対応状況 |
+|------|---------|
+| 静的サイト (HTML/CSS/JS) | ✅ 対応 |
+| Node.js (SSR / API) | ✅ Cloudflare Workers (Functions) で対応 |
+| **PHP / Laravel** | **❌ 非対応** |
+
+Cloudflare Pages はエッジで静的ファイルを配信するサービスであり、PHP ランタイムを提供していない。
+Cloudflare Workers (Functions) は JavaScript / TypeScript (V8 ランタイム) のみ対応しており、PHP は実行できない。
+
+> **結論**: Cloudflare Pages では Laravel は動作しないため、**静的サイト (HTML + Chart.js)** で構築する。
+
+### 静的サイトでの拡張性の確保
+
+静的サイトでも以下の方法で将来の拡張に対応できる:
+
+| 拡張ニーズ | 静的サイトでの対応方法 |
+|-----------|---------------------|
+| API が必要になった場合 | Cloudflare Workers (Functions) で JavaScript API を追加 |
+| 動的ページが必要になった場合 | クライアントサイド JavaScript で SPA 的に実装 |
+| 認証が必要になった場合 | Cloudflare Access（無料枠あり）でアクセス制御 |
+| データベースが必要になった場合 | Cloudflare D1 (SQLite) または KV ストレージ |
+| 本格的にバックエンドが必要になった場合 | 別サーバ（VPS等）で Laravel を運用し、API として連携 |
+
+---
+
 ## 機能概要
 
 ### ページ構成
@@ -268,7 +299,9 @@ Chart.js と JSON データを組み合わせた静的ページ。
 
 ## 将来の拡張
 
-- **リアルタイムデータ**: Cloudflare Workers で yfinance API をプロキシし、リアルタイム株価を表示
+- **Cloudflare Workers (Functions)**: JavaScript API を追加し、動的データ取得やフィルタリングをサーバサイドで実行
+- **Cloudflare D1 / KV**: データベースやキーバリューストアでデータを永続化（JSON ファイルからの移行）
+- **Laravel バックエンド連携**: 本格的なバックエンドが必要になった場合、別サーバ（VPS 等）で Laravel を運用し、API として静的サイトから呼び出す構成に移行可能
 - **カスタムドメイン**: 独自ドメインの設定（Cloudflare で無料 SSL）
 - **PWA 対応**: スマホのホーム画面に追加してアプリのように使える
 - **銘柄比較機能**: 複数銘柄の株価チャートを重ねて表示

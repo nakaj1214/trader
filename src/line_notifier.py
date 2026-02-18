@@ -33,11 +33,11 @@ def build_line_message(report_text: str) -> str:
             first_line = stripped
             break
 
-    # 銘柄数をカウント（"  1." "  2." のようなパターン）
+    # 銘柄数をカウント（レポートの "  1. *TICKER*:" パターンにマッチ）
     stock_count = sum(
         1
         for line in report_text.splitlines()
-        if len(line.strip()) >= 2 and line.strip()[:2].rstrip(".").isdigit()
+        if line.strip()[:1].isdigit() and ". *" in line and "*:" in line
     )
 
     parts = ["📊 Slack に株式予測レポートが届きました！"]

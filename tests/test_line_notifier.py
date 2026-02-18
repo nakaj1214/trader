@@ -197,3 +197,26 @@ def test_notify_skips_line_when_no_config(mock_slack):
     result = notify(df, config=config)
 
     assert result is True
+
+
+@patch("src.notifier.send_to_slack")
+@patch("src.line_notifier.send_to_line")
+def test_notify_returns_true_even_if_line_fails(mock_line, mock_slack):
+    """LINE 通知が失敗しても Slack 成功なら True が返ることを検証する。"""
+    from src.notifier import notify
+
+    mock_slack.return_value = True
+    mock_line.return_value = False
+
+    config = {
+        "display": {"beginner_mode": False},
+        "google_sheets": {"spreadsheet_name": "Test"},
+        "line": {"enabled": True},
+    }
+    df = pd.DataFrame()
+
+    result = notify(df, config=config)
+
+    assert result is True
+    mock_slack.assert_called_once()
+    mock_line.assert_called_once()

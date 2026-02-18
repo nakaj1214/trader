@@ -123,14 +123,13 @@ def notify(
     slack_ok = send_to_slack(report)
 
     # LINE 通知 (有効時のみ: Slack 通知後にチェックを促す)
-    line_ok = True
+    # LINE はあくまで補助的な通知のため、失敗しても全体の結果には影響させない
     if config.get("line", {}).get("enabled", False):
         try:
             from src.line_notifier import send_to_line
 
-            line_ok = send_to_line(report)
+            send_to_line(report)
         except Exception:
             logger.exception("LINE通知でエラーが発生しました")
-            line_ok = False
 
-    return slack_ok and line_ok
+    return slack_ok

@@ -1,0 +1,40 @@
+# 自動AI株式分析 & 追跡ワークフロー 設定ファイル
+
+# スクリーニング設定
+screening:
+  markets:
+    - "sp500"
+    - "nasdaq100"
+    # - "nikkei225"  # 必要に応じて有効化
+  top_n: 10
+  min_market_cap: 10_000_000_000  # 100億ドル以上
+  lookback_days: 30               # 直近30日間のデータで評価
+  # スコアリング重み
+  weights:
+    price_change_1m: 0.3    # 直近1ヶ月の株価上昇率
+    volume_trend: 0.2       # 出来高増加トレンド
+    rsi_score: 0.25         # RSIスコア (30-70の中間帯が高評価)
+    macd_signal: 0.25       # MACDシグナル
+
+# AI予測設定
+prediction:
+  history_days: 90          # 予測に使う過去データの日数
+  forecast_days: 5          # 予測する将来の営業日数 (1週間)
+
+# OpenAI設定
+openai:
+  model: "gpt-4o-mini"      # "gpt-4o" 等に変更可能
+  max_tokens: 500
+
+# Google Sheets設定
+google_sheets:
+  spreadsheet_name: "AI Stock Predictions"
+  worksheet_name: "predictions"
+
+# Slack設定
+slack:
+  channel: "#stock-alerts"
+
+# 表示設定
+display:
+  beginner_mode: true       # 初心者モード (用語解説をレポートに追加)

@@ -1,0 +1,25 @@
+# データ取得・分析
+yfinance>=0.2.36
+pandas>=2.2.0
+ta>=0.11.0
+
+# AI予測
+prophet>=1.1.5
+
+# Phase 2 (将来追加)
+# scikit-learn>=1.4.0
+# xgboost>=2.0.0
+
+# OpenAI
+openai>=1.12.0
+
+# Google Sheets
+gspread>=6.0.0
+google-auth>=2.28.0
+
+# Slack通知
+requests>=2.31.0
+
+# 設定管理
+pyyaml>=6.0.1
+python-dotenv>=1.0.1

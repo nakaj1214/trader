@@ -113,7 +113,23 @@ def notify(
     accuracy: dict | None = None,
     config: dict | None = None,
 ) -> bool:
-    """レポートを生成してSlackに送信する。"""
+    """レポートを生成してSlackに送信し、LINE でチェックを促す。"""
+    if config is None:
+        config = load_config()
+
     report = build_report(predictions_df, accuracy, config)
     logger.info("レポート生成完了 (%d文字)", len(report))
-    return send_to_slack(report)
+
+    slack_ok = send_to_slack(report)
+
+    # LINE 通知 (有効時のみ: Slack 通知後にチェックを促す)
+    # LINE はあくまで補助的な通知のため、失敗しても全体の結果には影響させない
+    if config.get("line", {}).get("enabled", False):
+        try:
+            from src.line_notifier import send_to_line
+
+            send_to_line(report)
+        except Exception:
+            logger.exception("LINE通知でエラーが発生しました")
+
+    return slack_ok

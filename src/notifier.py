@@ -5,6 +5,7 @@ beginner_mode 有効時は用語解説を自動付与する。
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 
 import pandas as pd
@@ -14,6 +15,52 @@ from src.glossary import generate_beginner_notes
 from src.utils import get_env, load_config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NotificationResult:
+    """通知送信の結果を構造化して保持する。"""
+
+    channel: str
+    success: bool
+    status_code: int | None = None
+    error_message: str | None = None
+
+
+def _log_notification_result(result: NotificationResult) -> None:
+    """通知結果を構造化ログとして出力する。"""
+    if result.success:
+        logger.info(
+            "notification_sent channel=%s status_code=%s",
+            result.channel,
+            result.status_code,
+        )
+    else:
+        logger.error(
+            "notification_failed channel=%s status_code=%s error=%s",
+            result.channel,
+            result.status_code,
+            result.error_message,
+        )
+
+
+def _resolve_notification_config(config: dict) -> dict:
+    """新旧config形式を統一的に解決する。
+
+    新形式 (notifications.slack.enabled / notifications.line.enabled) を優先し、
+    存在しなければ旧形式 (line.enabled) にフォールバックする。
+    """
+    notif = config.get("notifications", {})
+
+    slack_enabled = notif.get("slack", {}).get("enabled", True)
+    line_enabled = notif.get("line", {}).get(
+        "enabled", config.get("line", {}).get("enabled", False)
+    )
+
+    return {
+        "slack": {"enabled": slack_enabled},
+        "line": {"enabled": line_enabled},
+    }
 
 
 def build_report(
@@ -86,26 +133,34 @@ def build_report(
     return "\n".join(lines)
 
 
-def send_to_slack(text: str) -> bool:
+def send_to_slack(text: str) -> NotificationResult:
     """Slack Incoming Webhook にテキストを送信する。
 
     Returns:
-        成功時 True、失敗時 False。
+        NotificationResult: 送信結果。
     """
     webhook_url = get_env("SLACK_WEBHOOK_URL")
     payload = {"text": text}
 
     try:
         resp = requests.post(webhook_url, json=payload, timeout=30)
-        if resp.status_code == 200 and resp.text == "ok":
-            logger.info("Slack通知送信成功")
-            return True
-        else:
-            logger.error("Slack通知失敗: status=%d, body=%s", resp.status_code, resp.text)
-            return False
-    except requests.RequestException:
-        logger.exception("Slack通知送信エラー")
-        return False
+        success = resp.status_code == 200 and resp.text == "ok"
+        result = NotificationResult(
+            channel="slack",
+            success=success,
+            status_code=resp.status_code,
+            error_message=None if success else resp.text,
+        )
+    except requests.RequestException as e:
+        result = NotificationResult(
+            channel="slack",
+            success=False,
+            status_code=None,
+            error_message=str(e),
+        )
+
+    _log_notification_result(result)
+    return result
 
 
 def notify(
@@ -113,7 +168,30 @@ def notify(
     accuracy: dict | None = None,
     config: dict | None = None,
 ) -> bool:
-    """レポートを生成してSlackに送信する。"""
+    """レポートを生成してSlackに送信し、LINE でチェックを促す。"""
+    if config is None:
+        config = load_config()
+
+    notif_config = _resolve_notification_config(config)
     report = build_report(predictions_df, accuracy, config)
     logger.info("レポート生成完了 (%d文字)", len(report))
-    return send_to_slack(report)
+
+    slack_ok = True  # 無効時は「意図的スキップ＝成功」扱い
+    if notif_config["slack"]["enabled"]:
+        slack_result = send_to_slack(report)
+        slack_ok = slack_result.success
+    else:
+        logger.info("Slack通知はconfig無効のためスキップ")
+
+    # LINE 通知 (有効時のみ: Slack 通知後にチェックを促す)
+    # LINE はあくまで補助的な通知のため、失敗しても全体の結果には影響させない
+    if notif_config["line"]["enabled"]:
+        try:
+            from src.line_notifier import send_to_line
+
+            slack_channel = config.get("slack", {}).get("channel", "#stock-alerts")
+            send_to_line(report, slack_channel=slack_channel)
+        except Exception:
+            logger.exception("LINE通知でエラーが発生しました")
+
+    return slack_ok

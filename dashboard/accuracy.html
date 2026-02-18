@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>的中率 - AI Stock Predictions</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>的中率</h1>
+    <div class="subtitle" id="last-updated"></div>
+  </header>
+  <nav>
+    <a href="index.html">サマリー</a>
+    <a href="accuracy.html" class="active">的中率</a>
+  </nav>
+  <main id="accuracy-content">
+    <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
+
+    <section>
+      <h2>累計的中率</h2>
+      <div class="card stat-card">
+        <div class="stat-value" id="cumulative-value">-</div>
+        <div class="stat-label" id="cumulative-detail"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>週次的中率推移</h2>
+      <div class="chart-container">
+        <canvas id="weekly-chart"></canvas>
+      </div>
+    </section>
+
+    <section>
+      <h2>銘柄別的中率ランキング</h2>
+      <div id="ticker-ranking">
+        <div class="loading">読み込み中...</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="js/app.js"></script>
+  <script src="js/accuracy.js"></script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Stock Predictions Dashboard</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>AI Stock Predictions</h1>
+    <div class="subtitle" id="last-updated"></div>
+  </header>
+  <nav>
+    <a href="index.html" class="active">サマリー</a>
+    <a href="accuracy.html">的中率</a>
+  </nav>
+  <main>
+    <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
+
+    <section>
+      <h2>今週の予測 (<span id="latest-date">-</span>)</h2>
+      <div id="prediction-cards" class="card-grid">
+        <div class="loading">読み込み中...</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>累計的中率</h2>
+      <div class="card stat-card">
+        <div class="stat-value" id="cumulative-value">-</div>
+        <div class="stat-label" id="cumulative-detail"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>週次的中率</h2>
+      <div class="chart-container">
+        <canvas id="accuracy-chart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="js/app.js"></script>
+  <script src="js/index.js"></script>
+</body>
+</html>

@@ -38,3 +38,14 @@ slack:
 # 表示設定
 display:
   beginner_mode: true       # 初心者モード (用語解説をレポートに追加)
+
+# LINE通知設定
+line:
+  enabled: false  # true にするとSlack通知後にLINEでチェックを促す
+
+# 通知設定（チャンネル別有効/無効制御）
+notifications:
+  slack:
+    enabled: true
+  line:
+    enabled: false  # true にするとSlack通知後にLINEでチェックを促す

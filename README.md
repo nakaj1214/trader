@@ -1,145 +1,156 @@
 # AI Stock Predictor
 
-グローバル株式市場から成長候補銘柄をスクリーニングし、Prophet による来週株価予測・的中率追跡・Slack 通知を全自動で行うワークフローです。
-GitHub Actions で毎週日曜日に自動実行されます。
+週次の株式スクリーニング、価格予測、実績追跡、通知、GUI用データ出力をまとめた Python プロジェクトです。
 
-## 機能概要
+## 1. 現在の実装範囲
 
+- スクリーニング: `src/screener.py`
+- 予測: `src/predictor.py`（Prophet）
+- 実績追跡: `src/tracker.py`
+- Google Sheets 記録: `src/sheets.py`
+- 通知: `src/notifier.py`（Slack）+ `src/line_notifier.py`（LINE補助通知）
+- GUIデータ出力: `src/exporter.py`（`dashboard/data/*.json`）
+- 静的GUI: `dashboard/*.html`, `dashboard/js/*.js`
+
+注記:
+- `config.yaml` に `openai` セクションはありますが、現行 `src` では OpenAI API を呼び出していません。
+
+## 2. 実行フロー（`python -m src.main`）
+
+1. 銘柄スクリーニング
+2. 予測（上昇予測のみ採用）
+3. 前週分の実績追跡と的中率計算
+4. 予測結果の Sheets 追記
+5. Slack 通知（必要に応じて LINE 補助通知）
+6. ダッシュボード JSON 出力
+
+## 3. ディレクトリ構成（主要部）
+
+```text
+trader-main/
+  src/
+  dashboard/
+    index.html
+    accuracy.html
+    stock.html
+    js/
+    css/
+  data/
+    sp500.csv
+    nasdaq100.csv
+    nikkei225.csv
+    glossary.yaml
+  tests/
+  .github/workflows/weekly_run.yml
+  config.yaml
+  .env.example
 ```
-Step 1: スクリーニング   — S&P500 / NASDAQ100 からテクニカル指標でトップ N 銘柄を選出
-Step 2: AI 価格予測      — Prophet で 5 営業日後の株価を予測（上昇銘柄のみ通過）
-Step 3: スプレッドシート記録 — 予測結果を Google Sheets に追記
-Step 4: 的中率追跡       — 前週予測の実績を評価し、的中率を算出
-Step 5: Slack 通知       — 予測リストと先週の的中率をチャンネルへ投稿
-```
 
-## ディレクトリ構成
-
-```
-trader/
-├── src/
-│   ├── main.py        # オーケストレーター（全ステップを順次実行）
-│   ├── screener.py    # Step 1: 銘柄スクリーニング
-│   ├── predictor.py   # Step 2: Prophet による価格予測
-│   ├── sheets.py      # Step 3/4: Google Sheets 読み書き
-│   ├── tracker.py     # Step 4: 的中率追跡
-│   ├── notifier.py    # Step 5: Slack 通知
-│   ├── glossary.py    # 初心者向け用語解説
-│   └── utils.py       # 設定読み込み等のユーティリティ
-├── data/
-│   ├── sp500.csv      # S&P500 銘柄リスト
-│   ├── nasdaq100.csv  # NASDAQ100 銘柄リスト
-│   └── nikkei225.csv  # 日経225 銘柄リスト（デフォルト無効）
-├── tests/
-│   ├── test_predictor.py
-│   ├── test_screener.py
-│   └── test_sheets_tracker.py
-├── .github/workflows/
-│   └── weekly_run.yml # GitHub Actions（毎週日曜 09:00 JST）
-├── config.yaml        # スクリーニング・予測・通知の設定
-├── .env.example       # 環境変数のサンプル
-└── requirements.txt
-```
-
-## セットアップ
-
-### 1. 依存パッケージのインストール
+## 4. セットアップ（開発者向け）
 
 ```bash
+cd trader-main
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+# source .venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-### 2. 環境変数の設定
+テスト実行する場合は追加で:
 
-`.env.example` をコピーして `.env` を作成し、各キーを設定します。
+```bash
+pip install pytest
+```
+
+## 5. 環境変数
+
+`.env.example` をコピーして `.env` を作成します。
+
+```powershell
+Copy-Item .env.example .env
+```
 
 ```bash
 cp .env.example .env
 ```
 
-| 変数名 | 説明 |
-|--------|------|
-| `OPENAI_API_KEY` | OpenAI API キー |
-| `GOOGLE_CREDENTIALS_JSON` | Google サービスアカウント認証情報 JSON のパス |
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
+| 変数 | 用途 | 必須条件 |
+|---|---|---|
+| `GOOGLE_CREDENTIALS_JSON` | Google Sheets 認証（ファイルパス or JSON文字列） | `src.main` / `src.exporter` 実行時は必須 |
+| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook | `notifications.slack.enabled=true` の場合必須 |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API | LINE通知有効時のみ必須 |
+| `LINE_USER_ID` | LINE送信先ユーザーID | LINE通知有効時のみ必須 |
+| `OPENAI_API_KEY` | 将来拡張用 | 現行コードでは未使用 |
 
-### 3. Google Sheets の準備
+## 6. 設定ファイル（`config.yaml`）
 
-1. Google Cloud Console でサービスアカウントを作成し、Sheets API を有効化
-2. 認証情報 JSON をダウンロードして `GOOGLE_CREDENTIALS_JSON` に設定
-3. `config.yaml` の `spreadsheet_name` と同名のスプレッドシートをサービスアカウントと共有
+主要キー:
 
-## 設定（config.yaml）
+- `screening`: 市場、上位件数、時価総額フィルタ、テクニカル重み
+- `prediction`: `history_days`, `forecast_days`
+- `google_sheets`: `spreadsheet_name`, `worksheet_name`
+- `slack.channel`: LINE文面にも反映されるチャンネル名
+- `display.beginner_mode`: 用語メモの付与
+- `notifications.slack.enabled`, `notifications.line.enabled`
+- `line.enabled`（旧形式。`notifications.line.enabled` が優先）
 
-```yaml
-screening:
-  markets: [sp500, nasdaq100]   # 対象市場
-  top_n: 10                     # 選出上位数
-  min_market_cap: 10_000_000_000  # 最低時価総額（100億ドル）
-  lookback_days: 30             # テクニカル計算の参照期間
-  weights:
-    price_change_1m: 0.3        # 直近1ヶ月株価上昇率
-    volume_trend:    0.2        # 出来高増加トレンド
-    rsi_score:       0.25       # RSI スコア（30〜70 の中間帯が高評価）
-    macd_signal:     0.25       # MACD シグナル
+## 7. 実行コマンド
 
-prediction:
-  history_days: 90   # 予測に使う過去データ日数
-  forecast_days: 5   # 予測する将来の営業日数（1週間）
-
-openai:
-  model: gpt-4o-mini   # 用語解説生成に使用
-
-display:
-  beginner_mode: true  # 初心者向け用語解説を Slack レポートに追加
-```
-
-## 手動実行
+全体実行:
 
 ```bash
 python -m src.main
 ```
 
-## 自動実行（GitHub Actions）
-
-`.github/workflows/weekly_run.yml` により、**毎週日曜 09:00 JST** に自動実行されます。
-リポジトリ Settings > Secrets and variables > Actions に以下の Secrets を登録してください。
-
-- `OPENAI_API_KEY`
-- `GOOGLE_CREDENTIALS_JSON`
-- `SLACK_WEBHOOK_URL`
-
-手動実行は Actions タブから `workflow_dispatch` で行えます。
-
-## テスト
+GUI用 JSON だけ再生成:
 
 ```bash
-pytest tests/
+python -m src.exporter
 ```
 
-主なテストケース:
+## 8. ダッシュボード確認
 
-| ファイル | 内容 |
-|---------|------|
-| `test_screener.py` | スクリーニングロジック・時価総額フィルタ |
-| `test_predictor.py` | Prophet 予測・営業日計算 |
-| `test_sheets_tracker.py` | 的中率集計・評価不能除外・祝日対応 |
+```bash
+python -m src.exporter
+cd dashboard
+python -m http.server 8000
+```
 
-## 的中率の評価ロジック
+- `http://localhost:8000/index.html`
+- `http://localhost:8000/accuracy.html`
+- `http://localhost:8000/stock.html?ticker=AAPL`
 
-- **評価日**: 予測日から **5 営業日後** の実取引日終値（yfinance の実データをカウント、祝日を自動スキップ）
-- **判定**: 予測価格 > 現在価格 かつ 実績終値 > 現在価格 → 的中
-- **「評価不能」**: 終値が取得できなかった銘柄。的中率の分母から除外される
-- **最新週が全件「評価不能」**: その週を `hits=0 / total=0` として表示（過去週の値にならない）
+## 9. テスト
 
-## 技術スタック
+```bash
+python -m pytest tests/
+```
 
-| カテゴリ | ライブラリ |
-|---------|-----------|
-| データ取得 | yfinance |
-| テクニカル指標 | ta |
-| AI 予測 | Prophet |
-| AI 補助（用語解説） | OpenAI API |
-| スプレッドシート | gspread, google-auth |
-| Slack 通知 | requests |
-| 設定管理 | pyyaml, python-dotenv |
+主なテスト対象:
+- `tests/test_screener.py`
+- `tests/test_predictor.py`
+- `tests/test_sheets_tracker.py`
+- `tests/test_notifier.py`
+- `tests/test_line_notifier.py`
+- `tests/test_exporter.py`
+
+## 10. GitHub Actions
+
+`.github/workflows/weekly_run.yml` で週次実行します。
+
+- `src.main` 実行
+- `src.exporter` 実行
+- `dashboard/data/*.json` のコミット・push
+
+必要な Secrets:
+- `GOOGLE_CREDENTIALS_JSON`
+- `SLACK_WEBHOOK_URL`
+- （LINE通知を使う場合）`LINE_CHANNEL_ACCESS_TOKEN`, `LINE_USER_ID`
+- （互換性維持）`OPENAI_API_KEY`
+
+## 11. ユーザー向けガイド
+
+利用手順は `docs/current/USER_GUIDE.md` を参照してください。

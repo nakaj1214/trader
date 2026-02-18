@@ -6,6 +6,7 @@
 3. 前週の的中率追跡 (tracker)
 4. Googleスプレッドシート記録 (sheets)
 5. Slack通知 (notifier)
+6. ダッシュボードデータエクスポート (exporter)
 """
 
 import logging
@@ -104,6 +105,21 @@ def run() -> None:
             logger.error("Slack通知失敗")
     except Exception:
         logger.exception("Slack通知でエラーが発生しました")
+
+    # ステップ6: ダッシュボードデータエクスポート
+    logger.info("=" * 50)
+    logger.info("ステップ6: ダッシュボードデータエクスポート")
+    logger.info("=" * 50)
+    try:
+        from src.exporter import export
+
+        export_ok = export(config)
+        if export_ok:
+            logger.info("ダッシュボードデータエクスポート完了")
+        else:
+            logger.warning("ダッシュボードデータエクスポートに問題が発生しました")
+    except Exception:
+        logger.exception("エクスポートでエラーが発生しましたが、処理を続行します")
 
     logger.info("=" * 50)
     logger.info("全ステップ完了")

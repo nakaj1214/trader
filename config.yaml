@@ -28,7 +28,7 @@ openai:
 
 # Google Sheets設定
 google_sheets:
-  spreadsheet_name: "AI Stock Predictions"
+  spreadsheet_name: "trade"
   worksheet_name: "predictions"
 
 # Slack設定

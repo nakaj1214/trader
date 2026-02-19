@@ -167,6 +167,12 @@ def _safe_write_json(data, filepath: Path) -> bool:
         return False
 
 
+def _is_drive_quota_exceeded_error(exc: Exception) -> bool:
+    """Google Drive の保存容量超過エラーかどうかを判定する。"""
+    message = str(exc).lower()
+    return "drive storage quota" in message and "exceeded" in message
+
+
 def export(config: dict | None = None) -> bool:
     """Google Sheets からデータを取得し、ダッシュボード用JSONを出力する。"""
     if config is None:
@@ -174,7 +180,12 @@ def export(config: dict | None = None) -> bool:
 
     try:
         records = fetch_all_records(config)
-    except Exception:
+    except Exception as exc:
+        if _is_drive_quota_exceeded_error(exc):
+            logger.warning(
+                "Google Drive の保存容量超過のため、今回のエクスポートをスキップします。"
+            )
+            return True
         logger.exception("Google Sheets からのデータ取得に失敗")
         return False
 

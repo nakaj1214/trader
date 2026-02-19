@@ -1,0 +1,23 @@
+services:
+  exporter:
+    image: trader-exporter:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/app
+    command: >
+      sh -lc "if [ -n \"$$GOOGLE_CREDENTIALS_JSON\" ] && [ ! -f \"$$GOOGLE_CREDENTIALS_JSON\" ]; then
+      cred_basename=$${GOOGLE_CREDENTIALS_JSON##*\\\\};
+      cred_basename=$${cred_basename##*/};
+      if [ -f \"/app/$$cred_basename\" ]; then
+      export GOOGLE_CREDENTIALS_JSON=\"/app/$$cred_basename\";
+      fi;
+      fi &&
+      python -m src.exporter"

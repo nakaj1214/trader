@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-02-19",
+    "ticker": "E2E_TEST",
+    "current_price": 100.0,
+    "predicted_price": 105.0,
+    "predicted_change_pct": 5.0,
+    "ci_pct": 1.5,
+    "actual_price": null,
+    "status": "予測済み",
+    "hit": null
+  }
+]

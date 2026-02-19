@@ -7,6 +7,7 @@
 - スクリーニング: `src/screener.py`
 - 予測: `src/predictor.py`（Prophet）
 - 実績追跡: `src/tracker.py`
+- 予測補強: `src/enricher.py`（リスク指標・イベント・エビデンス・選出理由）
 - Google Sheets 記録: `src/sheets.py`
 - 通知: `src/notifier.py`（Slack）+ `src/line_notifier.py`（LINE補助通知）
 - GUIデータ出力: `src/exporter.py`（`dashboard/data/*.json`）
@@ -22,17 +23,24 @@
 3. 前週分の実績追跡と的中率計算
 4. 予測結果の Sheets 追記
 5. Slack 通知（必要に応じて LINE 補助通知）
-6. ダッシュボード JSON 出力
+6. ダッシュボード JSON 出力（リスク指標・エビデンス・選出理由・誤差分析を含む）
 
 ## 3. ディレクトリ構成（主要部）
 
 ```text
 trader-main/
   src/
+    enricher.py        # 予測補強（リスク・イベント・エビデンス・選出理由）
+    exporter.py        # JSON出力（誤差分析含む）
+    screener.py        # 銘柄スクリーニング
+    predictor.py       # 価格予測
+    tracker.py         # 実績追跡
+    ...
   dashboard/
-    index.html
-    accuracy.html
-    stock.html
+    index.html         # 最新週サマリー（リスク行・イベントバッジ付き）
+    accuracy.html      # 的中率推移 + 予測誤差分析
+    stock.html         # 銘柄詳細（リスク・エビデンス・選出理由パネル）
+    simulator.html
     js/
     css/
   data/
@@ -119,9 +127,9 @@ cd dashboard
 python -m http.server 8000
 ```
 
-- `http://localhost:8000/index.html`
-- `http://localhost:8000/accuracy.html`
-- `http://localhost:8000/stock.html?ticker=AAPL`
+- `http://localhost:8000/index.html` — 最新週サマリー（リスク行・イベントバッジ付き）
+- `http://localhost:8000/accuracy.html` — 的中率推移・銘柄ランキング・予測誤差分析
+- `http://localhost:8000/stock.html?ticker=AAPL` — 銘柄詳細（リスク・エビデンス・選出理由）
 
 ## 9. テスト
 
@@ -136,6 +144,7 @@ python -m pytest tests/
 - `tests/test_notifier.py`
 - `tests/test_line_notifier.py`
 - `tests/test_exporter.py`
+- `tests/test_enricher.py`（リスク指標・イベント・エビデンス・選出理由・誤差分析）
 
 ## 10. GitHub Actions
 
@@ -153,4 +162,4 @@ python -m pytest tests/
 
 ## 11. ユーザー向けガイド
 
-利用手順は `docs/current/USER_GUIDE.md` を参照してください。
+利用手順は `docs/guide/USER_GUIDE.md` を参照してください。

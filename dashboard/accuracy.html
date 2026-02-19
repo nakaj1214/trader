@@ -8,13 +8,24 @@
 </head>
 <body>
   <header>
-    <h1>的中率</h1>
-    <div class="subtitle" id="last-updated"></div>
+    <div class="header-inner">
+      <div class="header-left">
+        <h1>AI Stock Predictions</h1>
+        <div class="subtitle" id="last-updated"></div>
+      </div>
+      <div class="header-right">
+        <div class="header-stat">
+          <div class="header-stat-value" id="header-accuracy-value">-</div>
+          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+        </div>
+        <nav>
+          <a href="index.html">サマリー</a>
+          <a href="accuracy.html" class="active">的中率</a>
+          <a href="simulator.html">シミュレータ</a>
+        </nav>
+      </div>
+    </div>
   </header>
-  <nav>
-    <a href="index.html">サマリー</a>
-    <a href="accuracy.html" class="active">的中率</a>
-  </nav>
   <main id="accuracy-content">
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
 
@@ -30,6 +41,21 @@
       <h2>週次的中率推移</h2>
       <div class="chart-container">
         <canvas id="weekly-chart"></canvas>
+      </div>
+    </section>
+
+    <!-- Phase 4: 予測誤差分析 -->
+    <section id="error-analysis-section" style="display:none">
+      <h2>予測誤差分析</h2>
+      <div class="card stat-card" id="mae-card">
+        <div class="stat-value" id="mae-value">-</div>
+        <div class="stat-label">平均予測誤差 (MAE)</div>
+      </div>
+      <div class="chart-container">
+        <canvas id="error-chart"></canvas>
+      </div>
+      <div id="error-table">
+        <div class="loading">読み込み中...</div>
       </div>
     </section>
 

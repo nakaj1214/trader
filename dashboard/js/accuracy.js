@@ -1,5 +1,5 @@
 /**
- * accuracy.html: 的中率推移チャート + 銘柄別ランキング
+ * accuracy.html: 的中率推移チャート + 銘柄別ランキング + 予測誤差分析
  */
 
 (function () {
@@ -13,12 +13,14 @@
       var predictions = data[1];
 
       showLastUpdated(accuracy);
+      renderHeaderAccuracy(accuracy);
       renderCumulativeStat(accuracy);
       renderWeeklyChart(accuracy);
-      renderTickerRanking(predictions);
+      renderErrorAnalysis(accuracy);
+      renderTickerRanking(filterPredictions(predictions));
     } catch (e) {
       document.getElementById("accuracy-content").innerHTML =
-        '<div class="empty-state">\u30c7\u30fc\u30bf\u3092\u8aad\u307f\u8fbc\u3081\u307e\u305b\u3093\u3067\u3057\u305f\u3002</div>';
+        '<div class="empty-state">データを読み込めませんでした。</div>';
       console.error(e);
     }
   }
@@ -34,7 +36,7 @@
         accuracy.cumulative.hits +
         "/" +
         accuracy.cumulative.total +
-        " \u7684\u4e2d";
+        " 的中";
     }
   }
 
@@ -65,7 +67,7 @@
         datasets: [
           {
             type: "bar",
-            label: "\u9031\u6b21\u7684\u4e2d\u7387 (%)",
+            label: "週次的中率 (%)",
             data: hitRates,
             backgroundColor: "rgba(37, 99, 235, 0.6)",
             borderColor: "rgba(37, 99, 235, 1)",
@@ -74,7 +76,7 @@
           },
           {
             type: "line",
-            label: "\u7d2f\u8a08\u7684\u4e2d\u7387 (%)",
+            label: "累計的中率 (%)",
             data: cumRates,
             borderColor: "rgba(220, 38, 38, 1)",
             backgroundColor: "transparent",
@@ -101,18 +103,128 @@
     });
   }
 
+  // --- Phase 4: 予測誤差分析 ---
+
+  function renderErrorAnalysis(accuracy) {
+    var section = document.getElementById("error-analysis-section");
+    if (!section) return;
+    if (!accuracy.error_analysis || accuracy.error_analysis.mae_pct == null) {
+      section.style.display = "none";
+      return;
+    }
+
+    section.style.display = "";
+    var ea = accuracy.error_analysis;
+
+    // MAE 表示
+    var maeEl = document.getElementById("mae-value");
+    if (maeEl) {
+      maeEl.textContent = ea.mae_pct.toFixed(1) + "%";
+    }
+
+    // バーチャート
+    renderErrorChart(ea.bins);
+
+    // テーブル
+    renderErrorTable(ea.bins);
+  }
+
+  function renderErrorChart(bins) {
+    var canvas = document.getElementById("error-chart");
+    if (!canvas || !bins || bins.length === 0) return;
+
+    var labels = bins.map(function (b) { return b.range; });
+    var predicted = bins.map(function (b) { return b.avg_predicted_pct; });
+    var actual = bins.map(function (b) { return b.avg_actual_pct; });
+
+    new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "予測平均 (%)",
+            data: predicted,
+            backgroundColor: "rgba(37, 99, 235, 0.6)",
+            borderColor: "rgba(37, 99, 235, 1)",
+            borderWidth: 1,
+          },
+          {
+            label: "実績平均 (%)",
+            data: actual,
+            backgroundColor: "rgba(22, 163, 74, 0.6)",
+            borderColor: "rgba(22, 163, 74, 1)",
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: {
+            display: true,
+            text: "予測上昇率 vs 実際変動率",
+          },
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: function (v) {
+                return v + "%";
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function renderErrorTable(bins) {
+    var container = document.getElementById("error-table");
+    if (!container || !bins || bins.length === 0) {
+      if (container) container.innerHTML = "";
+      return;
+    }
+
+    var html =
+      '<div class="table-wrapper"><table>' +
+      "<thead><tr>" +
+      "<th>予測帯</th>" +
+      "<th>予測平均</th>" +
+      "<th>実績平均</th>" +
+      "<th>的中率</th>" +
+      "<th>件数</th>" +
+      "</tr></thead><tbody>";
+
+    bins.forEach(function (b) {
+      html +=
+        "<tr>" +
+        "<td>" + b.range + "</td>" +
+        "<td>" + formatPct(b.avg_predicted_pct) + "</td>" +
+        "<td>" + formatPct(b.avg_actual_pct) + "</td>" +
+        "<td>" + b.hit_rate_pct.toFixed(1) + "%</td>" +
+        "<td>" + b.count + "</td>" +
+        "</tr>";
+    });
+
+    html += "</tbody></table></div>";
+    container.innerHTML = html;
+  }
+
+  // --- 銘柄別ランキング ---
+
   function renderTickerRanking(predictions) {
     var container = document.getElementById("ticker-ranking");
     if (!container) return;
 
     // 確定済みのみ集計
     var confirmed = predictions.filter(function (p) {
-      return p.hit === "\u7684\u4e2d" || p.hit === "\u5916\u308c";
+      return p.hit === "的中" || p.hit === "外れ";
     });
 
     if (confirmed.length === 0) {
       container.innerHTML =
-        '<div class="empty-state">\u78ba\u5b9a\u6e08\u307f\u30c7\u30fc\u30bf\u304c\u3042\u308a\u307e\u305b\u3093\u3002</div>';
+        '<div class="empty-state">確定済みデータがありません。</div>';
       return;
     }
 
@@ -123,7 +235,7 @@
         stats[p.ticker] = { hits: 0, total: 0 };
       }
       stats[p.ticker].total++;
-      if (p.hit === "\u7684\u4e2d") stats[p.ticker].hits++;
+      if (p.hit === "的中") stats[p.ticker].hits++;
     });
 
     // 的中率でソート
@@ -145,9 +257,9 @@
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
       "<th>#</th>" +
-      "<th>\u30c6\u30a3\u30c3\u30ab\u30fc</th>" +
-      "<th>\u7684\u4e2d\u7387</th>" +
-      "<th>\u7684\u4e2d/\u5168\u4f53</th>" +
+      "<th>ティッカー</th>" +
+      "<th>的中率</th>" +
+      "<th>的中/全体</th>" +
       "</tr></thead><tbody>";
 
     ranking.forEach(function (r, i) {

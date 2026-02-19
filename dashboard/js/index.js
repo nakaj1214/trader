@@ -1,5 +1,5 @@
 /**
- * index.html: 週次サマリーカード描画 + 的中率チャート
+ * index.html: 週次サマリーカード描画（リスク情報 + イベントバッジ付き）
  */
 
 (function () {
@@ -13,35 +13,51 @@
       var accuracy = data[1];
 
       showLastUpdated(accuracy);
+      renderHeaderAccuracy(accuracy);
       renderPredictionCards(predictions);
-      renderAccuracyChart(accuracy);
-      renderCumulativeStat(accuracy);
     } catch (e) {
       document.getElementById("prediction-cards").innerHTML =
-        '<div class="empty-state">\u30c7\u30fc\u30bf\u3092\u8aad\u307f\u8fbc\u3081\u307e\u305b\u3093\u3067\u3057\u305f\u3002</div>';
+        '<div class="empty-state">データを読み込めませんでした。</div>';
       console.error(e);
     }
   }
 
   function renderPredictionCards(predictions) {
     var container = document.getElementById("prediction-cards");
-    var latestDate = getLatestWeekDate(predictions);
+    var filtered = filterPredictions(predictions);
+    var latestDate = getLatestWeekDate(filtered);
 
     if (!latestDate) {
       container.innerHTML =
-        '<div class="empty-state">\u4e88\u6e2c\u30c7\u30fc\u30bf\u304c\u3042\u308a\u307e\u305b\u3093\u3002</div>';
+        '<div class="empty-state">予測データがありません。</div>';
       return;
     }
 
-    var latest = predictions.filter(function (p) {
+    var latest = filtered.filter(function (p) {
       return p.date === latestDate;
     });
+
+    // 重複排除: 同一ティッカーは「予測済み」を優先
+    var tickerMap = {};
+    latest.forEach(function (p) {
+      var existing = tickerMap[p.ticker];
+      if (!existing || p.status === "予測済み") {
+        tickerMap[p.ticker] = p;
+      }
+    });
+
+    // predicted_change_pct 降順でソート
+    var deduped = Object.keys(tickerMap)
+      .map(function (k) { return tickerMap[k]; })
+      .sort(function (a, b) {
+        return b.predicted_change_pct - a.predicted_change_pct;
+      });
 
     var dateLabel = document.getElementById("latest-date");
     if (dateLabel) dateLabel.textContent = latestDate;
 
     var html = "";
-    latest.forEach(function (p) {
+    deduped.forEach(function (p) {
       var changeClass = p.predicted_change_pct >= 0 ? "positive" : "negative";
       html +=
         '<div class="card">' +
@@ -55,7 +71,7 @@
         '  <div class="price-row">' +
         '    <span class="price">' +
         formatPrice(p.current_price) +
-        " \u2192 " +
+        " → " +
         formatPrice(p.predicted_price) +
         "</span>" +
         '    <span class="change ' +
@@ -65,75 +81,39 @@
         "</span>" +
         "  </div>" +
         '  <div class="price-row">' +
-        '    <span class="price">\u5b9f\u7e3e: ' +
+        '    <span class="price">実績: ' +
         formatPrice(p.actual_price) +
         "</span>" +
         "    " +
         hitBadge(p.hit) +
-        "  </div>" +
-        "</div>";
+        "  </div>";
+
+      // Phase 1: リスク情報行
+      if (p.risk) {
+        html +=
+          '  <div class="risk-row">' +
+          "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
+          " | β" + p.risk.beta.toFixed(2) +
+          " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%" +
+          "  </div>";
+      }
+
+      // Phase 1: イベントバッジ
+      if (p.events && p.events.length > 0) {
+        html += '  <div class="event-badges">';
+        p.events.forEach(function (ev) {
+          var label =
+            ev.type === "earnings"
+              ? "決算" + ev.days_to + "日後"
+              : "配当落ち" + ev.days_to + "日後";
+          html += '<span class="event-badge">' + label + "</span>";
+        });
+        html += "  </div>";
+      }
+
+      html += "</div>";
     });
     container.innerHTML = html;
-  }
-
-  function renderAccuracyChart(accuracy) {
-    var canvas = document.getElementById("accuracy-chart");
-    if (!canvas || !accuracy.weekly || accuracy.weekly.length === 0) return;
-
-    var labels = accuracy.weekly.map(function (w) {
-      return w.date;
-    });
-    var hitRates = accuracy.weekly.map(function (w) {
-      return w.hit_rate_pct;
-    });
-
-    new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: labels,
-        datasets: [
-          {
-            label: "\u7684\u4e2d\u7387 (%)",
-            data: hitRates,
-            backgroundColor: "rgba(37, 99, 235, 0.6)",
-            borderColor: "rgba(37, 99, 235, 1)",
-            borderWidth: 1,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { display: false },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            max: 100,
-            ticks: {
-              callback: function (v) {
-                return v + "%";
-              },
-            },
-          },
-        },
-      },
-    });
-  }
-
-  function renderCumulativeStat(accuracy) {
-    var valueEl = document.getElementById("cumulative-value");
-    var detailEl = document.getElementById("cumulative-detail");
-    if (!valueEl || !accuracy.cumulative) return;
-
-    valueEl.textContent = accuracy.cumulative.hit_rate_pct.toFixed(1) + "%";
-    if (detailEl) {
-      detailEl.textContent =
-        accuracy.cumulative.hits +
-        "/" +
-        accuracy.cumulative.total +
-        " \u7684\u4e2d";
-    }
   }
 
   document.addEventListener("DOMContentLoaded", init);

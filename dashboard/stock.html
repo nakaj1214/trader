@@ -8,15 +8,36 @@
 </head>
 <body>
   <header>
-    <h1 id="stock-ticker">-</h1>
-    <div class="subtitle" id="last-updated"></div>
+    <div class="header-inner">
+      <div class="header-left">
+        <h1>AI Stock Predictions</h1>
+        <div class="header-ticker" id="stock-ticker"></div>
+        <div class="subtitle" id="last-updated"></div>
+      </div>
+      <div class="header-right">
+        <div class="header-stat">
+          <div class="header-stat-value" id="header-accuracy-value">-</div>
+          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+        </div>
+        <nav>
+          <a href="index.html">サマリー</a>
+          <a href="accuracy.html">的中率</a>
+          <a href="simulator.html">シミュレータ</a>
+        </nav>
+      </div>
+    </div>
   </header>
-  <nav>
-    <a href="index.html">サマリー</a>
-    <a href="accuracy.html">的中率</a>
-  </nav>
   <main id="stock-content">
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
+
+    <!-- Phase 1: リスク指標 + イベント -->
+    <div id="risk-panel" class="info-panel" style="display:none"></div>
+
+    <!-- Phase 2: エビデンス指標 -->
+    <div id="evidence-panel" class="info-panel evidence-panel" style="display:none"></div>
+
+    <!-- Phase 3: 選出理由 -->
+    <div id="explanations-panel" class="info-panel explanations-panel" style="display:none"></div>
 
     <section>
       <h2>価格推移</h2>

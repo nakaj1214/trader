@@ -8,13 +8,24 @@
 </head>
 <body>
   <header>
-    <h1>AI Stock Predictions</h1>
-    <div class="subtitle" id="last-updated"></div>
+    <div class="header-inner">
+      <div class="header-left">
+        <h1>AI Stock Predictions</h1>
+        <div class="subtitle" id="last-updated"></div>
+      </div>
+      <div class="header-right">
+        <div class="header-stat">
+          <div class="header-stat-value" id="header-accuracy-value">-</div>
+          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+        </div>
+        <nav>
+          <a href="index.html" class="active">サマリー</a>
+          <a href="accuracy.html">的中率</a>
+          <a href="simulator.html">シミュレータ</a>
+        </nav>
+      </div>
+    </div>
   </header>
-  <nav>
-    <a href="index.html" class="active">サマリー</a>
-    <a href="accuracy.html">的中率</a>
-  </nav>
   <main>
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
 
@@ -22,21 +33,6 @@
       <h2>今週の予測 (<span id="latest-date">-</span>)</h2>
       <div id="prediction-cards" class="card-grid">
         <div class="loading">読み込み中...</div>
-      </div>
-    </section>
-
-    <section>
-      <h2>累計的中率</h2>
-      <div class="card stat-card">
-        <div class="stat-value" id="cumulative-value">-</div>
-        <div class="stat-label" id="cumulative-detail"></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>週次的中率</h2>
-      <div class="chart-container">
-        <canvas id="accuracy-chart"></canvas>
       </div>
     </section>
   </main>

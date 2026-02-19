@@ -61,3 +61,28 @@ function getLatestWeekDate(predictions) {
   });
   return dates.sort().reverse()[0];
 }
+
+function isTestTicker(ticker) {
+  return ticker === "E2E_TEST";
+}
+
+function filterPredictions(predictions) {
+  return predictions.filter(function (p) {
+    return !isTestTicker(p.ticker);
+  });
+}
+
+function renderHeaderAccuracy(accuracy) {
+  var valueEl = document.getElementById("header-accuracy-value");
+  var detailEl = document.getElementById("header-accuracy-detail");
+  if (!valueEl || !accuracy || !accuracy.cumulative) return;
+
+  valueEl.textContent = accuracy.cumulative.hit_rate_pct.toFixed(1) + "%";
+  if (detailEl) {
+    detailEl.textContent =
+      accuracy.cumulative.hits +
+      "/" +
+      accuracy.cumulative.total +
+      " \u7684\u4e2d";
+  }
+}

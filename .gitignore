@@ -13,6 +13,7 @@ credentials.json
 *.json
 !data/*.json
 .data/
+!dashboard/data/*.json
 
 # IDE
 .vscode/

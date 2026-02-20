@@ -1,391 +1,406 @@
-﻿# エビデンスベース投資意思決定支援 実装計画書（更新版）
-
-## 目的
-`docs/gpt_reseach/research3.md` の提案に基づき、未実装の拡張機能（フェーズ7〜10）を実装する。
-
-本ファイルは「これから実装する内容」に限定する。
-既に実装済みのフェーズ詳細（1〜6）は可読性のため削除し、要約のみ残す。
+# 実装計画書
 
 ---
 
-## 実装済みフェーズ（要約のみ）
+## 実装済みフェーズ一覧
 
 | フェーズ | 内容 | 状態 |
 |---------|------|------|
-| 1 | リスク指標 + イベント注釈 | 実装済み |
-| 2 | エビデンス指標（momentum/value/quality/low-risk） | 実装済み |
-| 3 | 選出理由（スコア内訳）表示 | 実装済み |
-| 4 | 予測誤差分析（MAE・帯別比較） | 実装済み |
-| 5 | 予測ガードレール（WARN/CLIPPED） | 実装済み |
-| 6 | ベースライン比較（AI vs 12-1モメンタム vs SPY） | 実装済み |
-
-注記:
-- 実装済みフェーズの詳細仕様は Git 履歴および実装コード（`src/`, `dashboard/js/`）を参照。
+| 11 | ショートインタレスト補助情報（バックエンド完了・UI接続完了） | **実装済み** |
+| 12 | 機関投資家保有状況（バックエンド完了・UI接続完了） | **実装済み** |
+| 13 | 52-Week High Momentum ファクター追加 | **実装済み** |
+| 14 | 買い時・売り時ガイド（ダッシュボード） | **実装済み** |
+| 15 | 日本株データ収集バックエンド | **実装済み** |
+| 16 | ダッシュボード分離（米国株・日本株） | **実装済み** |
 
 ---
 
-## 本計画の対象（未実装）
+## フェーズ11: ショートインタレスト補助情報（実装済み・UI接続修正済み）
 
-| フェーズ | 内容 | 工数 | 主な効果 | 状態 |
-|---------|------|------|---------|------|
-| 7 | 確率化 + 校正ダッシュボード（Brier/log-loss/reliability diagram） | 中 | 予測が「確率として妥当か」を可視化し誤用を抑制 | 未着手 |
-| 8 | ポジションサイジング + 損切り規律 | 中 | 実行規律（サイズ上限・撤退基準）を提示 | 未着手 |
-| 9 | バックテスト品質開示（過剰最適化対策メタデータ） | 中〜高 | バックテストの透明性を向上 | 未着手 |
-| 10 | マクロ指標統合（FRED によるレジーム判定） | 中 | マクロ環境に応じたリスク調整根拠を追加 | 未着手 |
+### 実装内容
 
----
+**`src/enricher.py`**
+- `enrich_short_interest(ticker, info)` を追加
+- `yf.Ticker(t).info` から `shortRatio`, `shortPercentOfFloat` を取得
+- signal 判定: `short_pct_float > 0.20` → `high_short`, `> 0.10` → `moderate_short`, それ以外 → `neutral`
+- 取得失敗時は `None` を返す
 
-## フェーズ7: 確率化 + 校正ダッシュボード
+**`src/exporter.py`**
+- `build_predictions_json()` 内で `short_interest` キーを出力
+- `if ticker_data.get("short_interest")` で存在チェック
 
-### 概要
-- `predicted_change_pct` と `ci_pct` から `prob_up`（上昇確率）を導出。
-- `accuracy.json` に校正指標を追加し、確率の信頼性を公開。
+**`dashboard/stock.html`**
+- `id="short-interest-panel"` のコンテナ `<div>` を追加（`sizing-panel` 直下）
+- 欠落していたDOMにより `renderShortInterestPanel` が即 return していた問題を修正済み
 
-### バックエンド変更
-- `src/predictor.py`
-  - `compute_prob_up(predicted_change_pct, ci_pct)` を追加。
-  - 出力に `prob_up`（将来拡張で `prob_up_calibrated`）を追加。
-- `src/exporter.py`
-  - `build_calibration_metrics(records)` を追加。
-  - `accuracy.json` に `calibration` セクションを追加。
+**`dashboard/js/stock.js`**
+- `renderShortInterestPanel(prediction)` を追加
+- `#short-interest-panel` に Short Ratio・空売り比率・シグナルを表示
 
-### 出力スキーマ追加
+**`tests/test_enricher.py`** — TestEnrichShortInterest（4テスト）追加
 
-> 注記: `as_of_utc` / `data_coverage_weeks` は共通仕様セクション準拠（予測/評価系成果物に統一付与。macro.jsonは対象外）。以下の例は各フェーズ固有の追加フィールドのみ示す。
+### 出力スキーマ（`predictions.json`）
 
-- `predictions.json`
 ```json
 {
-  "prob_up": 0.62,
-  "prob_up_calibrated": null
-}
-```
-
-- `accuracy.json`
-```json
-{
-  "calibration": {
-    "overall": {
-      "brier_score": 0.205,
-      "log_loss": 0.623,
-      "ece": 0.031,
-      "reliability_bins": [
-        {"p_bin": "0.5-0.6", "n": 45, "mean_pred": 0.54, "empirical": 0.56}
-      ],
-      "n_calibrated": 87
-    },
-    "recent_n_weeks": {
-      "n_weeks": 12,
-      "brier_score": 0.198,
-      "log_loss": 0.610,
-      "ece": 0.028,
-      "n_calibrated": 24
-    }
+  "short_interest": {
+    "short_ratio": 3.2,
+    "short_pct_float": 0.052,
+    "signal": "neutral",
+    "data_note": "月次更新・参考値（yfinance）"
   }
 }
 ```
 
-### フロントエンド変更
-- `dashboard/accuracy.html`
-  - `#calibration-section` を追加。
-- `dashboard/js/accuracy.js`
-  - reliability diagram（Chart.js）描画（`overall` データを使用）。
-  - 指標（Brier/log-loss/ECE）を「全期間」と「直近N週」で並列表示。
-  - `n_calibrated < 30` は非表示または「データ蓄積中」を表示。
-- `dashboard/css/style.css`
-  - 校正セクションのスタイル追加。
+---
 
-### 対象ファイル
-- `src/predictor.py`
-- `src/exporter.py`
-- `dashboard/accuracy.html`
-- `dashboard/js/accuracy.js`
-- `dashboard/css/style.css`
-- `tests/test_predictor.py`
+## フェーズ12: 機関投資家保有状況（実装済み・UI接続修正済み）
+
+### 実装内容
+
+**`src/enricher.py`**
+- `enrich_institutional_holders(ticker)` を追加
+- `yf.Ticker(ticker).institutional_holders` から上位5機関を取得
+- カラム名を動的検出（`holder`/`name` を含む列名）
+- `institutional_pct` を合計保有比率として計算
+- `data_note` に45〜75日遅延の注記を付与
+
+**`src/exporter.py`**
+- `if ticker_data.get("institutional")` で `institutional` キーを出力
+
+**`dashboard/stock.html`**
+- `id="institutional-panel"` のコンテナ `<div>` を追加（`short-interest-panel` 直下）
+- 欠落していたDOMにより `renderInstitutionalPanel` が即 return していた問題を修正済み
+
+**`dashboard/js/stock.js`**
+- `renderInstitutionalPanel(prediction)` を追加
+- `#institutional-panel` に機関保有率・上位5機関を表示
+
+**`tests/test_enricher.py`** — TestEnrichInstitutionalHolders（3テスト）追加
+
+### 出力スキーマ（`predictions.json`）
+
+```json
+{
+  "institutional": {
+    "institutional_pct": 0.78,
+    "top5_holders": ["Vanguard", "BlackRock", "State Street"],
+    "data_note": "四半期報告（45〜75日遅延）・参考値"
+  }
+}
+```
 
 ---
 
-## フェーズ8: ポジションサイジング + 損切り規律
+## フェーズ13: 52-Week High Momentum ファクター追加（実装済み）
 
-### 概要
-- フェーズ1で算出済みのボラティリティを使い、
-  - 最大保有比率（ボラターゲット）
-  - 推奨損切り水準
-  を算出して提示する。
+### 実装内容
 
-### バックエンド変更
-- `src/enricher.py`
-  - `compute_sizing(vol_ann, config)` を追加。
-  - `sizing` フィールドを `enrichment` に追加。
-- `src/exporter.py`
-  - `predictions.json` へ `sizing` を組み込み。
-- `config.yaml`
+**`src/screener.py`**
+- `compute_52w_high_score(info)`: `min(currentPrice / fiftyTwoWeekHigh, 1.0)` を計算
+- `_fetch_52w_data(tickers)`: ティッカーごとに `.info` を取得
+- `score_stock()` に `fifty2w_score` 寄与を追加（None 時はスキップ）
+- `screen()` 内で市場キャップフィルタ後に `_fetch_52w_data()` を呼び出し
+
+**`config.yaml`**
+
 ```yaml
-sizing:
-  vol_target_ann: 0.10
-  max_weight_cap: 0.20
-  stop_loss_multiplier: 1.0
+screening:
+  weights:
+    price_change_1m: 0.25
+    volume_trend: 0.15
+    rsi_score: 0.20
+    macd_signal: 0.20
+    fifty2w_score: 0.20   # Phase 13 追加（合計 1.0）
 ```
 
-### 出力スキーマ追加
-- `predictions.json`
-```json
-{
-  "sizing": {
-    "vol_target_ann": 0.10,
-    "max_position_weight": 0.20,
-    "stop_loss_pct": -0.087,
-    "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-  }
-}
-```
+**`src/enricher.py`**
+- `enrich_52w_high(ticker, info)` を追加
+- `fifty2w_score = min(current/high52, 1.0)`, `fifty2w_pct_from_high = ratio - 1.0`
 
-### フロントエンド変更
-- `dashboard/js/stock.js`
-  - リスクパネルに `max_position_weight` / `stop_loss_pct` を追記。
-- `dashboard/js/index.js`
-  - カードのリスク行にサイズ目安を追記。
-- `dashboard/css/style.css`
-  - `.sizing-panel`, `.sizing-note` を追加。
+**`src/exporter.py`**
+- `if "fifty2w_score" in ticker_data` で存在チェック（`0.0` 保持のため `in` 演算子使用）
+- `fifty2w_score` / `fifty2w_pct_from_high` を出力
 
-### 対象ファイル
-- `src/enricher.py`
-- `src/exporter.py`
-- `config.yaml`
-- `dashboard/js/stock.js`
-- `dashboard/js/index.js`
-- `dashboard/css/style.css`
-- `tests/test_enricher.py`
+**`src/alpha_survey.py`**（新規）
+- `run_anomaly_test(anomaly_name, lookback_weeks)`: 現時点は `insufficient_data` を返すスタブ
+- `build_alpha_survey_json(results)`: `n_observations < 52` → `insufficient_data` 強制
+- `run_and_export()`: `dashboard/data/alpha_survey.json` を原子的書き込み
+
+**`src/main.py`**
+- Step 7 として `run_alpha_survey()` を呼び出し
+
+**`dashboard/accuracy.html`**
+- `#alpha-survey-section` を追加
+
+**`dashboard/js/accuracy.js`**
+- `renderAlphaSurvey(survey)` を追加（アノマリー統計検証テーブル）
+
+**`tests/test_screener.py`** — 7テスト追加
+**`tests/test_enricher.py`** — TestEnrich52wHigh（5テスト）追加
+**`tests/test_alpha_survey.py`**（新規）— 7テスト
+
+### 設計決定事項
+
+- `fifty2w_*` は Google Sheets に保存しない（Sheets 非永続化）
+- `sheets.py` の `HEADERS` / `append_predictions` は変更しない
+- Enrichment は最新週の `予測済み` 銘柄のみ対象
 
 ---
 
-## フェーズ9: バックテスト品質開示（過剰最適化対策）
+## フェーズ14: 買い時・売り時ガイド（実装済み）
+
+### 背景・目的
+
+株の知識が少ないユーザー向けに、「いつ買うか」「いつ売るか」の判断基準をダッシュボード上で視覚的に提示する。
+
+### 実装内容
+
+**`dashboard/index.html`**
+
+予測一覧セクションの上部に常時表示パネルを追加：
+
+```html
+<div class="timing-guide">
+  <div class="timing-guide-cols">
+    <div class="timing-col-buy">  <!-- 買い時のサイン（緑系）-->
+      <ul>
+        <li>予測上昇率がプラス（+）の銘柄</li>
+        <li>累計的中率が55%以上</li>
+        <li>VIX が25以下・逆イールドなし</li>
+      </ul>
+    </div>
+    <div class="timing-col-sell">  <!-- 売り時のサイン（オレンジ系）-->
+      <ul>
+        <li>損切り価格を下回ったら即売り</li>
+        <li>1週間後の予測期間終了で確認</li>
+        <li>VIX が25超・逆イールド時はポジション縮小</li>
+      </ul>
+    </div>
+  </div>
+</div>
+```
+
+**`dashboard/js/index.js`**
+
+各予測カードの末尾に「アクション行」を追加：
+
+```js
+// 予測済み銘柄のみ表示
+if (p.status === "予測済み") {
+  if (displayPct > 0) {
+    // 緑系バッジ: "▲ 今週の推奨行動: 購入を検討（予測 +X.X%）"
+  } else {
+    // グレーバッジ: "– 今週は見送り推奨（予測 -X.X%）"
+  }
+  // 損切り価格計算: current_price * (1 + stop_loss_pct)
+  // "損切り目安: $XXX.XX を下回ったら売り"
+}
+```
+
+**`dashboard/js/stock.js`**
+
+`renderSizingPanel()` を拡張：
+
+```js
+// 損切り価格を実金額で強調表示（赤枠ハイライト）
+var stopPrice = prediction.current_price * (1 + s.stop_loss_pct);
+// → "損切り価格（この価格を下回ったら売り）: $XXX.XX"
+// → "現在価格 $XXX.XX から -X.X% 下落した水準"
+
+// 目標価格を緑枠で表示
+// → "目標価格（予測）: $XXX.XX"
+```
+
+**`dashboard/css/style.css`**
+
+追加クラス：
+
+| クラス | 用途 |
+|-------|------|
+| `.timing-guide` | ガイドパネル全体（水色背景） |
+| `.timing-col-buy` | 買いサイン列（緑系） |
+| `.timing-col-sell` | 売りサイン列（オレンジ系） |
+| `.action-row.action-buy` | 予測カードの買い推奨行（緑） |
+| `.action-row.action-neutral` | 見送り推奨行（グレー） |
+| `.action-stop` | 損切り目安価格行（赤テキスト） |
+| `.stop-loss-highlight` | 損切り価格の強調ボックス（赤枠） |
+| `.target-price-row` | 目標価格行（緑枠） |
+
+---
+
+---
+
+## フェーズ15: 日本株データ収集バックエンド（実装済み）
 
 ### 概要
-- フェーズ6の比較結果に、検証品質メタデータを追加。
-- 「どれだけ試して、どう評価したか」を公開する。
+
+現在は S&P500・NASDAQ100 の米国株のみを対象としている。
+日本株（日経225構成銘柄）のデータ収集を並行して行い、将来の運用に備える。
 
 ### バックエンド変更
-- `src/baseline.py`
-  - `build_backtest_hygiene(config, oos_start)` を追加。
-  - `comparison.json` に `backtest_hygiene` を追加。
-  - `reality_check_pvalue`・`pbo`・`deflated_sharpe` の算出・格納を担当。
-- `config.yaml`
+
+**`config.yaml`**
+
 ```yaml
-backtest:
-  num_rules_tested: 1        # 推奨: 2以上。pbo/reality_check 算出には最低2、推奨10以上
-  num_parameters_tuned: 4
-  oos_start: "2025-01-01"
-  min_rules_for_pbo: 2       # pbo / reality_check_pvalue を算出する最小 num_rules_tested
+screening:
+  markets:
+    - "sp500"
+    - "nasdaq100"
+    - "nikkei225"   # 有効化（コメントアウト解除）
 ```
 
-### 出力スキーマ追加
-- `comparison.json`
-```json
-{
-  "backtest_hygiene": {
-    "num_rules_tested": 1,
-    "num_parameters_tuned": 4,
-    "oos_start": "2025-01-01",
-    "data_coverage_weeks": 52,
-    "transaction_cost_note": "取引コスト・税金は未考慮",
-    "survivorship_bias_note": "上場廃止銘柄は評価対象外（サバイバーシップバイアスあり）",
-    "hygiene_status": "insufficient_trials",
-    "reality_check_pvalue": null,
-    "pbo": null,
-    "deflated_sharpe": null,
-    "hygiene_note": "num_rules_tested が min_rules_for_pbo 未満のため品質指標は算出不可"
-  }
-}
-```
+> **注意:** `src/screener.py` は `config["screening"]["markets"]` を参照しているため、`markets` は必ず `screening` 配下に置く。トップレベルに移動すると設定破壊になるため変更しない。
 
-備考:
-- `hygiene_status`:
-  - `"insufficient_trials"`: `num_rules_tested < min_rules_for_pbo` のため pbo / reality_check_pvalue が算出不可。
-  - `"computed"`: 全品質指標が算出済み。
-  - `"partial"`: deflated_sharpe のみ算出済み（単一戦略でも算出可能）。
-- `reality_check_pvalue`: White's Reality Check（複数戦略の多重検定補正済みp値）。`num_rules_tested >= min_rules_for_pbo` で算出。
-- `pbo`: Probability of Backtest Overfitting（CSCV法）。`num_rules_tested >= min_rules_for_pbo` で算出。
-- `deflated_sharpe`: Deflated Sharpe Ratio（テスト回数・多重比較を考慮した調整済みSharpe）。`num_rules_tested` / `num_parameters_tuned` をもとに単独算出可能。
+**`src/screener.py`**
 
-### フロントエンド変更
-- `dashboard/accuracy.html`
-  - `#backtest-hygiene-section` を追加。
-- `dashboard/js/accuracy.js`
-  - 品質情報パネル描画。
-- `dashboard/css/style.css`
-  - 品質情報パネルスタイル追加。
+- `screen()` を市場別に実行できるよう引数 `market` を追加
+- 日本株ティッカーは yfinance 形式（例: `7203.T`）で扱う
+- 市場別の出力ファイルを分離:
+  - 米国株: `dashboard/data/predictions_us.json`
+  - 日本株: `dashboard/data/predictions_jp.json`
 
-### 対象ファイル
-- `src/baseline.py`
-- `config.yaml`
-- `dashboard/accuracy.html`
-- `dashboard/js/accuracy.js`
-- `dashboard/css/style.css`
-- `tests/test_baseline.py`（以下を検証対象とする）
-  - `num_rules_tested < min_rules_for_pbo` で `hygiene_status == "insufficient_trials"` となること
-  - `num_rules_tested >= min_rules_for_pbo` で `reality_check_pvalue` / `pbo` の算出分岐へ進むこと
+**`src/enricher.py`**
+
+- 市場を判定する `is_jp_ticker(ticker)` ヘルパー追加（`.T` サフィックスで判定）
+- 日本株は円建てのため `current_price` / `predicted_price` 表示を円に変換
+
+**`src/main.py`**
+
+- 米国株・日本株それぞれの `screen()` → `enrich()` → `export()` を順次実行
+- 日本株が失敗しても米国株のフローに影響しないよう独立した try/except で囲む
+
+**`src/sheets.py`**
+
+- `worksheet_name` を市場別に分ける（例: `predictions_us`, `predictions_jp`）
+
+### 実装済み変更ファイル
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `config.yaml` | `nikkei225` を `screening.markets` に追加（有効化） |
+| `src/screener.py` | `screen(config, market=None)` — market 引数追加 |
+| `src/enricher.py` | `is_jp_ticker(ticker)` ヘルパー追加（`.T` サフィックス判定） |
+| `src/exporter.py` | `_split_records_by_market()` / `predictions_us.json` + `predictions_jp.json` 出力 / `predictions.json` 後方互換維持 |
+| `src/main.py` | 日本株スクリーニングを独立 try/except ブロックで追加 |
+| `src/sheets.py` | `append_predictions(..., market=None)` — 市場別 worksheet 名対応 |
+
+### 後方互換ポリシー
+
+- `predictions.json` は Phase 16 移行完了まで米国株データを引き続き出力（`predictions_us.json` のコピー）
+- Phase 16 ページ (`us/`) に完全移行後は `predictions.json` を廃止可能
 
 ---
 
-## フェーズ10: マクロ指標統合（FRED）
+## フェーズ16: ダッシュボード分離（米国株・日本株）（実装済み）
 
 ### 概要
-- FRED API を使い主要系列を取得し、`macro.json` を生成。
-- index にマクロ環境バナーを表示。
 
-### スコープ明確化
-- 本フェーズ初期版は **FRED のみ** を対象。
-- BOJ/e-Stat/EDINET 連携は将来拡張（別フェーズ）とする。
+現在の `index.html` / `accuracy.html` / `stock.html` を米国株と日本株で分離する。
+ランディングページ（`index.html`）で市場を選択し、それぞれ独立したページへ遷移する。
 
-### バックエンド変更
-- 新規: `src/macro_fetcher.py`
-  - `fetch_fred_series(...)`
-  - `build_macro_json(api_key)`
-- `src/exporter.py`
-  - `FRED_API_KEY` がある場合のみ `macro.json` を生成。
-- ワークフロー
-  - `weekly_run.yml` で `secrets.FRED_API_KEY` を注入。
+### 新規ページ構成
 
-### 出力スキーマ追加
-- `macro.json`
-```json
-{
-  "as_of_utc": "2026-02-20T00:10:00Z",
-  "data_as_of_utc": "2026-02-19T18:00:00Z",
-  "series": {
-    "FEDFUNDS": {"latest_value": 5.33, "unit": "%"},
-    "T10Y2Y": {"latest_value": -0.12, "unit": "%"},
-    "VIXCLS": {"latest_value": 18.5, "unit": "pts"}
-  },
-  "regime": {
-    "is_risk_off": false,
-    "note": "VIX > 25 またはイールドカーブ負転でリスクオフ"
-  }
-}
+```
+dashboard/
+├── index.html              ← ランディングページ（市場選択）
+├── us/
+│   ├── index.html          ← 米国株サマリー（現 index.html の移植）
+│   ├── accuracy.html       ← 米国株的中率
+│   └── stock.html          ← 米国株銘柄詳細
+├── jp/
+│   ├── index.html          ← 日本株サマリー
+│   ├── accuracy.html       ← 日本株的中率
+│   └── stock.html          ← 日本株銘柄詳細
+├── data/
+│   ├── predictions_us.json ← 米国株予測データ
+│   ├── predictions_jp.json ← 日本株予測データ
+│   ├── accuracy_us.json    ← 米国株的中率
+│   └── accuracy_jp.json    ← 日本株的中率
+├── js/
+│   ├── app.js              ← 共通ユーティリティ（変更なし）
+│   ├── index_us.js         ← 米国株サマリー描画
+│   ├── index_jp.js         ← 日本株サマリー描画（円建て表示）
+│   ├── accuracy.js         ← 共通（データパス切り替えで対応）
+│   └── stock.js            ← 共通（データパス切り替えで対応）
+└── css/
+    └── style.css           ← 共通（変更最小限）
 ```
 
-備考:
-- `as_of_utc`: JSON 生成時刻（UTC）。全 JSON で統一された「生成時刻」の意味を持つ。
-- `data_as_of_utc`: FRED から取得した最新系列の基準日時（UTC）。`as_of_utc` と区別するため別名で保持する。
+### ランディングページ（`index.html`）
+
+```html
+<!-- 市場選択ページ -->
+<div class="market-select">
+  <a href="us/index.html" class="market-card">
+    <div class="market-flag">🇺🇸</div>
+    <div>米国株（S&P500・NASDAQ100）</div>
+  </a>
+  <a href="jp/index.html" class="market-card">
+    <div class="market-flag">🇯🇵</div>
+    <div>日本株（日経225）</div>
+  </a>
+</div>
+```
+
+### 日本株表示の差異
+
+| 項目 | 米国株 | 日本株 |
+|------|-------|-------|
+| 通貨表示 | `$` | `¥`（円） |
+| 価格フォーマット | `$250.00` | `¥3,500` |
+| データファイル | `predictions_us.json` | `predictions_jp.json` |
+| 単元株表示 | なし | 「1単元=100株 / 最低X万円」を表示 |
 
 ### フロントエンド変更
-- `dashboard/index.html`
-  - マクロサマリーバナー領域を追加。
-- 新規: `dashboard/js/macro.js`
-  - `macro.json` を読み込み、存在時のみ描画。
-- `dashboard/css/style.css`
-  - `.macro-banner`, `.risk-off` を追加。
 
-### 対象ファイル
-- `src/macro_fetcher.py`
-- `src/exporter.py`
-- `.github/workflows/weekly_run.yml`
-- `dashboard/index.html`
-- `dashboard/js/macro.js`
-- `dashboard/css/style.css`
-- `tests/test_macro_fetcher.py`
+**`dashboard/js/app.js`**
+- `formatPrice(value, currency)` に `currency` 引数を追加（`"USD"` / `"JPY"`）
+- JPY の場合は小数点なし・千区切りで表示
 
----
+**`dashboard/us/index.html`** / **`dashboard/jp/index.html`**
+- 現在の `index.html` をベースに市場別パスを設定
+- ヘッダーに「米国株」/「日本株」ラベルを追加
 
-## 共通仕様: 透明性メタデータ（予測/評価系JSON）
+**`dashboard/js/index_jp.js`**
+- `loadJSON("../data/predictions_jp.json")` を参照
+- 円建て表示ロジック
 
-research3.md の最低要件として、予測・評価系成果物 JSON に `as_of_utc` と `data_coverage_weeks` を統一付与する。
+### 実装済み変更ファイル
 
-**適用範囲の方針（方針B）**: 対象を「予測/評価系JSON（predictions.json / accuracy.json / comparison.json）」に限定する。
-`macro.json` は外部データ（FRED）を取得して生成するため `data_coverage_weeks` は対象外とし、`as_of_utc` のみ付与する。
+| ファイル | 変更内容 |
+|---------|---------|
+| `dashboard/index.html` | 市場選択ランディングページに変更 |
+| `dashboard/us/index.html` | 米国株サマリー（新規） |
+| `dashboard/us/accuracy.html` | 米国株的中率（新規） |
+| `dashboard/us/stock.html` | 米国株銘柄詳細（新規） |
+| `dashboard/jp/index.html` | 日本株サマリー（新規） |
+| `dashboard/jp/accuracy.html` | 日本株的中率（新規） |
+| `dashboard/jp/stock.html` | 日本株銘柄詳細（新規） |
+| `dashboard/js/app.js` | `MARKET` / `DATA_BASE` / `predictionsFile()` 自動検出を追加；`formatPrice(price, currency)` JPY 対応 |
+| `dashboard/js/index_us.js` | 米国株サマリー描画（新規）— `predictions_us.json` 参照 |
+| `dashboard/js/index_jp.js` | 日本株サマリー描画（新規）— 円建て・単元株表示 |
+| `dashboard/js/accuracy.js` | `predictionsFile()` を使用して市場別 JSON を参照 |
+| `dashboard/js/stock.js` | `predictionsFile()` を使用して市場別 JSON を参照 |
+| `dashboard/css/style.css` | `.market-select` / `.market-card` / `.market-label` スタイル追加 |
 
-### 対象ファイルと付与フィールド
+### 市場検出メカニズム（app.js）
 
-| ファイル | as_of_utc | data_coverage_weeks | 担当モジュール |
-|---------|-----------|---------------------|--------------|
-| `predictions.json` | ✓ | ✓ | `src/exporter.py` |
-| `accuracy.json` | ✓ | ✓ | `src/exporter.py` |
-| `comparison.json` | ✓ | ✓ | `src/baseline.py` |
-| `macro.json` | ✓ | ✗（外部データのため対象外） | `src/macro_fetcher.py` |
-
-### スキーマ例（予測/評価系）
-```json
-{
-  "as_of_utc": "2026-02-20T00:10:00Z",
-  "data_coverage_weeks": 52
-}
+```js
+// URL パスから自動判定（サーバーなしでもファイルパスで動作）
+var MARKET = path.indexOf("/jp/") !== -1 ? "jp" : "us";
+var DATA_BASE = (path includes /us/ or /jp/) ? "../data/" : "data/";
 ```
 
-### 実装方針
-- `as_of_utc` の意味（方針A採用）: 全 JSON で「生成時刻（UTC現在時刻）」に統一。`datetime.utcnow().isoformat() + "Z"` を書き込み時に付与する。
-- `macro.json` の FRED 系列基準日: `as_of_utc` とは別に `data_as_of_utc`（FRED の最新系列日時）を付与する。
-- `data_coverage_weeks`: 確定済みレコード（`hit` が "的中" or "外れ"）の週数を集計。
-- 共通関数配置: `src/meta.py` に `build_common_meta(records)` を新設し、`src/exporter.py` と `src/baseline.py` の両方から import して使用する。`macro.json` 生成時は `src/macro_fetcher.py` が直接 `as_of_utc` を付与する（`data_coverage_weeks` は不要）。
-
----
-
-## 実装順序（research3）
-
-1. フェーズ7: 確率化 + 校正ダッシュボード
-2. フェーズ8: ポジションサイジング + 損切り規律
-3. フェーズ9: バックテスト品質開示
-4. フェーズ10: マクロ指標統合（FRED）
-
----
-
-## 依存関係
-
-- フェーズ7
-  - 依存なし（単独着手可能）
-  - 校正品質表示は `n_calibrated` の蓄積件数に依存
-- フェーズ8
-  - フェーズ1の `risk.vol_20d_ann` を再利用（実装済み）
-- フェーズ9
-  - フェーズ6の `comparison.json` を拡張（実装済み）
-- フェーズ10
-  - 他フェーズに依存せず独立実装可能
-
----
-
-## レビュー結果（今回反映）
-
-- 実装済みフェーズ（1〜6）の詳細記述を削除し、要約のみへ整理。
-- 旧計画（research2）と新規計画（research3）が同一粒度で混在していた構成を解消。
-- フェーズ10の対象を「FRED初期版」に明示し、BOJ等との差分を明確化。
-
-### review.md 指摘事項の反映（2026-02-20 第1回）
-
-- [x] 参照パス誤記修正: `docs/gpt_reseach.md/research3.md` → `docs/gpt_reseach/research3.md`
-- [x] フェーズ9: `reality_check_pvalue` / `pbo` / `deflated_sharpe` を出力スキーマに追加、`src/baseline.py` の算出責務を明記
-- [x] 共通メタデータ: 予測/評価系JSON（predictions.json / accuracy.json / comparison.json）に `as_of_utc` / `data_coverage_weeks` を統一追加
-- [x] フェーズ7の校正指標を `overall` + `recent_n_weeks` の2ウィンドウ構成に分割、UI要件に「全期間と直近N週の並列表示」を追記
-
-### review.md 指摘事項の反映（2026-02-20 第2回）
-
-- [x] 透明性メタデータの適用範囲を方針B（予測/評価系のみ）に統一。`macro.json` は `as_of_utc` のみ・`data_coverage_weeks` は対象外と明記
-- [x] フェーズ9: `config.yaml` に `min_rules_for_pbo` を追加し、品質指標の算出条件を明示
-- [x] フェーズ9: `hygiene_status`（`insufficient_trials` / `computed` / `partial`）を `comparison.json` スキーマに追加し、`null` のまま固定化しないためのステータス管理を定義
-
-### review.md 指摘事項の反映（2026-02-20 第3回）
-
-- [x] `as_of_utc` の意味を全 JSON で「生成時刻（UTC現在時刻）」に統一（方針A採用）。`macro.json` の FRED 系列基準日は `data_as_of_utc` として別名で保持するよう明記
-- [x] 共通メタ関数 `build_common_meta` を `src/meta.py` に分離し、`src/exporter.py` と `src/baseline.py` から import して使用する設計を明示
-
-### review.md 指摘事項の反映（2026-02-20 第4回）
-
-- [x] フェーズ7のスキーマ例冒頭に「共通メタデータは共通仕様セクション準拠」の注記を追加し、実装漏れを防止
-- [x] フェーズ9の対象ファイルに `tests/test_baseline.py` を追加し、`hygiene_status` 分岐と `min_rules_for_pbo` 条件の検証対象を明記
-
-### review.md 指摘事項の反映（2026-02-20 第6回）
-
-- [x] フェーズ7注記の「全成果物に統一付与」を「予測/評価系成果物に統一付与（macro.jsonは対象外）」へ修正し、共通仕様セクションの適用範囲と文言を統一
+- `us/` 下のページ → `../data/predictions_us.json`
+- `jp/` 下のページ → `../data/predictions_jp.json`
+- ルート（後方互換）→ `data/predictions.json`
 
 ### 受け入れ確認チェック
 
-- `plan.md` の research3参照パスが実在パスと一致している。
-- フェーズ9仕様に Reality Check / PBO / Deflated Sharpe が含まれている。
-- `macro.json` の `data_coverage` 方針が計画全体で一貫している（`as_of_utc` のみ・`data_coverage_weeks` は対象外）。
-- `predictions.json` / `accuracy.json` / `comparison.json` に `as_of_utc` / `data_coverage_weeks` が定義されている。
-- 校正指標が「全期間（overall）+ 直近N週（recent_n_weeks）」で表示される。
-- フェーズ9で品質指標が `null` のまま固定化しないための `hygiene_status` と最小試行数要件（`min_rules_for_pbo`）が定義されている。
-- `as_of_utc` の意味が全成果物で「生成時刻」に統一され、FRED 系列基準日は `data_as_of_utc` として区別されている。
-- 共通メタ生成ロジックが `src/meta.py` に分離され、`src/exporter.py` と `src/baseline.py` の依存関係が明示されている。
-- フェーズ別スキーマ例と共通仕様の必須フィールド定義に齟齬がない（フェーズ7に共通仕様参照注記あり）。
-- フェーズ9の品質指標ロジックに対するユニットテスト（`tests/test_baseline.py`）追加が計画に含まれている。
-- フェーズ7注記と共通仕様セクションで、`data_coverage_weeks` の適用範囲が同一文言で定義されている（予測/評価系JSONのみ、macro.jsonは対象外）。
+- [x] `dashboard/index.html` が市場選択ページとして機能する
+- [x] `us/index.html` が米国株サマリーを USD 表示で描画する
+- [x] `jp/index.html` が日本株データを円建てで表示する（JPY / 単元株情報付き）
+- [x] 米国株フローの障害が日本株フローに影響しない（独立した try/except）
+- [x] `predictions_us.json` と `predictions_jp.json` が別ファイルとして出力される
+- [x] `predictions.json` が後方互換として継続出力される

@@ -1,12 +1,13 @@
 /**
- * index.html: 週次サマリーカード描画（リスク情報 + イベントバッジ付き）
+ * us/index.html: 米国株週次サマリーカード描画
+ * predictions_us.json を参照する。ロジックは index.js と同一。
  */
 
 (function () {
   async function init() {
     try {
       var data = await Promise.all([
-        loadJSON("predictions.json"),
+        loadJSON("predictions_us.json"),
         loadJSON("accuracy.json"),
       ]);
       var predictionsJson = data[0];
@@ -38,7 +39,6 @@
       return p.date === latestDate;
     });
 
-    // 重複排除: 同一ティッカーは「予測済み」を優先
     var tickerMap = {};
     latest.forEach(function (p) {
       var existing = tickerMap[p.ticker];
@@ -47,7 +47,6 @@
       }
     });
 
-    // predicted_change_pct_clipped (あれば) 降順でソート
     var deduped = Object.keys(tickerMap)
       .map(function (k) { return tickerMap[k]; })
       .sort(function (a, b) {
@@ -61,7 +60,6 @@
 
     var html = "";
     deduped.forEach(function (p) {
-      // Phase 5: clipped 値を優先表示
       var displayPct = p.predicted_change_pct_clipped != null
         ? p.predicted_change_pct_clipped
         : p.predicted_change_pct;
@@ -75,59 +73,45 @@
         '  <div class="ticker">' +
         '    <a href="stock.html?ticker=' +
         encodeURIComponent(p.ticker) +
-        '">' +
-        p.ticker +
-        "</a>" +
+        '">' + p.ticker + "</a>" +
         (isClipped ? ' <span class="badge sanity-clipped">CLIPPED</span>' : "") +
         (isWarn ? ' <span class="badge sanity-warn">WARN</span>' : "") +
         "  </div>" +
         '  <div class="price-row">' +
         '    <span class="price">' +
-        formatPrice(p.current_price) +
-        " → " +
-        formatPrice(p.predicted_price) +
+        formatPrice(p.current_price) + " → " + formatPrice(p.predicted_price) +
         "</span>" +
-        '    <span class="change ' +
-        changeClass +
-        '">' +
+        '    <span class="change ' + changeClass + '">' +
         formatPct(displayPct) +
         (isClipped ? ' <span class="sanity-original">(元値: ' + formatPct(p.predicted_change_pct) + ")</span>" : "") +
         "</span>" +
         "  </div>" +
         '  <div class="price-row">' +
-        '    <span class="price">実績: ' +
-        formatPrice(p.actual_price) +
-        "</span>" +
-        "    " +
-        hitBadge(p.hit) +
+        '    <span class="price">実績: ' + formatPrice(p.actual_price) + "</span>" +
+        "    " + hitBadge(p.hit) +
         "  </div>";
 
-      // Phase 1: リスク情報行
       if (p.risk) {
         var riskText = "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
           " | β" + p.risk.beta.toFixed(2) +
           " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%";
-        // Phase 8: サイズ目安を追記
         if (p.sizing && p.sizing.max_position_weight != null) {
           riskText += " | 最大" + (p.sizing.max_position_weight * 100).toFixed(0) + "%";
         }
         html += '  <div class="risk-row">' + riskText + "  </div>";
       }
 
-      // Phase 1: イベントバッジ
       if (p.events && p.events.length > 0) {
         html += '  <div class="event-badges">';
         p.events.forEach(function (ev) {
-          var label =
-            ev.type === "earnings"
-              ? "決算" + ev.days_to + "日後"
-              : "配当落ち" + ev.days_to + "日後";
+          var label = ev.type === "earnings"
+            ? "決算" + ev.days_to + "日後"
+            : "配当落ち" + ev.days_to + "日後";
           html += '<span class="event-badge">' + label + "</span>";
         });
         html += "  </div>";
       }
 
-      // 買い時・売り時アクション行
       if (p.status === "予測済み") {
         if (displayPct > 0) {
           html += '<div class="action-row action-buy">▲ 今週の推奨行動: 購入を検討（予測 ' + formatPct(displayPct) + '）</div>';

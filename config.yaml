@@ -5,16 +5,17 @@ screening:
   markets:
     - "sp500"
     - "nasdaq100"
-    # - "nikkei225"  # 必要に応じて有効化
+    - "nikkei225"   # Phase 15: 日本株データ収集を有効化
   top_n: 10
   min_market_cap: 10_000_000_000  # 100億ドル以上
   lookback_days: 30               # 直近30日間のデータで評価
-  # スコアリング重み
+  # スコアリング重み（合計1.0）
   weights:
-    price_change_1m: 0.3    # 直近1ヶ月の株価上昇率
-    volume_trend: 0.2       # 出来高増加トレンド
-    rsi_score: 0.25         # RSIスコア (30-70の中間帯が高評価)
-    macd_signal: 0.25       # MACDシグナル
+    price_change_1m: 0.25   # 直近1ヶ月の株価上昇率
+    volume_trend: 0.15      # 出来高増加トレンド
+    rsi_score: 0.20         # RSIスコア (30-70の中間帯が高評価)
+    macd_signal: 0.20       # MACDシグナル
+    fifty2w_score: 0.20     # 52週高値モメンタム (Phase 13)
 
 # AI予測設定
 prediction:

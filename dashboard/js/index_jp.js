@@ -1,26 +1,37 @@
 /**
- * index.html: 週次サマリーカード描画（リスク情報 + イベントバッジ付き）
+ * jp/index.html: 日本株週次サマリーカード描画
+ * predictions_jp.json を参照し、価格を円建て（JPY）で表示する。
+ * 単元株（1単元=100株）の最低投資額も表示する。
  */
 
 (function () {
   async function init() {
     try {
       var data = await Promise.all([
-        loadJSON("predictions.json"),
-        loadJSON("accuracy.json"),
+        loadJSON("predictions_jp.json"),
+        loadJSON("accuracy.json").catch(function () { return null; }),
       ]);
       var predictionsJson = data[0];
       var predictions = predictionsJson.predictions || predictionsJson;
       var accuracy = data[1];
 
-      showLastUpdated(accuracy);
-      renderHeaderAccuracy(accuracy);
+      if (accuracy) {
+        showLastUpdated(accuracy);
+        renderHeaderAccuracy(accuracy);
+      }
       renderPredictionCards(predictions);
     } catch (e) {
       document.getElementById("prediction-cards").innerHTML =
-        '<div class="empty-state">データを読み込めませんでした。</div>';
+        '<div class="empty-state">日本株データを読み込めませんでした。まだデータ収集中の可能性があります。</div>';
       console.error(e);
     }
+  }
+
+  /** 単元株の最低投資額を計算して文字列で返す（1単元=100株）。*/
+  function formatUnitInfo(price) {
+    if (!price) return null;
+    var minInvestment = Math.round(Number(price)) * 100;
+    return "1単元(100株)の最低投資額: ¥" + minInvestment.toLocaleString("ja-JP");
   }
 
   function renderPredictionCards(predictions) {
@@ -30,7 +41,7 @@
 
     if (!latestDate) {
       container.innerHTML =
-        '<div class="empty-state">予測データがありません。</div>';
+        '<div class="empty-state">日本株の予測データがありません。データ収集をお待ちください。</div>';
       return;
     }
 
@@ -38,7 +49,6 @@
       return p.date === latestDate;
     });
 
-    // 重複排除: 同一ティッカーは「予測済み」を優先
     var tickerMap = {};
     latest.forEach(function (p) {
       var existing = tickerMap[p.ticker];
@@ -47,7 +57,6 @@
       }
     });
 
-    // predicted_change_pct_clipped (あれば) 降順でソート
     var deduped = Object.keys(tickerMap)
       .map(function (k) { return tickerMap[k]; })
       .sort(function (a, b) {
@@ -61,7 +70,6 @@
 
     var html = "";
     deduped.forEach(function (p) {
-      // Phase 5: clipped 値を優先表示
       var displayPct = p.predicted_change_pct_clipped != null
         ? p.predicted_change_pct_clipped
         : p.predicted_change_pct;
@@ -70,64 +78,56 @@
       var isWarn = flags.indexOf("WARN_HIGH") >= 0;
       var changeClass = displayPct >= 0 ? "positive" : "negative";
 
+      // 日本株は円建て表示
+      var curPrice = formatPrice(p.current_price, "JPY");
+      var predPrice = formatPrice(p.predicted_price, "JPY");
+      var actPrice = formatPrice(p.actual_price, "JPY");
+
+      // ティッカー表示: "7203.T" → "7203.T (トヨタ自動車など)" の形
+      var displayTicker = p.ticker;
+
       html +=
         '<div class="card">' +
         '  <div class="ticker">' +
-        '    <a href="stock.html?ticker=' +
-        encodeURIComponent(p.ticker) +
-        '">' +
-        p.ticker +
-        "</a>" +
+        '    <a href="stock.html?ticker=' + encodeURIComponent(p.ticker) + '">' + displayTicker + "</a>" +
         (isClipped ? ' <span class="badge sanity-clipped">CLIPPED</span>' : "") +
         (isWarn ? ' <span class="badge sanity-warn">WARN</span>' : "") +
         "  </div>" +
         '  <div class="price-row">' +
-        '    <span class="price">' +
-        formatPrice(p.current_price) +
-        " → " +
-        formatPrice(p.predicted_price) +
-        "</span>" +
-        '    <span class="change ' +
-        changeClass +
-        '">' +
-        formatPct(displayPct) +
+        '    <span class="price">' + curPrice + " → " + predPrice + "</span>" +
+        '    <span class="change ' + changeClass + '">' + formatPct(displayPct) +
         (isClipped ? ' <span class="sanity-original">(元値: ' + formatPct(p.predicted_change_pct) + ")</span>" : "") +
         "</span>" +
         "  </div>" +
         '  <div class="price-row">' +
-        '    <span class="price">実績: ' +
-        formatPrice(p.actual_price) +
-        "</span>" +
-        "    " +
-        hitBadge(p.hit) +
+        '    <span class="price">実績: ' + actPrice + "</span>" +
+        "    " + hitBadge(p.hit) +
         "  </div>";
 
-      // Phase 1: リスク情報行
+      // 単元株情報（日本株固有）
+      var unitInfo = formatUnitInfo(p.current_price);
+      if (unitInfo) {
+        html += '  <div class="risk-row" style="color:#555;">' + unitInfo + "</div>";
+      }
+
       if (p.risk) {
         var riskText = "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
           " | β" + p.risk.beta.toFixed(2) +
           " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%";
-        // Phase 8: サイズ目安を追記
-        if (p.sizing && p.sizing.max_position_weight != null) {
-          riskText += " | 最大" + (p.sizing.max_position_weight * 100).toFixed(0) + "%";
-        }
         html += '  <div class="risk-row">' + riskText + "  </div>";
       }
 
-      // Phase 1: イベントバッジ
       if (p.events && p.events.length > 0) {
         html += '  <div class="event-badges">';
         p.events.forEach(function (ev) {
-          var label =
-            ev.type === "earnings"
-              ? "決算" + ev.days_to + "日後"
-              : "配当落ち" + ev.days_to + "日後";
+          var label = ev.type === "earnings"
+            ? "決算" + ev.days_to + "日後"
+            : "配当落ち" + ev.days_to + "日後";
           html += '<span class="event-badge">' + label + "</span>";
         });
         html += "  </div>";
       }
 
-      // 買い時・売り時アクション行
       if (p.status === "予測済み") {
         if (displayPct > 0) {
           html += '<div class="action-row action-buy">▲ 今週の推奨行動: 購入を検討（予測 ' + formatPct(displayPct) + '）</div>';
@@ -136,7 +136,7 @@
         }
         if (p.sizing && p.sizing.stop_loss_pct != null && p.current_price) {
           var stopPrice = p.current_price * (1 + p.sizing.stop_loss_pct);
-          html += '<div class="action-stop">損切り目安: ' + formatPrice(stopPrice) + ' を下回ったら売り</div>';
+          html += '<div class="action-stop">損切り目安: ' + formatPrice(stopPrice, "JPY") + ' を下回ったら売り</div>';
         }
       }
 

@@ -21,13 +21,35 @@ def run() -> None:
     """ワークフロー全体を実行する。"""
     config = load_config()
 
-    # ステップ1: 自動スクリーニング
+    # ステップ1: 自動スクリーニング（米国株）
     logger.info("=" * 50)
-    logger.info("ステップ1: 自動スクリーニング")
+    logger.info("ステップ1: 自動スクリーニング（米国株）")
     logger.info("=" * 50)
     from src.screener import screen
 
-    screened = screen(config)
+    # 米国株: sp500 / nasdaq100 のみ対象
+    us_markets = [m for m in config["screening"]["markets"] if m != "nikkei225"]
+    screened = screen(config, market=None)  # 後続ステップ(predict/sheets/notify)は米国株のみ
+
+    # Phase 15: 日本株スクリーニングを独立フローで実行（失敗しても米国株フローに影響しない）
+    if "nikkei225" in config["screening"]["markets"]:
+        logger.info("=" * 50)
+        logger.info("ステップ1-JP: 自動スクリーニング（日本株）")
+        logger.info("=" * 50)
+        try:
+            jp_screened = screen(config, market="nikkei225")
+            if jp_screened.empty:
+                logger.warning("日本株スクリーニング結果が空です")
+            else:
+                logger.info("日本株トップ%d:", len(jp_screened))
+                for _, row in jp_screened.iterrows():
+                    logger.info(
+                        "  %s: ¥%.0f (スコア: %.4f)",
+                        row["ticker"], row["current_price"], row["score"],
+                    )
+        except Exception:
+            logger.exception("日本株スクリーニングでエラーが発生しましたが、米国株フローを続行します")
+
     if screened.empty:
         logger.error("スクリーニング結果が空のため、処理を中断します")
         return
@@ -120,6 +142,18 @@ def run() -> None:
             logger.warning("ダッシュボードデータエクスポートに問題が発生しました")
     except Exception:
         logger.exception("エクスポートでエラーが発生しましたが、処理を続行します")
+
+    # ステップ7: アルファサーベイ（アノマリー統計検証）
+    logger.info("=" * 50)
+    logger.info("ステップ7: アルファサーベイ")
+    logger.info("=" * 50)
+    try:
+        from src.alpha_survey import run_and_export as run_alpha_survey
+
+        run_alpha_survey()
+        logger.info("アルファサーベイ完了")
+    except Exception:
+        logger.exception("アルファサーベイでエラーが発生しましたが、処理を続行します")
 
     logger.info("=" * 50)
     logger.info("全ステップ完了")

@@ -29,7 +29,7 @@
 
     try {
       var data = await Promise.all([
-        loadJSON("predictions.json"),
+        loadJSON(predictionsFile()),
         loadJSON("stock_history.json"),
         loadJSON("accuracy.json"),
       ]);
@@ -73,6 +73,8 @@
       renderSizingPanel(latestWithRisk);
       renderEvidencePanel(latestWithRisk);
       renderExplanationsPanel(latestWithRisk);
+      renderShortInterestPanel(latestWithRisk);
+      renderInstitutionalPanel(latestWithRisk);
       renderPriceChart(tickerHistory, ticker);
       renderHistoryTable(tickerPredictions);
     } catch (e) {
@@ -172,18 +174,40 @@
       ? (s.stop_loss_pct * 100).toFixed(1) + "%"
       : "-";
 
+    var stopPriceHtml = "";
+    if (s.stop_loss_pct != null && prediction.current_price) {
+      var stopPrice = prediction.current_price * (1 + s.stop_loss_pct);
+      stopPriceHtml =
+        '<div class="stop-loss-highlight">' +
+        '<div class="stop-label">損切り価格（この価格を下回ったら売り）</div>' +
+        '<div class="stop-price">' + formatPrice(stopPrice) + '</div>' +
+        '<div class="stop-desc">現在価格 ' + formatPrice(prediction.current_price) + ' から ' + sl + ' 下落した水準</div>' +
+        '</div>';
+    }
+
+    var targetPriceHtml = "";
+    if (prediction.predicted_price) {
+      targetPriceHtml =
+        '<div class="target-price-row">' +
+        '<span class="target-price-label">目標価格（予測）</span>' +
+        '<span class="target-price-value">' + formatPrice(prediction.predicted_price) + '</span>' +
+        '</div>';
+    }
+
     container.innerHTML =
-      '<h3>ポジションサイジング</h3>' +
+      '<h3>ポジションサイジング・売買ガイド</h3>' +
       '<div class="sizing-panel">' +
       '<div class="sizing-row">' +
       '<span class="sizing-label">最大保有比率</span>' +
       '<span class="sizing-value">' + maxW + "</span>" +
       "</div>" +
       '<div class="sizing-row">' +
-      '<span class="sizing-label">推奨損切り水準</span>' +
-      '<span class="sizing-value">' + sl + "</span>" +
+      '<span class="sizing-label">損切り水準</span>' +
+      '<span class="sizing-value sizing-stop">' + sl + "</span>" +
       "</div>" +
       "</div>" +
+      stopPriceHtml +
+      targetPriceHtml +
       '<p class="sizing-note">※ ' + (s.stop_loss_rationale || "") + '</p>';
     container.style.display = "";
   }
@@ -265,6 +289,57 @@
     html += '<p class="explanation-note">' + expl.note + "</p>";
 
     container.innerHTML = html;
+    container.style.display = "";
+  }
+
+  // --- Phase 11: 空売り補助情報パネル ---
+
+  function renderShortInterestPanel(prediction) {
+    var container = document.getElementById("short-interest-panel");
+    if (!container) return;
+    if (!prediction || !prediction.short_interest) {
+      container.style.display = "none";
+      return;
+    }
+    var si = prediction.short_interest;
+    var ratioStr = si.short_ratio != null ? si.short_ratio.toFixed(1) + " 日" : "-";
+    var pctStr = si.short_pct_float != null ? (si.short_pct_float * 100).toFixed(1) + "%" : "-";
+    var signalMap = { high_short: "高（空売り圧力大）", moderate_short: "中程度", neutral: "低〜中（通常）" };
+    var signalLabel = signalMap[si.signal] || si.signal;
+
+    container.innerHTML =
+      "<h3>空売り状況 <span class=\"panel-note\">参考情報</span></h3>" +
+      "<div class=\"info-rows\">" +
+      "<div class=\"info-row\"><span class=\"info-label\">Short Ratio</span><span class=\"info-value\">" + ratioStr + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">空売り比率</span><span class=\"info-value\">" + pctStr + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">シグナル</span><span class=\"info-value\">" + signalLabel + "</span></div>" +
+      "</div>" +
+      "<p class=\"panel-note\">" + (si.data_note || "") + "</p>";
+    container.style.display = "";
+  }
+
+  // --- Phase 12: 機関投資家保有パネル ---
+
+  function renderInstitutionalPanel(prediction) {
+    var container = document.getElementById("institutional-panel");
+    if (!container) return;
+    if (!prediction || !prediction.institutional) {
+      container.style.display = "none";
+      return;
+    }
+    var inst = prediction.institutional;
+    var pctStr = inst.institutional_pct != null ? (inst.institutional_pct * 100).toFixed(1) + "%" : "-";
+    var holders = inst.top5_holders && inst.top5_holders.length > 0
+      ? inst.top5_holders.join("、")
+      : "-";
+
+    container.innerHTML =
+      "<h3>主要機関保有者 <span class=\"panel-note\">参考情報</span></h3>" +
+      "<div class=\"info-rows\">" +
+      "<div class=\"info-row\"><span class=\"info-label\">機関保有率</span><span class=\"info-value\">" + pctStr + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">上位5機関</span><span class=\"info-value\">" + holders + "</span></div>" +
+      "</div>" +
+      "<p class=\"panel-note\">" + (inst.data_note || "") + "</p>";
     container.style.display = "";
   }
 

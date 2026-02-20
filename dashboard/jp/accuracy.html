@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>的中率 - AI Stock Predictions</title>
-  <link rel="stylesheet" href="css/style.css">
+  <title>日本株 的中率 - AI Stock Predictions</title>
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
   <header>
     <div class="header-inner">
       <div class="header-left">
-        <h1>AI Stock Predictions</h1>
+        <h1>AI Stock Predictions <span class="market-label">🇯🇵 日本株</span></h1>
         <div class="subtitle" id="last-updated"></div>
       </div>
       <div class="header-right">
@@ -21,7 +21,7 @@
         <nav>
           <a href="index.html">サマリー</a>
           <a href="accuracy.html" class="active">的中率</a>
-          <a href="simulator.html">シミュレータ</a>
+          <a href="../index.html">← 市場選択</a>
         </nav>
         <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
       </div>
@@ -45,7 +45,6 @@
       </div>
     </section>
 
-    <!-- Phase 4: 予測誤差分析 -->
     <section id="error-analysis-section" style="display:none">
       <h2>予測誤差分析</h2>
       <div class="card stat-card" id="mae-card">
@@ -60,53 +59,16 @@
       </div>
     </section>
 
-    <!-- Phase 7: 校正ダッシュボード -->
-    <section id="calibration-section" style="display:none">
-      <h2>確率校正ダッシュボード</h2>
-      <div class="calibration-stats" id="calibration-stats"></div>
-      <div class="chart-container">
-        <canvas id="calibration-chart"></canvas>
-      </div>
-      <p class="calibration-note">※ データが30件以上蓄積されると表示されます。Brier スコアは低いほど良好、ECE は0に近いほど校正精度が高い。</p>
-    </section>
-
-    <!-- Phase 9: バックテスト品質開示 -->
-    <section id="backtest-hygiene-section" style="display:none">
-      <h2>バックテスト品質開示</h2>
-      <div id="backtest-hygiene-panel"></div>
-    </section>
-
-    <!-- Phase 6: 戦略比較 -->
-    <section id="comparison-section" style="display:none">
-      <h2>戦略別パフォーマンス比較</h2>
-      <p class="comparison-note">※ 取引コスト・スリッページは考慮していません。過去の成績は将来を保証しません。</p>
-      <div class="chart-container">
-        <canvas id="comparison-chart"></canvas>
-      </div>
-      <div id="comparison-table">
-        <div class="loading">読み込み中...</div>
-      </div>
-    </section>
-
     <section>
       <h2>銘柄別的中率ランキング</h2>
       <div id="ticker-ranking">
         <div class="loading">読み込み中...</div>
       </div>
     </section>
-
-    <!-- Phase 13: アルファサーベイ -->
-    <section id="alpha-survey-section" style="display:none">
-      <h2>アノマリー統計検証</h2>
-      <p class="panel-note">※ 参考情報です。スコアリングには反映されていません。</p>
-      <div id="alpha-survey-table">
-        <div class="loading">読み込み中...</div>
-      </div>
-    </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-  <script src="js/app.js"></script>
-  <script src="js/accuracy.js"></script>
+  <script src="../js/app.js"></script>
+  <script src="../js/accuracy.js"></script>
 </body>
 </html>

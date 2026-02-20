@@ -311,6 +311,138 @@ class TestComputeEvidenceSignals:
             assert 0 <= result["composite"] <= 100
 
 
+# --- Phase 11: enrich_short_interest ---
+
+
+class TestEnrichShortInterest:
+
+    def test_normal_data(self):
+        from src.enricher import enrich_short_interest
+
+        info = {"shortRatio": 3.2, "shortPercentOfFloat": 0.052}
+        result = enrich_short_interest("AAPL", info)
+
+        assert result is not None
+        assert result["short_ratio"] == 3.2
+        assert result["short_pct_float"] == 0.052
+        assert result["signal"] == "neutral"
+        assert "月次更新" in result["data_note"]
+        assert "参考値" in result["data_note"]
+
+    def test_high_short(self):
+        from src.enricher import enrich_short_interest
+
+        info = {"shortRatio": 10.0, "shortPercentOfFloat": 0.25}
+        result = enrich_short_interest("GME", info)
+        assert result["signal"] == "high_short"
+
+    def test_moderate_short(self):
+        from src.enricher import enrich_short_interest
+
+        info = {"shortRatio": 5.0, "shortPercentOfFloat": 0.15}
+        result = enrich_short_interest("TEST", info)
+        assert result["signal"] == "moderate_short"
+
+    def test_missing_data_returns_none_fields(self):
+        from src.enricher import enrich_short_interest
+
+        result = enrich_short_interest("AAPL", {})
+        assert result is not None
+        assert result["short_ratio"] is None
+        assert result["short_pct_float"] is None
+
+
+# --- Phase 12: enrich_institutional_holders ---
+
+
+class TestEnrichInstitutionalHolders:
+
+    @patch("src.enricher.yf.Ticker")
+    def test_normal_data(self, mock_ticker_cls):
+        import pandas as pd
+        from src.enricher import enrich_institutional_holders
+
+        mock_df = pd.DataFrame({
+            "Holder": ["Vanguard", "BlackRock", "State Street"],
+            "Shares": [100000, 80000, 60000],
+        })
+        mock_ticker_cls.return_value.institutional_holders = mock_df
+        mock_ticker_cls.return_value.info = {"heldPercentInstitutions": 0.78}
+
+        result = enrich_institutional_holders("AAPL")
+
+        assert result is not None
+        assert result["institutional_pct"] == 0.78
+        assert "Vanguard" in result["top5_holders"]
+        assert "45〜75日" in result["data_note"]
+
+    @patch("src.enricher.yf.Ticker")
+    def test_empty_holders(self, mock_ticker_cls):
+        import pandas as pd
+        from src.enricher import enrich_institutional_holders
+
+        mock_ticker_cls.return_value.institutional_holders = pd.DataFrame()
+        mock_ticker_cls.return_value.info = {}
+
+        result = enrich_institutional_holders("AAPL")
+        assert result is None
+
+    @patch("src.enricher.yf.Ticker")
+    def test_exception_returns_none(self, mock_ticker_cls):
+        from src.enricher import enrich_institutional_holders
+
+        mock_ticker_cls.side_effect = Exception("API error")
+        result = enrich_institutional_holders("AAPL")
+        assert result is None
+
+
+# --- Phase 13: enrich_52w_high ---
+
+
+class TestEnrich52wHigh:
+
+    def test_normal_data(self):
+        from src.enricher import enrich_52w_high
+
+        info = {"currentPrice": 90.0, "fiftyTwoWeekHigh": 100.0}
+        result = enrich_52w_high("AAPL", info)
+
+        assert result is not None
+        assert result["fifty2w_score"] == 0.9
+        assert result["fifty2w_pct_from_high"] == -0.1
+
+    def test_zero_score_key_not_missing(self):
+        """極端に低い価格でも fifty2w_score キーが存在することを検証する。"""
+        from src.enricher import enrich_52w_high
+
+        info = {"currentPrice": 1.0, "fiftyTwoWeekHigh": 100.0}
+        result = enrich_52w_high("TEST", info)
+
+        assert result is not None
+        assert "fifty2w_score" in result
+        assert result["fifty2w_score"] == 0.01
+
+    def test_missing_data_returns_none(self):
+        from src.enricher import enrich_52w_high
+
+        assert enrich_52w_high("AAPL", {}) is None
+        assert enrich_52w_high("AAPL", {"currentPrice": 50.0}) is None
+        assert enrich_52w_high("AAPL", {"fiftyTwoWeekHigh": 100.0}) is None
+
+    def test_zero_high_returns_none(self):
+        from src.enricher import enrich_52w_high
+
+        assert enrich_52w_high("AAPL", {"currentPrice": 50.0, "fiftyTwoWeekHigh": 0.0}) is None
+
+    def test_at_high(self):
+        from src.enricher import enrich_52w_high
+
+        info = {"currentPrice": 100.0, "fiftyTwoWeekHigh": 100.0}
+        result = enrich_52w_high("AAPL", info)
+        assert result["fifty2w_score"] == 1.0
+        assert result["fifty2w_pct_from_high"] == 0.0
+
+
 # --- Phase 4: build_error_analysis (exporter) ---
 
 

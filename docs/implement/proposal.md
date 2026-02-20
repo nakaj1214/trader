@@ -1,1 +1,0 @@
-docs\gpt_reseach.md\research2.md を確認し実装計画書を docs\implement\plan.md に記述

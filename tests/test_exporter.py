@@ -50,7 +50,7 @@ SAMPLE_RECORDS = [
 
 
 def test_build_predictions_json_schema():
-    """predictions.json の各エントリが必要なキーを持つことを検証する。"""
+    """predictions.json の各エントリが必要な基本キーを持つことを検証する（最新週エントリで確認）。"""
     from src.exporter import build_predictions_json
 
     result = build_predictions_json(SAMPLE_RECORDS)
@@ -66,9 +66,67 @@ def test_build_predictions_json_schema():
         "actual_price",
         "status",
         "hit",
+        "prob_up",
+        "prob_up_calibrated",
     }
     for entry in result:
-        assert set(entry.keys()) == required_keys
+        assert required_keys.issubset(set(entry.keys()))
+
+
+def test_build_predictions_json_new_keys_from_enrichment():
+    """Phase11/12/13の新規キーが enrichment 経由で最新週エントリに付与されることを検証する。"""
+    from src.exporter import build_predictions_json
+
+    records = [SAMPLE_RECORDS[2]]  # 最新週 GOOGL
+    enrichment = {
+        ("2026-02-22", "GOOGL"): {
+            "short_interest": {
+                "short_ratio": 2.1,
+                "short_pct_float": 0.03,
+                "signal": "neutral",
+                "data_note": "月次更新・参考値（yfinance）",
+            },
+            "institutional": {
+                "institutional_pct": 0.72,
+                "top5_holders": ["Vanguard", "BlackRock"],
+                "data_note": "四半期報告（45〜75日遅延）・参考値",
+            },
+            "fifty2w_score": 0.85,
+            "fifty2w_pct_from_high": -0.15,
+        }
+    }
+
+    result = build_predictions_json(records, enrichment)
+    entry = result[0]
+
+    assert "short_interest" in entry
+    assert entry["short_interest"]["signal"] == "neutral"
+    assert "institutional" in entry
+    assert "Vanguard" in entry["institutional"]["top5_holders"]
+    assert "fifty2w_score" in entry
+    assert entry["fifty2w_score"] == 0.85
+    assert "fifty2w_pct_from_high" in entry
+    assert entry["fifty2w_pct_from_high"] == -0.15
+
+
+def test_build_predictions_json_fifty2w_zero_not_dropped():
+    """fifty2w_score=0.0 の場合にキーが欠落しないことを検証する（in 判定）。"""
+    from src.exporter import build_predictions_json
+
+    records = [SAMPLE_RECORDS[2]]
+    enrichment = {
+        ("2026-02-22", "GOOGL"): {
+            "fifty2w_score": 0.0,
+            "fifty2w_pct_from_high": -1.0,
+        }
+    }
+
+    result = build_predictions_json(records, enrichment)
+    entry = result[0]
+
+    assert "fifty2w_score" in entry
+    assert entry["fifty2w_score"] == 0.0
+    assert "fifty2w_pct_from_high" in entry
 
 
 def test_build_predictions_json_types():

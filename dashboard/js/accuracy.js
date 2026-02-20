@@ -7,13 +7,15 @@
     try {
       var data = await Promise.all([
         loadJSON("accuracy.json"),
-        loadJSON("predictions.json"),
+        loadJSON(predictionsFile()),
         loadJSON("comparison.json").catch(function () { return null; }),
+        loadJSON("alpha_survey.json").catch(function () { return null; }),
       ]);
       var accuracy = data[0];
       var predictionsJson = data[1];
       var predictions = predictionsJson.predictions || predictionsJson;
       var comparison = data[2];
+      var alphaSurvey = data[3];
 
       showLastUpdated(accuracy);
       renderHeaderAccuracy(accuracy);
@@ -24,6 +26,7 @@
       renderBacktestHygiene(comparison);
       renderComparison(comparison);
       renderTickerRanking(filterPredictions(predictions));
+      renderAlphaSurvey(alphaSurvey);
     } catch (e) {
       document.getElementById("accuracy-content").innerHTML =
         '<div class="empty-state">データを読み込めませんでした。</div>';
@@ -548,6 +551,58 @@
     });
 
     html += "</tbody></table></div>";
+    container.innerHTML = html;
+  }
+
+  // --- Phase 13: アルファサーベイ ---
+
+  function renderAlphaSurvey(survey) {
+    var section = document.getElementById("alpha-survey-section");
+    if (!section) return;
+    if (!survey || !survey.anomalies || survey.anomalies.length === 0) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+
+    var container = document.getElementById("alpha-survey-table");
+    if (!container) return;
+
+    var html =
+      '<div class="table-wrapper"><table>' +
+      "<thead><tr>" +
+      "<th>アノマリー</th>" +
+      "<th>観測数</th>" +
+      "<th>t 統計量</th>" +
+      "<th>p 値</th>" +
+      "<th>Sharpe</th>" +
+      "<th>ステータス</th>" +
+      "<th>スコア反映</th>" +
+      "</tr></thead><tbody>";
+
+    survey.anomalies.forEach(function (a) {
+      var isInsufficient = a.status === "insufficient_data" || a.n_observations < 52;
+      var statusLabel = isInsufficient ? "データ蓄積中" : a.status;
+      var scoreLabel = a.score_included
+        ? '<span class="badge badge-success">反映</span>'
+        : '<span class="badge badge-neutral">対象外</span>';
+
+      html +=
+        "<tr>" +
+        "<td>" + (a.label || a.name) + (a.note ? '<br><small class="text-muted">' + a.note + "</small>" : "") + "</td>" +
+        "<td>" + a.n_observations + "</td>" +
+        "<td>" + (a.t_stat != null ? a.t_stat.toFixed(2) : "-") + "</td>" +
+        "<td>" + (a.p_value != null ? a.p_value.toFixed(3) : "-") + "</td>" +
+        "<td>" + (a.sharpe != null ? a.sharpe.toFixed(2) : "-") + "</td>" +
+        "<td>" + statusLabel + "</td>" +
+        "<td>" + scoreLabel + "</td>" +
+        "</tr>";
+    });
+
+    html += "</tbody></table></div>";
+    if (survey.as_of_utc) {
+      html += '<p class="panel-note">更新: ' + survey.as_of_utc.replace("T", " ").slice(0, 16) + " UTC</p>";
+    }
     container.innerHTML = html;
   }
 

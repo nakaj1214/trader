@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Phase 15: 市場判定ヘルパー
+# ---------------------------------------------------------------------------
+
+def is_jp_ticker(ticker: str) -> bool:
+    """日本株ティッカーかどうかを判定する。yfinance 形式（例: 7203.T）は末尾が '.T'。"""
+    return str(ticker).upper().endswith(".T")
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: Risk metrics
 # ---------------------------------------------------------------------------
 
@@ -471,6 +480,126 @@ def compute_evidence_signals(
 
 
 # ---------------------------------------------------------------------------
+# Phase 11: Short Interest（補助情報・スコアリング対象外）
+# ---------------------------------------------------------------------------
+
+def enrich_short_interest(ticker: str, info: dict) -> dict | None:
+    """空売りデータを補助情報として返す。スコアリングには使わない。
+
+    Args:
+        ticker: ティッカーシンボル（ログ用）
+        info: 事前取得済みの yf.Ticker(t).info
+
+    Returns:
+        {"short_ratio": float|None, "short_pct_float": float|None,
+         "signal": str, "data_note": str} または None（取得失敗時）
+    """
+    try:
+        short_ratio = info.get("shortRatio")
+        short_pct = info.get("shortPercentOfFloat")
+
+        if short_pct is not None:
+            pct = float(short_pct)
+            if pct > 0.20:
+                signal = "high_short"
+            elif pct > 0.10:
+                signal = "moderate_short"
+            else:
+                signal = "neutral"
+        else:
+            signal = "neutral"
+
+        return {
+            "short_ratio": round(float(short_ratio), 2) if short_ratio is not None else None,
+            "short_pct_float": round(float(short_pct), 4) if short_pct is not None else None,
+            "signal": signal,
+            "data_note": "月次更新・参考値（yfinance）",
+        }
+    except Exception:
+        logger.warning("空売りデータ取得失敗: %s", ticker)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: Institutional Holders（静的参照情報のみ）
+# ---------------------------------------------------------------------------
+
+def enrich_institutional_holders(ticker: str) -> dict | None:
+    """機関投資家保有状況を静的参照情報として返す。トレンドシグナルとして使わない。
+
+    Args:
+        ticker: ティッカーシンボル
+
+    Returns:
+        {"institutional_pct": float|None, "top5_holders": list[str],
+         "data_note": str} または None（取得失敗時）
+    """
+    try:
+        t = yf.Ticker(ticker)
+        inst_df = t.institutional_holders
+        info = t.info or {}
+
+        if inst_df is None or inst_df.empty:
+            return None
+
+        # カラム名を動的に特定
+        name_col = next(
+            (c for c in inst_df.columns if "holder" in c.lower() or "name" in c.lower()),
+            inst_df.columns[0] if len(inst_df.columns) > 0 else None,
+        )
+        top5 = []
+        if name_col:
+            top5 = [str(h) for h in inst_df[name_col].dropna().head(5).tolist()]
+
+        inst_pct = info.get("heldPercentInstitutions")
+
+        return {
+            "institutional_pct": round(float(inst_pct), 4) if inst_pct is not None else None,
+            "top5_holders": top5,
+            "data_note": "四半期報告（45〜75日遅延）・参考値",
+        }
+    except Exception:
+        logger.warning("機関投資家データ取得失敗: %s", ticker)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 13: 52-Week High Momentum（スコアリング因子）
+# ---------------------------------------------------------------------------
+
+def enrich_52w_high(ticker: str, info: dict) -> dict | None:
+    """52週高値モメンタム指標を返す。
+
+    Args:
+        ticker: ティッカーシンボル（ログ用）
+        info: 事前取得済みの yf.Ticker(t).info
+
+    Returns:
+        {"fifty2w_score": float, "fifty2w_pct_from_high": float} または None
+    """
+    try:
+        current = info.get("currentPrice") or info.get("regularMarketPrice")
+        high52 = info.get("fiftyTwoWeekHigh")
+
+        if current is None or high52 is None:
+            return None
+
+        current = float(current)
+        high52 = float(high52)
+        if high52 <= 0:
+            return None
+
+        ratio = current / high52
+        return {
+            "fifty2w_score": round(min(ratio, 1.0), 4),
+            "fifty2w_pct_from_high": round(ratio - 1.0, 4),
+        }
+    except Exception:
+        logger.warning("52週高値データ取得失敗: %s", ticker)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Phase 1+2+3 統合: enrich
 # ---------------------------------------------------------------------------
 
@@ -491,11 +620,13 @@ def enrich(
         config: config.yaml 設定辞書
 
     Returns:
-        {(date, ticker): {"risk": {...}, "events": [...], "evidence": {...}, "explanations": {...}}}
+        {(date, ticker): {"risk": {...}, "events": [...], "evidence": {...},
+         "explanations": {...}, "short_interest": {...}, "institutional": {...},
+         "fifty2w_score": float, "fifty2w_pct_from_high": float}}
     """
     enrichment: dict[tuple, dict] = {}
 
-    # Phase 1: .info を各銘柄で1回だけ取得（Phase 2 と共有）
+    # Phase 1: .info を各銘柄で1回だけ取得（Phase 2/11/13 と共有）
     info_cache: dict[str, dict] = {}
     risk_cache: dict[str, dict] = {}
 
@@ -552,5 +683,33 @@ def enrich(
         key = (date, ticker)
         if key in enrichment:
             enrichment[key]["evidence"] = evidence
+
+    # Phase 11: Short Interest（補助情報）
+    for ticker in tickers:
+        key = (date, ticker)
+        if key not in enrichment:
+            continue
+        si = enrich_short_interest(ticker, info_cache.get(ticker, {}))
+        if si is not None:
+            enrichment[key]["short_interest"] = si
+
+    # Phase 12: Institutional Holders（静的参照情報）
+    for ticker in tickers:
+        key = (date, ticker)
+        if key not in enrichment:
+            continue
+        inst = enrich_institutional_holders(ticker)
+        if inst is not None:
+            enrichment[key]["institutional"] = inst
+
+    # Phase 13: 52-Week High Momentum
+    for ticker in tickers:
+        key = (date, ticker)
+        if key not in enrichment:
+            continue
+        fw = enrich_52w_high(ticker, info_cache.get(ticker, {}))
+        if fw is not None:
+            enrichment[key]["fifty2w_score"] = fw["fifty2w_score"]
+            enrichment[key]["fifty2w_pct_from_high"] = fw["fifty2w_pct_from_high"]
 
     return enrichment

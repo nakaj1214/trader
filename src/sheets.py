@@ -69,12 +69,19 @@ def get_or_create_worksheet(
     return worksheet
 
 
-def append_predictions(predictions_df: pd.DataFrame, config: dict | None = None) -> int:
+def append_predictions(
+    predictions_df: pd.DataFrame,
+    config: dict | None = None,
+    market: str | None = None,
+) -> int:
     """予測結果をスプレッドシートに追記する。
 
     Args:
         predictions_df: predictor.predict() の出力。
         config: 設定辞書。
+        market: 市場名（"us" / "jp"）。指定時はワークシート名を
+                "{worksheet_name}_{market}" に変更する（例: predictions_us, predictions_jp）。
+                None の場合は config["google_sheets"]["worksheet_name"] をそのまま使用。
 
     Returns:
         追記した行数。
@@ -83,9 +90,11 @@ def append_predictions(predictions_df: pd.DataFrame, config: dict | None = None)
         config = load_config()
 
     sheets_cfg = config["google_sheets"]
+    base_ws_name = sheets_cfg["worksheet_name"]
+    worksheet_name = f"{base_ws_name}_{market}" if market else base_ws_name
     client = get_client()
     ws = get_or_create_worksheet(
-        client, sheets_cfg["spreadsheet_name"], sheets_cfg["worksheet_name"]
+        client, sheets_cfg["spreadsheet_name"], worksheet_name
     )
 
     today = datetime.now().strftime("%Y-%m-%d")

@@ -141,6 +141,17 @@ def build_predictions_json(
                 item["explanations"] = ticker_data["explanations"]
             if ticker_data.get("sizing"):
                 item["sizing"] = ticker_data["sizing"]
+            # Phase 11: Short Interest（補助情報）
+            if ticker_data.get("short_interest"):
+                item["short_interest"] = ticker_data["short_interest"]
+            # Phase 12: Institutional Holders（静的参照情報）
+            if ticker_data.get("institutional"):
+                item["institutional"] = ticker_data["institutional"]
+            # Phase 13: 52週高値スコア（in 判定で 0.0 を保持）
+            if "fifty2w_score" in ticker_data:
+                item["fifty2w_score"] = ticker_data["fifty2w_score"]
+            if "fifty2w_pct_from_high" in ticker_data:
+                item["fifty2w_pct_from_high"] = ticker_data["fifty2w_pct_from_high"]
 
         results.append(item)
     return results
@@ -535,8 +546,29 @@ def _build_comparison(records: list[dict], config: dict | None = None) -> dict |
     return comp
 
 
+def _split_records_by_market(records: list[dict]) -> dict[str, list[dict]]:
+    """レコードをティッカーのサフィックスで市場別に分割する。
+
+    - .T で終わるティッカー → "jp"
+    - それ以外               → "us"
+    """
+    from src.enricher import is_jp_ticker
+
+    us_records = [r for r in records if not is_jp_ticker(r.get("ティッカー", ""))]
+    jp_records = [r for r in records if is_jp_ticker(r.get("ティッカー", ""))]
+    return {"us": us_records, "jp": jp_records}
+
+
 def export(config: dict | None = None) -> bool:
-    """Google Sheets からデータを取得し、ダッシュボード用JSONを出力する。"""
+    """Google Sheets からデータを取得し、ダッシュボード用JSONを出力する。
+
+    Phase 15: 市場別ファイル出力
+    - predictions_us.json: 米国株（S&P500 / NASDAQ100）
+    - predictions_jp.json: 日本株（日経225）
+    - predictions.json:    後方互換のため米国株データを引き続き出力
+                           既存の dashboard/index.html 等が参照するため残す。
+                           Phase 16 移行完了後に削除可能。
+    """
     if config is None:
         config = load_config()
 
@@ -555,6 +587,12 @@ def export(config: dict | None = None) -> bool:
         logger.warning("シートにデータがありません。エクスポートをスキップします。")
         return False
 
+    # Phase 15: 市場別にレコードを分割
+    by_market = _split_records_by_market(records)
+    us_records = by_market["us"]
+    jp_records = by_market["jp"]
+    logger.info("レコード分割: US=%d件, JP=%d件", len(us_records), len(jp_records))
+
     # enrichment (リスク指標・イベント・エビデンス・説明)
     enrichment = {}
     try:
@@ -564,15 +602,33 @@ def export(config: dict | None = None) -> bool:
     except Exception:
         logger.exception("enrichment でエラーが発生しましたが、処理を続行します")
 
-    # Phase 7: predictions.json をメタデータ付き辞書でラップ
-    predictions_list = build_predictions_json(records, enrichment, config)
-    if predictions_list:
-        predictions_json = {**build_common_meta(records), "predictions": predictions_list}
-        r_pred = _safe_write_json(predictions_json, DATA_DIR / "predictions.json")
+    # --- 米国株 predictions ---
+    us_predictions_list = build_predictions_json(us_records, enrichment, config)
+    if us_predictions_list:
+        us_meta = build_common_meta(us_records)
+        us_predictions_json = {**us_meta, "predictions": us_predictions_list}
+        # predictions_us.json (Phase 16 の us/ ページ用)
+        _safe_write_json(us_predictions_json, DATA_DIR / "predictions_us.json")
+        # predictions.json (後方互換: 既存 dashboard/index.html が参照)
+        r_pred = _safe_write_json(us_predictions_json, DATA_DIR / "predictions.json")
     else:
-        logger.warning("データが空のため書き出しスキップ: predictions.json")
+        logger.warning("US データが空のため predictions_us.json / predictions.json をスキップ")
         r_pred = False
 
+    # --- 日本株 predictions (Phase 15) ---
+    if jp_records:
+        jp_predictions_list = build_predictions_json(jp_records, enrichment, config)
+        if jp_predictions_list:
+            jp_meta = build_common_meta(jp_records)
+            jp_predictions_json = {**jp_meta, "predictions": jp_predictions_list}
+            _safe_write_json(jp_predictions_json, DATA_DIR / "predictions_jp.json")
+            logger.info("predictions_jp.json 出力完了")
+        else:
+            logger.warning("JP データが空のため predictions_jp.json をスキップ")
+    else:
+        logger.info("JP レコードなし: predictions_jp.json をスキップ")
+
+    # accuracy / stock_history は全レコード対象（市場横断）
     accuracy = build_accuracy_json(records)
     stock_history = build_stock_history_json(records)
 

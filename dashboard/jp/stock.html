@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>銘柄詳細 - AI Stock Predictions</title>
-  <link rel="stylesheet" href="css/style.css">
+  <title>銘柄詳細 - AI Stock Predictions (日本株)</title>
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
   <header>
     <div class="header-inner">
       <div class="header-left">
-        <h1>AI Stock Predictions</h1>
+        <h1>AI Stock Predictions <span class="market-label">🇯🇵 日本株</span></h1>
         <div class="header-ticker" id="stock-ticker"></div>
         <div class="subtitle" id="last-updated"></div>
       </div>
@@ -22,7 +22,7 @@
         <nav>
           <a href="index.html">サマリー</a>
           <a href="accuracy.html">的中率</a>
-          <a href="simulator.html">シミュレータ</a>
+          <a href="../index.html">← 市場選択</a>
         </nav>
         <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
       </div>
@@ -30,26 +30,12 @@
   </header>
   <main id="stock-content">
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
-
-    <!-- Phase 5: 予測ガードレール警告 -->
     <div id="sanity-banner" style="display:none"></div>
-
-    <!-- Phase 1: リスク指標 + イベント -->
     <div id="risk-panel" class="info-panel" style="display:none"></div>
-
-    <!-- Phase 8: ポジションサイジング -->
     <div id="sizing-panel" class="info-panel" style="display:none"></div>
-
-    <!-- Phase 11: 空売り補助情報 -->
     <div id="short-interest-panel" class="info-panel" style="display:none"></div>
-
-    <!-- Phase 12: 機関投資家保有状況 -->
     <div id="institutional-panel" class="info-panel" style="display:none"></div>
-
-    <!-- Phase 2: エビデンス指標 -->
     <div id="evidence-panel" class="info-panel evidence-panel" style="display:none"></div>
-
-    <!-- Phase 3: 選出理由 -->
     <div id="explanations-panel" class="info-panel explanations-panel" style="display:none"></div>
 
     <section>
@@ -68,7 +54,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-  <script src="js/app.js"></script>
-  <script src="js/stock.js"></script>
+  <script src="../js/app.js"></script>
+  <script src="../js/stock.js"></script>
 </body>
 </html>

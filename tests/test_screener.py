@@ -78,6 +78,82 @@ def test_market_cap_fetch_failure_keeps_stock():
     assert caps["FAIL"] is None
 
 
+def test_compute_52w_high_score_normal():
+    """52週高値の75%にある場合のスコアを検証する。"""
+    from src.screener import compute_52w_high_score
+
+    info = {"currentPrice": 75.0, "fiftyTwoWeekHigh": 100.0}
+    assert compute_52w_high_score(info) == 0.75
+
+
+def test_compute_52w_high_score_at_high():
+    """52週高値と同値の場合はスコア 1.0 になることを検証する。"""
+    from src.screener import compute_52w_high_score
+
+    info = {"currentPrice": 100.0, "fiftyTwoWeekHigh": 100.0}
+    assert compute_52w_high_score(info) == 1.0
+
+
+def test_compute_52w_high_score_above_high():
+    """52週高値を超えた場合でもスコアが 1.0 でキャップされることを検証する。"""
+    from src.screener import compute_52w_high_score
+
+    info = {"currentPrice": 110.0, "fiftyTwoWeekHigh": 100.0}
+    assert compute_52w_high_score(info) == 1.0
+
+
+def test_compute_52w_high_score_missing_data():
+    """データが欠損している場合 None を返すことを検証する。"""
+    from src.screener import compute_52w_high_score
+
+    assert compute_52w_high_score({}) is None
+    assert compute_52w_high_score({"currentPrice": 50.0}) is None
+    assert compute_52w_high_score({"fiftyTwoWeekHigh": 100.0}) is None
+
+
+def test_compute_52w_high_score_zero_high():
+    """fiftyTwoWeekHigh が 0 の場合 None を返すことを検証する。"""
+    from src.screener import compute_52w_high_score
+
+    assert compute_52w_high_score({"currentPrice": 50.0, "fiftyTwoWeekHigh": 0.0}) is None
+
+
+def test_score_stock_with_fifty2w():
+    """fifty2w_score が indicators に含まれる場合にスコアに反映されることを検証する。"""
+    from src.screener import score_stock
+
+    indicators = {
+        "price_change_1m": 0.10,
+        "volume_trend": 0.05,
+        "rsi": 50.0,
+        "macd_bullish": 1.0,
+        "fifty2w_score": 0.90,
+    }
+    weights = {
+        "price_change_1m": 0.25,
+        "volume_trend": 0.15,
+        "rsi_score": 0.20,
+        "macd_signal": 0.20,
+        "fifty2w_score": 0.20,
+    }
+    score = score_stock(indicators, weights)
+    expected = 0.25 * 0.10 + 0.15 * 0.05 + 0.20 * 1.0 + 0.20 * 1.0 + 0.20 * 0.90
+    assert abs(score - expected) < 1e-6
+
+
+def test_score_stock_fifty2w_none_skipped():
+    """fifty2w_score が indicators にない場合にスコアに加算されないことを検証する。"""
+    from src.screener import score_stock
+
+    base = {"price_change_1m": 0.0, "volume_trend": 0.0, "rsi": 50.0, "macd_bullish": 0.0}
+    weights = {"price_change_1m": 0.25, "volume_trend": 0.15,
+               "rsi_score": 0.20, "macd_signal": 0.20, "fifty2w_score": 0.20}
+
+    score_with_fw = score_stock({**base, "fifty2w_score": 1.0}, weights)
+    score_without_fw = score_stock(base, weights)
+    assert score_with_fw > score_without_fw
+
+
 def test_market_cap_filter_skips_none():
     """時価総額が None (取得失敗) の銘柄はフィルタで除外されないことを検証する。"""
     stock_data = {"AAPL": "data_a", "SMALL": "data_s", "UNKNOWN": "data_u"}

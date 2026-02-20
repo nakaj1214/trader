@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>米国株 AI Stock Predictions</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="header-left">
+        <h1>AI Stock Predictions <span class="market-label">🇺🇸 米国株</span></h1>
+        <div class="subtitle" id="last-updated"></div>
+      </div>
+      <div class="header-right">
+        <div class="header-stat">
+          <div class="header-stat-value" id="header-accuracy-value">-</div>
+          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+        </div>
+        <nav>
+          <a href="index.html" class="active">サマリー</a>
+          <a href="accuracy.html">的中率</a>
+          <a href="../simulator.html">シミュレータ</a>
+          <a href="../index.html">← 市場選択</a>
+        </nav>
+        <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
+
+    <!-- Phase 10: マクロ環境バナー -->
+    <div id="macro-banner" style="display:none"></div>
+
+    <!-- 買い時・売り時ガイド -->
+    <div class="timing-guide">
+      <div class="timing-guide-title">買い時・売り時の目安</div>
+      <div class="timing-guide-cols">
+        <div class="timing-col-buy">
+          <div class="timing-col-title buy-title">買い時のサイン</div>
+          <ul class="timing-col">
+            <li>予測上昇率がプラス（+）の銘柄</li>
+            <li>累計的中率が55%以上（的中率ページで確認）</li>
+            <li>VIX が25以下・逆イールドなし（マクロバナー確認）</li>
+          </ul>
+        </div>
+        <div class="timing-col-sell">
+          <div class="timing-col-title sell-title">売り時のサイン</div>
+          <ul class="timing-col">
+            <li>損切り価格を下回ったら即売り（銘柄詳細で確認）</li>
+            <li>1週間後に予測期間終了 → 実績を確認して判断</li>
+            <li>VIX が25超・逆イールド発生時はポジション縮小</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <section>
+      <h2>今週の予測 (<span id="latest-date">-</span>)</h2>
+      <div id="prediction-cards" class="card-grid">
+        <div class="loading">読み込み中...</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="../js/app.js"></script>
+  <script src="../js/macro.js"></script>
+  <script src="../js/index_us.js"></script>
+</body>
+</html>

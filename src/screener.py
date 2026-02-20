@@ -76,6 +76,52 @@ def fetch_stock_data(
     return data
 
 
+# ---------------------------------------------------------------------------
+# Phase 13: 52-Week High Momentum
+# ---------------------------------------------------------------------------
+
+def compute_52w_high_score(info: dict) -> float | None:
+    """52週高値モメンタムスコアを算出する。
+
+    currentPrice / fiftyTwoWeekHigh の比率でスコア化。
+    1.0 に近いほど（52週高値付近）高スコア。
+    取得失敗時は None。
+    """
+    current = info.get("currentPrice") or info.get("regularMarketPrice")
+    high52 = info.get("fiftyTwoWeekHigh")
+    if not current or not high52:
+        return None
+    try:
+        high52 = float(high52)
+        if high52 <= 0:
+            return None
+        return round(min(float(current) / high52, 1.0), 4)
+    except (ValueError, TypeError):
+        return None
+
+
+def _fetch_52w_data(tickers: list[str]) -> dict[str, dict]:
+    """各銘柄の52週高値スコアと乖離率を取得する。
+
+    取得失敗時は {"score": None, "pct_from_high": None} を格納。
+    """
+    result: dict[str, dict] = {}
+    for ticker in tickers:
+        try:
+            info = yf.Ticker(ticker).info or {}
+            score = compute_52w_high_score(info)
+            if score is not None:
+                high52 = float(info.get("fiftyTwoWeekHigh", 0))
+                current = float(info.get("currentPrice") or info.get("regularMarketPrice", 0))
+                pct_from_high = round(current / high52 - 1.0, 4) if high52 > 0 else None
+            else:
+                pct_from_high = None
+            result[ticker] = {"score": score, "pct_from_high": pct_from_high}
+        except Exception:
+            result[ticker] = {"score": None, "pct_from_high": None}
+    return result
+
+
 def _fetch_market_caps(tickers: list[str]) -> dict[str, float | None]:
     """yfinance で各銘柄の時価総額を取得する。
 
@@ -150,16 +196,28 @@ def score_stock(indicators: dict, weights: dict) -> float:
     # MACDシグナルスコア
     macd_score = indicators["macd_bullish"]
 
-    return (
+    score = (
         weights.get("price_change_1m", 0.3) * price_score
         + weights.get("volume_trend", 0.2) * vol_score
         + weights.get("rsi_score", 0.25) * rsi_score
         + weights.get("macd_signal", 0.25) * macd_score
     )
 
+    # Phase 13: 52週高値モメンタムスコア (None はスキップ)
+    fifty2w = indicators.get("fifty2w_score")
+    if fifty2w is not None:
+        score += weights.get("fifty2w_score", 0.0) * fifty2w
 
-def screen(config: dict | None = None) -> pd.DataFrame:
+    return score
+
+
+def screen(config: dict | None = None, market: str | None = None) -> pd.DataFrame:
     """メインのスクリーニング処理。成長株トップNを返す。
+
+    Args:
+        config: 設定辞書。None の場合はデフォルト設定を読み込む。
+        market: スクリーニング対象市場（例: "sp500", "nikkei225"）。
+                None の場合は config の全市場を対象とする。
 
     Returns:
         DataFrame with columns:
@@ -170,7 +228,7 @@ def screen(config: dict | None = None) -> pd.DataFrame:
         config = load_config()
 
     screening_cfg = config["screening"]
-    markets = screening_cfg["markets"]
+    markets = [market] if market is not None else screening_cfg["markets"]
     top_n = screening_cfg.get("top_n", 10)
     lookback_days = screening_cfg.get("lookback_days", 30)
     weights = screening_cfg.get("weights", {})
@@ -197,12 +255,22 @@ def screen(config: dict | None = None) -> pd.DataFrame:
         n_unknown = sum(1 for t in stock_data if market_caps.get(t) is None)
         logger.info("時価総額フィルタ後: %d 銘柄 (未取得: %d)", len(stock_data), n_unknown)
 
+    # Phase 13: 52週高値データ取得
+    remaining_tickers = list(stock_data.keys())
+    fifty2w_data = _fetch_52w_data(remaining_tickers)
+
     # テクニカル指標算出 + スコアリング
     results = []
     for ticker, df in stock_data.items():
         indicators = compute_indicators(df)
         if not indicators:
             continue
+        # 52週高値スコアをインジケータに追加
+        fw = fifty2w_data.get(ticker, {})
+        if fw.get("score") is not None:
+            indicators["fifty2w_score"] = fw["score"]
+        if fw.get("pct_from_high") is not None:
+            indicators["fifty2w_pct_from_high"] = fw["pct_from_high"]
         score = score_stock(indicators, weights)
         results.append({"ticker": ticker, **indicators, "score": score})
 

@@ -962,3 +962,270 @@ th {
     width: 100%;
   }
 }
+
+/* Phase 11/12: 補助情報パネル共通 */
+.info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.info-label {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.info-value {
+  font-weight: 500;
+}
+
+.panel-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.5rem;
+}
+
+/* Phase 13: アルファサーベイ */
+.badge-success {
+  background: var(--color-success);
+  color: #fff;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.badge-neutral {
+  background: var(--color-text-muted);
+  color: #fff;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+/* 買い時・売り時ガイド */
+.timing-guide {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.timing-guide-title {
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+  font-size: 0.9375rem;
+}
+
+.timing-guide-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.timing-col-buy {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.timing-col-sell {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.timing-col-title {
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.timing-col-title.buy-title {
+  color: var(--color-success);
+}
+
+.timing-col-title.sell-title {
+  color: var(--color-danger);
+}
+
+.timing-col ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--color-text);
+  line-height: 1.7;
+}
+
+/* 予測カードのアクション行 */
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  margin-top: 0.4rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.action-row.action-buy {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.action-row.action-neutral {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.action-stop {
+  font-size: 0.75rem;
+  color: var(--color-danger);
+  margin-top: 0.2rem;
+  padding: 0 0.5rem;
+}
+
+/* 損切り価格強調（sizing パネル） */
+.stop-loss-highlight {
+  background: #fff1f2;
+  border: 2px solid var(--color-danger);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.stop-loss-highlight .stop-label {
+  font-size: 0.75rem;
+  color: var(--color-danger);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stop-loss-highlight .stop-price {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-danger);
+  line-height: 1.2;
+}
+
+.stop-loss-highlight .stop-desc {
+  font-size: 0.75rem;
+  color: #9f1239;
+  margin-top: 0.15rem;
+}
+
+.target-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.target-price-label {
+  font-size: 0.8125rem;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.target-price-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+@media (max-width: 600px) {
+  .timing-guide-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Phase 16: 市場選択ランディングページ
+----------------------------------------------------------------------- */
+
+.market-select-section {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.market-select-section h2 {
+  margin-bottom: 2rem;
+  color: var(--color-text);
+}
+
+.market-select {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.market-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  padding: 2rem 1.5rem;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--color-text);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.market-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+}
+
+.market-flag {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+}
+
+.market-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.market-desc {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+/* Phase 16: ヘッダーの市場ラベル */
+.market-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-left: 0.5rem;
+}

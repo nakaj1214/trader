@@ -1,9 +1,33 @@
 /**
  * 共通ユーティリティ: JSONデータ読み込み、日付フォーマット、最終更新表示
+ *
+ * Phase 16: 市場別ページ対応
+ * - MARKET: URL パスから "jp" / "us" を自動判定
+ * - DATA_BASE: サブディレクトリ (us/ jp/) では "../data/" を使用
  */
 
+var MARKET = (function () {
+  var path = window.location.pathname;
+  if (path.indexOf("/jp/") !== -1) return "jp";
+  return "us";
+})();
+
+var DATA_BASE = (function () {
+  var path = window.location.pathname;
+  if (path.indexOf("/us/") !== -1 || path.indexOf("/jp/") !== -1) return "../data/";
+  return "data/";
+})();
+
+/** 市場に応じた predictions ファイル名を返す。 */
+function predictionsFile() {
+  if (MARKET === "jp") return "predictions_jp.json";
+  var path = window.location.pathname;
+  if (path.indexOf("/us/") !== -1) return "predictions_us.json";
+  return "predictions.json";  // ルート: 後方互換
+}
+
 async function loadJSON(filename) {
-  const resp = await fetch("data/" + filename);
+  const resp = await fetch(DATA_BASE + filename);
   if (!resp.ok) throw new Error("Failed to load " + filename + ": " + resp.status);
   return resp.json();
 }
@@ -13,8 +37,18 @@ function formatDate(dateStr) {
   return dateStr;
 }
 
-function formatPrice(price) {
+/**
+ * 価格を通貨フォーマットで返す。
+ * @param {number} price
+ * @param {string} [currency] "USD"（デフォルト）または "JPY"。
+ *   省略時は MARKET から自動判定。
+ */
+function formatPrice(price, currency) {
   if (price == null) return "-";
+  currency = currency || (MARKET === "jp" ? "JPY" : "USD");
+  if (currency === "JPY") {
+    return "\u00a5" + Math.round(Number(price)).toLocaleString("ja-JP");
+  }
   return "$" + Number(price).toFixed(2);
 }
 

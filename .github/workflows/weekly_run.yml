@@ -38,6 +38,7 @@ jobs:
       - name: Export dashboard data
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python -m src.exporter
         continue-on-error: true
 

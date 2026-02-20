@@ -9,7 +9,8 @@
         loadJSON("predictions.json"),
         loadJSON("accuracy.json"),
       ]);
-      var predictions = data[0];
+      var predictionsJson = data[0];
+      var predictions = predictionsJson.predictions || predictionsJson;
       var accuracy = data[1];
 
       showLastUpdated(accuracy);
@@ -103,12 +104,14 @@
 
       // Phase 1: リスク情報行
       if (p.risk) {
-        html +=
-          '  <div class="risk-row">' +
-          "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
+        var riskText = "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
           " | β" + p.risk.beta.toFixed(2) +
-          " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%" +
-          "  </div>";
+          " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%";
+        // Phase 8: サイズ目安を追記
+        if (p.sizing && p.sizing.max_position_weight != null) {
+          riskText += " | 最大" + (p.sizing.max_position_weight * 100).toFixed(0) + "%";
+        }
+        html += '  <div class="risk-row">' + riskText + "  </div>";
       }
 
       // Phase 1: イベントバッジ

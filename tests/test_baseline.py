@@ -7,6 +7,7 @@ import pytest
 from src.baseline import (
     _equity_curve,
     _portfolio_stats,
+    build_backtest_hygiene,
     build_comparison_json,
     compute_ai_weekly_returns,
     compute_baseline_momentum,
@@ -247,3 +248,73 @@ def test_build_comparison_json_empty_strategies():
     empty = pd.Series(dtype=float)
     result = build_comparison_json(empty, [], empty, [], empty, [])
     assert result["strategies"] == {}
+
+
+# --- Phase 9: build_backtest_hygiene ---
+
+
+def _make_records(n_confirmed=0, n_pending=0):
+    """テスト用レコードを生成する。"""
+    records = []
+    for i in range(n_confirmed):
+        records.append({"日付": f"2025-{i+1:02d}-01", "ティッカー": "AAPL", "的中": "的中"})
+    for i in range(n_pending):
+        records.append({"日付": f"2026-{i+1:02d}-01", "ティッカー": "MSFT", "的中": ""})
+    return records
+
+
+def test_build_backtest_hygiene_returns_all_keys():
+    """必須キーが全て返ること。"""
+    config = {"backtest": {"num_rules_tested": 1, "num_parameters_tuned": 4, "oos_start": "2025-01-01", "min_rules_for_pbo": 2}}
+    result = build_backtest_hygiene(config, [])
+
+    for key in ("num_rules_tested", "num_parameters_tuned", "oos_start", "data_coverage_weeks",
+                "transaction_cost_note", "survivorship_bias_note", "hygiene_status",
+                "reality_check_pvalue", "pbo", "deflated_sharpe", "hygiene_note"):
+        assert key in result, f"キー '{key}' が存在しません"
+
+
+def test_build_backtest_hygiene_insufficient_trials():
+    """num_rules_tested < min_rules_for_pbo のとき hygiene_status が insufficient_trials になること。"""
+    config = {"backtest": {"num_rules_tested": 1, "num_parameters_tuned": 4, "oos_start": "2025-01-01", "min_rules_for_pbo": 2}}
+    result = build_backtest_hygiene(config, [])
+
+    assert result["hygiene_status"] == "insufficient_trials"
+    assert result["reality_check_pvalue"] is None
+    assert result["pbo"] is None
+
+
+def test_build_backtest_hygiene_computed():
+    """num_rules_tested >= min_rules_for_pbo のとき hygiene_status が computed になること。"""
+    config = {"backtest": {"num_rules_tested": 5, "num_parameters_tuned": 4, "oos_start": "2025-01-01", "min_rules_for_pbo": 2}}
+    result = build_backtest_hygiene(config, [])
+
+    assert result["hygiene_status"] == "computed"
+    assert result["reality_check_pvalue"] is not None
+    assert result["pbo"] is not None
+
+
+def test_build_backtest_hygiene_deflated_sharpe_present():
+    """deflated_sharpe が num_rules=1 でも算出されること（単独算出可能）。"""
+    config = {"backtest": {"num_rules_tested": 1, "num_parameters_tuned": 4, "oos_start": "2025-01-01", "min_rules_for_pbo": 2}}
+    result = build_backtest_hygiene(config, [])
+
+    assert result["deflated_sharpe"] is not None
+
+
+def test_build_backtest_hygiene_data_coverage_weeks():
+    """確定済みレコードの週数が data_coverage_weeks に反映されること。"""
+    config = {"backtest": {"num_rules_tested": 1, "num_parameters_tuned": 4, "oos_start": "2025-01-01", "min_rules_for_pbo": 2}}
+    records = _make_records(n_confirmed=3, n_pending=2)
+    result = build_backtest_hygiene(config, records)
+
+    # 3 週分の confirmed (「的中」のみカウント)
+    assert result["data_coverage_weeks"] == 3
+
+
+def test_build_backtest_hygiene_missing_config_uses_defaults():
+    """backtest キーがない場合もエラーなく動作すること。"""
+    result = build_backtest_hygiene({}, [])
+
+    assert result["hygiene_status"] == "insufficient_trials"
+    assert result["num_rules_tested"] == 1

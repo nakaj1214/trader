@@ -90,6 +90,50 @@ def compute_risk_metrics(
 
 
 # ---------------------------------------------------------------------------
+# Phase 8: Position sizing
+# ---------------------------------------------------------------------------
+
+def compute_sizing(vol_ann: float, config: dict) -> dict:
+    """ボラティリティターゲット法でポジションサイズと損切り水準を算出する。
+
+    Args:
+        vol_ann: 年率換算ボラティリティ（例: 0.25 = 25%）
+        config: 設定辞書（sizing セクションを含む）
+
+    Returns:
+        {
+            "vol_target_ann": float,
+            "max_position_weight": float,
+            "stop_loss_pct": float,
+            "stop_loss_rationale": str,
+        }
+    """
+    sizing_cfg = config.get("sizing", {})
+    vol_target = sizing_cfg.get("vol_target_ann", 0.10)
+    max_cap = sizing_cfg.get("max_weight_cap", 0.20)
+    sl_mult = sizing_cfg.get("stop_loss_multiplier", 1.0)
+
+    if vol_ann > 0:
+        raw_weight = vol_target / vol_ann
+        max_weight = round(min(raw_weight, max_cap), 4)
+        # 月次ボラティリティ = 年率ボラ / sqrt(12)
+        monthly_vol = vol_ann / math.sqrt(12)
+        stop_loss = round(-sl_mult * monthly_vol, 4)
+        rationale = "20日ボラティリティに基づく月次リスク推定値"
+    else:
+        max_weight = round(max_cap, 4)
+        stop_loss = None
+        rationale = "ボラティリティデータなし"
+
+    return {
+        "vol_target_ann": vol_target,
+        "max_position_weight": max_weight,
+        "stop_loss_pct": stop_loss,
+        "stop_loss_rationale": rationale,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: Events
 # ---------------------------------------------------------------------------
 
@@ -468,9 +512,13 @@ def enrich(
         risk_cache[ticker] = risk
         events = fetch_events_from_info(info_cache[ticker], ticker)
 
+        # Phase 8: ポジションサイジング
+        sizing = compute_sizing(risk.get("vol_20d_ann", 0.0), config)
+
         enrichment[(date, ticker)] = {
             "risk": risk,
             "events": events,
+            "sizing": sizing,
         }
 
     # Phase 3: Explanations

@@ -437,3 +437,99 @@ class TestBuildPredictionsJsonEnrichment:
 
         result = build_predictions_json(records, enrichment)
         assert "risk" not in result[0]
+
+
+# --- Phase 8: compute_sizing ---
+
+
+class TestComputeSizing:
+
+    def _default_config(self):
+        return {
+            "sizing": {
+                "vol_target_ann": 0.10,
+                "max_weight_cap": 0.20,
+                "stop_loss_multiplier": 1.0,
+            }
+        }
+
+    def test_returns_all_keys(self):
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.20, self._default_config())
+
+        assert "vol_target_ann" in result
+        assert "max_position_weight" in result
+        assert "stop_loss_pct" in result
+        assert "stop_loss_rationale" in result
+
+    def test_normal_vol_weight_capped(self):
+        """vol_ann=0.20 → weight=0.10/0.20=0.50 だが cap=0.20 で制限"""
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.20, self._default_config())
+        assert result["max_position_weight"] == 0.20
+
+    def test_low_vol_weight_capped_at_max(self):
+        """vol_ann=0.05 → weight=0.10/0.05=2.0 だが cap=0.20 で制限"""
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.05, self._default_config())
+        assert result["max_position_weight"] == 0.20
+
+    def test_high_vol_weight_below_cap(self):
+        """vol_ann=0.40 → weight=0.10/0.40=0.25 → cap=0.20 で制限"""
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.40, self._default_config())
+        assert result["max_position_weight"] == 0.20
+
+    def test_stop_loss_negative(self):
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.20, self._default_config())
+        assert result["stop_loss_pct"] is not None
+        assert result["stop_loss_pct"] < 0
+
+    def test_stop_loss_formula(self):
+        """stop_loss = -1.0 * 0.24 / sqrt(12) ≈ -0.0693"""
+        from src.enricher import compute_sizing
+
+        vol_ann = 0.24
+        result = compute_sizing(vol_ann, self._default_config())
+        expected = round(-1.0 * vol_ann / math.sqrt(12), 4)
+        assert result["stop_loss_pct"] == expected
+
+    def test_zero_vol_returns_max_cap(self):
+        """vol_ann=0 → max_position_weight は max_weight_cap、stop_loss は None"""
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.0, self._default_config())
+        assert result["max_position_weight"] == 0.20
+        assert result["stop_loss_pct"] is None
+
+    def test_custom_config(self):
+        """カスタム設定が反映されること"""
+        from src.enricher import compute_sizing
+
+        config = {
+            "sizing": {
+                "vol_target_ann": 0.05,
+                "max_weight_cap": 0.10,
+                "stop_loss_multiplier": 2.0,
+            }
+        }
+        result = compute_sizing(0.20, config)
+        # weight = min(0.05/0.20, 0.10) = min(0.25, 0.10) = 0.10
+        assert result["max_position_weight"] == 0.10
+        # stop_loss = -2.0 * 0.20 / sqrt(12)
+        expected_sl = round(-2.0 * 0.20 / math.sqrt(12), 4)
+        assert result["stop_loss_pct"] == expected_sl
+
+    def test_missing_sizing_config_uses_defaults(self):
+        """sizing キーがない場合はデフォルト値を使用"""
+        from src.enricher import compute_sizing
+
+        result = compute_sizing(0.20, {})
+        assert result["max_position_weight"] == 0.20  # min(0.10/0.20, 0.20) = 0.20
+        assert result["stop_loss_pct"] is not None

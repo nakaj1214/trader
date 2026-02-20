@@ -33,7 +33,8 @@
         loadJSON("stock_history.json"),
         loadJSON("accuracy.json"),
       ]);
-      var predictions = data[0];
+      var predictionsJson = data[0];
+      var predictions = predictionsJson.predictions || predictionsJson;
       var history = data[1];
       var accuracy = data[2];
 
@@ -69,6 +70,7 @@
       renderSanityBanner(latestPred);
 
       renderRiskPanel(latestWithRisk);
+      renderSizingPanel(latestWithRisk);
       renderEvidencePanel(latestWithRisk);
       renderExplanationsPanel(latestWithRisk);
       renderPriceChart(tickerHistory, ticker);
@@ -150,6 +152,39 @@
     }
 
     container.innerHTML = html;
+    container.style.display = "";
+  }
+
+  // --- Phase 8: サイジングパネル ---
+
+  function renderSizingPanel(prediction) {
+    var container = document.getElementById("sizing-panel");
+    if (!container) return;
+    if (!prediction || !prediction.sizing) {
+      container.style.display = "none";
+      return;
+    }
+    var s = prediction.sizing;
+    var maxW = s.max_position_weight != null
+      ? (s.max_position_weight * 100).toFixed(0) + "%"
+      : "-";
+    var sl = s.stop_loss_pct != null
+      ? (s.stop_loss_pct * 100).toFixed(1) + "%"
+      : "-";
+
+    container.innerHTML =
+      '<h3>ポジションサイジング</h3>' +
+      '<div class="sizing-panel">' +
+      '<div class="sizing-row">' +
+      '<span class="sizing-label">最大保有比率</span>' +
+      '<span class="sizing-value">' + maxW + "</span>" +
+      "</div>" +
+      '<div class="sizing-row">' +
+      '<span class="sizing-label">推奨損切り水準</span>' +
+      '<span class="sizing-value">' + sl + "</span>" +
+      "</div>" +
+      "</div>" +
+      '<p class="sizing-note">※ ' + (s.stop_loss_rationale || "") + '</p>';
     container.style.display = "";
   }
 

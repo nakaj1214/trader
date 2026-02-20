@@ -5,6 +5,7 @@
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -14,6 +15,26 @@ from prophet import Prophet
 from src.utils import load_config
 
 logger = logging.getLogger(__name__)
+
+
+def compute_prob_up(predicted_change_pct: float, ci_pct: float) -> float:
+    """予測上昇率と信頼区間から上昇確率を正規分布近似で算出する。
+
+    モデルの予測値 μ = predicted_change_pct、95% CI 半幅 = ci_pct から
+    σ = ci_pct / 1.96 を逆算し、P(X > 0) = Φ(μ / σ) を返す。
+
+    Args:
+        predicted_change_pct: 予測上昇率（%）
+        ci_pct: 95% 信頼区間の半幅（%）
+
+    Returns:
+        上昇確率 [0.0, 1.0]
+    """
+    if ci_pct <= 0:
+        return 1.0 if predicted_change_pct > 0 else 0.0
+    sigma = ci_pct / 1.96
+    z = predicted_change_pct / sigma
+    return round(0.5 * (1 + math.erf(z / math.sqrt(2))), 4)
 
 
 def fetch_history(ticker: str, days: int) -> pd.DataFrame:
@@ -77,6 +98,8 @@ def predict_stock(ticker: str, history_days: int, forecast_days: int) -> dict | 
             "ci_lower": round(ci_lower, 2),
             "ci_upper": round(ci_upper, 2),
             "ci_pct": round(ci_pct, 2),
+            "prob_up": compute_prob_up(predicted_change_pct, ci_pct),
+            "prob_up_calibrated": None,
         }
     except Exception:
         logger.exception("%s: Prophet予測エラー", ticker)

@@ -11,7 +11,8 @@
         loadJSON("comparison.json").catch(function () { return null; }),
       ]);
       var accuracy = data[0];
-      var predictions = data[1];
+      var predictionsJson = data[1];
+      var predictions = predictionsJson.predictions || predictionsJson;
       var comparison = data[2];
 
       showLastUpdated(accuracy);
@@ -19,6 +20,8 @@
       renderCumulativeStat(accuracy);
       renderWeeklyChart(accuracy);
       renderErrorAnalysis(accuracy);
+      renderCalibration(accuracy);
+      renderBacktestHygiene(comparison);
       renderComparison(comparison);
       renderTickerRanking(filterPredictions(predictions));
     } catch (e) {
@@ -212,6 +215,163 @@
 
     html += "</tbody></table></div>";
     container.innerHTML = html;
+  }
+
+  // --- Phase 7: 校正ダッシュボード ---
+
+  function renderCalibration(accuracy) {
+    var section = document.getElementById("calibration-section");
+    if (!section) return;
+    var cal = accuracy && accuracy.calibration;
+    if (!cal || !cal.overall || cal.overall.n_calibrated < 30) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+    renderCalibrationStats(cal.overall, cal.recent_n_weeks);
+    renderCalibrationChart(cal.overall);
+  }
+
+  function renderCalibrationStats(overall, recent) {
+    var container = document.getElementById("calibration-stats");
+    if (!container) return;
+
+    function statRow(label, value) {
+      return (
+        '<div class="calibration-stat-row">' +
+        '<span class="calibration-stat-label">' + label + "</span>" +
+        '<span class="calibration-stat-value">' + (value != null ? value : "-") + "</span>" +
+        "</div>"
+      );
+    }
+
+    function groupHtml(title, s) {
+      if (!s) return "";
+      return (
+        '<div class="calibration-stat-group">' +
+        "<h3>" + title + "</h3>" +
+        statRow("Brier スコア", s.brier_score != null ? s.brier_score.toFixed(4) : null) +
+        statRow("Log-Loss", s.log_loss != null ? s.log_loss.toFixed(4) : null) +
+        statRow("ECE", s.ece != null ? s.ece.toFixed(4) : null) +
+        statRow("件数", s.n_calibrated) +
+        "</div>"
+      );
+    }
+
+    var recentTitle = recent
+      ? "直近 " + (recent.n_weeks || 12) + " 週"
+      : "";
+
+    container.innerHTML =
+      groupHtml("全期間", overall) +
+      groupHtml(recentTitle, recent);
+  }
+
+  function renderCalibrationChart(overall) {
+    var canvas = document.getElementById("calibration-chart");
+    if (!canvas || !overall || !overall.reliability_bins || overall.reliability_bins.length === 0) return;
+
+    var bins = overall.reliability_bins;
+    var labels = bins.map(function (b) { return b.p_bin; });
+    var empiricals = bins.map(function (b) { return b.empirical; });
+    var meanPreds = bins.map(function (b) { return b.mean_pred; });
+
+    new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            type: "bar",
+            label: "実測率（実際の上昇割合）",
+            data: empiricals,
+            backgroundColor: "rgba(37, 99, 235, 0.6)",
+            borderColor: "rgba(37, 99, 235, 1)",
+            borderWidth: 1,
+            order: 2,
+          },
+          {
+            type: "line",
+            label: "予測確率（平均）",
+            data: meanPreds,
+            borderColor: "rgba(220, 38, 38, 1)",
+            backgroundColor: "transparent",
+            borderWidth: 2,
+            pointRadius: 5,
+            order: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: {
+            display: true,
+            text: "信頼性ダイアグラム（予測確率 vs 実測率）",
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                return ctx.dataset.label + ": " + (ctx.parsed.y * 100).toFixed(1) + "%";
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 1.0,
+            ticks: {
+              callback: function (v) { return (v * 100).toFixed(0) + "%"; },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // --- Phase 9: バックテスト品質開示 ---
+
+  function renderBacktestHygiene(comparison) {
+    var section = document.getElementById("backtest-hygiene-section");
+    if (!section) return;
+    var hygiene = comparison && comparison.backtest_hygiene;
+    if (!hygiene) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+
+    var statusLabel = {
+      insufficient_trials: "試行数不足",
+      computed: "算出済み",
+      partial: "一部算出済み",
+    };
+
+    function fmt(v) {
+      return v != null ? v : "-";
+    }
+
+    var html =
+      '<div class="hygiene-panel">' +
+      '<div class="hygiene-status hygiene-status-' + (hygiene.hygiene_status || "") + '">' +
+      "ステータス: " + (statusLabel[hygiene.hygiene_status] || hygiene.hygiene_status) +
+      "</div>" +
+      '<div class="hygiene-rows">' +
+      '<div class="hygiene-row"><span class="hygiene-label">検証したルール数</span><span class="hygiene-value">' + fmt(hygiene.num_rules_tested) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">チューニングパラメータ数</span><span class="hygiene-value">' + fmt(hygiene.num_parameters_tuned) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">OOS 開始日</span><span class="hygiene-value">' + fmt(hygiene.oos_start) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">評価週数</span><span class="hygiene-value">' + fmt(hygiene.data_coverage_weeks) + " 週</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">Reality Check p 値</span><span class="hygiene-value">' + fmt(hygiene.reality_check_pvalue) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">PBO</span><span class="hygiene-value">' + fmt(hygiene.pbo) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">Deflated Sharpe</span><span class="hygiene-value">' + fmt(hygiene.deflated_sharpe) + "</span></div>" +
+      "</div>" +
+      '<p class="hygiene-notes">' + hygiene.transaction_cost_note + "<br>" + hygiene.survivorship_bias_note + "</p>" +
+      (hygiene.hygiene_note ? '<p class="hygiene-note-detail">' + hygiene.hygiene_note + "</p>" : "") +
+      "</div>";
+
+    var panel = document.getElementById("backtest-hygiene-panel");
+    if (panel) panel.innerHTML = html;
   }
 
   // --- Phase 6: 戦略比較 ---

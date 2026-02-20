@@ -1,937 +1,391 @@
-# エビデンスベース投資意思決定支援 実装計画書
+﻿# エビデンスベース投資意思決定支援 実装計画書（更新版）
 
-## 背景
+## 目的
+`docs/gpt_reseach/research3.md` の提案に基づき、未実装の拡張機能（フェーズ7〜10）を実装する。
 
-`docs/gpt_reseach.md/research2.md`（GPT Deep Research による詳細分析）の調査結果をもとに、現在の AI Stock Predictions ダッシュボードに **投資判断の質を上げるための意思決定支援機能** を段階的に追加する。
-
-research2.md が示す優先順位:
-1. **予測ガードレール**（低工数・高効果） → フェーズ5
-2. **ベースライン比較**（低工数・高効果） → フェーズ6
-3. 確率化+校正（中工数・高効果） → フェーズ4を拡張して将来対応
-4. リスク推定（低〜中工数・中〜高効果） → フェーズ1（実装済み）
-5. 因子集約スコア（中工数・中効果） → フェーズ2（実装済み）
-
-## 現状のアーキテクチャ
-
-```
-yfinance (株価) + ta (テクニカル指標)
-  → screener.py (トップ10銘柄を選出)
-  → predictor.py (Prophet で5営業日先を予測)
-  → tracker.py (的中率追跡)
-  → sheets.py (Google Sheets 永続化)
-  → exporter.py (JSON出力 → dashboard/data/)
-  → 静的サイト (Vanilla JS + Chart.js)
-```
-
-**既存のデータフィールド (predictions.json):**
-`date`, `ticker`, `current_price`, `predicted_price`, `predicted_change_pct`, `ci_pct`, `actual_price`, `status`, `hit`
-
-**利用可能だが未活用のデータ:**
-- yfinance: 過去株価 (ボラティリティ・β・最大DD算出可)、`.info` (P/E, P/B, 配当利回り, ROE, 利益率, セクター, 決算日)
-- ta ライブラリ: ボリンジャーバンド, ATR, ADX 等の追加テクニカル指標
-- screener.py のスコア内訳: `price_change_1m`, `volume_trend`, `rsi`, `macd_bullish`, `score`
-
-**`lookback_days` の意味:**
-`config.yaml` の `screening.lookback_days`（現行: 30）は **カレンダー日** を意味する。screener は `yf.download(period=f"{lookback_days}d")` でカレンダー日指定で取得しており、結果の DataFrame 行数（営業日数）は通常20〜22日程度となる。enricher で同一条件を再現する際は `df.tail()` ではなく日付ベース切り出し（`pd.Timedelta(days=lookback_days)`）を使用する。
+本ファイルは「これから実装する内容」に限定する。
+既に実装済みのフェーズ詳細（1〜6）は可読性のため削除し、要約のみ残す。
 
 ---
 
-## フェーズ構成
+## 実装済みフェーズ（要約のみ）
+
+| フェーズ | 内容 | 状態 |
+|---------|------|------|
+| 1 | リスク指標 + イベント注釈 | 実装済み |
+| 2 | エビデンス指標（momentum/value/quality/low-risk） | 実装済み |
+| 3 | 選出理由（スコア内訳）表示 | 実装済み |
+| 4 | 予測誤差分析（MAE・帯別比較） | 実装済み |
+| 5 | 予測ガードレール（WARN/CLIPPED） | 実装済み |
+| 6 | ベースライン比較（AI vs 12-1モメンタム vs SPY） | 実装済み |
+
+注記:
+- 実装済みフェーズの詳細仕様は Git 履歴および実装コード（`src/`, `dashboard/js/`）を参照。
+
+---
+
+## 本計画の対象（未実装）
 
 | フェーズ | 内容 | 工数 | 主な効果 | 状態 |
 |---------|------|------|---------|------|
-| 1 | リスク指標 + イベント注釈 | 低〜中 | アップサイドだけでなく"想定下振れ"を同時提示 | ✅ 実装済み |
-| 2 | エビデンス指標（モメンタム/バリュー/クオリティ/低リスク） | 中 | AI予測が"どのタイプの上昇"かを説明 | ✅ 実装済み |
-| 3 | 予測根拠の表示（スコア内訳） | 低〜中 | "なぜこの銘柄？"を短文で説明 | ✅ 実装済み |
-| 4 | 予測誤差分析（帯別精度・MAE） | 中 | 予測上昇率と実績のずれを定量化し過信を防止 | 未着手 |
-| **5** | **予測ガードレール（異常クリップ・フラグ）** | **低** | **非現実的な予測を排除し信頼性を向上（research2.md 最優先）** | **未着手** |
-| **6** | **ベースライン比較（12-1モメンタム vs AI vs SPY）** | **低〜中** | **AI の優位性を定量証明（research2.md 第2優先）** | **未着手** |
+| 7 | 確率化 + 校正ダッシュボード（Brier/log-loss/reliability diagram） | 中 | 予測が「確率として妥当か」を可視化し誤用を抑制 | 未着手 |
+| 8 | ポジションサイジング + 損切り規律 | 中 | 実行規律（サイズ上限・撤退基準）を提示 | 未着手 |
+| 9 | バックテスト品質開示（過剰最適化対策メタデータ） | 中〜高 | バックテストの透明性を向上 | 未着手 |
+| 10 | マクロ指標統合（FRED によるレジーム判定） | 中 | マクロ環境に応じたリスク調整根拠を追加 | 未着手 |
 
 ---
 
-## フェーズ1: リスク指標 + イベント注釈
+## フェーズ7: 確率化 + 校正ダッシュボード
 
 ### 概要
-research2.md「期待リターン×リスク表示」「イベント注釈」に対応。
-現在のダッシュボードは予測上昇率のみ表示しており、リスク（下振れ）の情報がない。各銘柄にボラティリティ・β・最大ドローダウンおよび直近イベント（決算日・配当落ち日）を付与する。
+- `predicted_change_pct` と `ci_pct` から `prob_up`（上昇確率）を導出。
+- `accuracy.json` に校正指標を追加し、確率の信頼性を公開。
 
 ### バックエンド変更
+- `src/predictor.py`
+  - `compute_prob_up(predicted_change_pct, ci_pct)` を追加。
+  - 出力に `prob_up`（将来拡張で `prob_up_calibrated`）を追加。
+- `src/exporter.py`
+  - `build_calibration_metrics(records)` を追加。
+  - `accuracy.json` に `calibration` セクションを追加。
 
-**新規ファイル: `src/enricher.py`**
+### 出力スキーマ追加
 
-各予測銘柄について yfinance からリスク指標とイベント情報を算出する。
+> 注記: `as_of_utc` / `data_coverage_weeks` は共通仕様セクション準拠（予測/評価系成果物に統一付与。macro.jsonは対象外）。以下の例は各フェーズ固有の追加フィールドのみ示す。
 
-```python
-# 主要関数
-def enrich(predictions_df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """予測結果にリスク指標・イベント情報を付与して返す。"""
-
-def compute_risk_metrics(df: pd.DataFrame, spy_df: pd.DataFrame,
-                         lookback_days: int = 90) -> dict:
-    """1銘柄のリスク指標を算出する。
-
-    呼び出し元（exporter）が事前に取得した株価 DataFrame を受け取る。
-    関数内部では yfinance を呼び出さない。
-
-    Args:
-        df: 対象銘柄の株価 DataFrame（Close 列を含む、252営業日分以上）
-            ※ 呼び出し元が十分なカレンダー日数で取得済みであること
-        spy_df: SPY の株価 DataFrame（beta 算出用、df と同期間）
-        lookback_days: beta の計算窓（デフォルト90営業日）
-
-    各指標は df の末尾から所定の窓で算出する:
-      - vol_20d_ann:      末尾 20営業日
-      - vol_60d_ann:      末尾 60営業日
-      - beta:             末尾 lookback_days 営業日（デフォルト90）
-      - max_drawdown_1y:  末尾 252営業日（1年分）
-    ※ df の営業日数が不足する場合は利用可能な範囲で算出する
-
-    Returns:
-        {
-            "vol_20d_ann": float,   # 20日ボラティリティ（年率換算）
-            "vol_60d_ann": float,   # 60日ボラティリティ（年率換算）
-            "beta": float,          # S&P500に対するβ
-            "max_drawdown_1y": float,  # 過去1年の最大ドローダウン (負値)
-        }
-    """
-
-def fetch_events(ticker: str) -> list[dict]:
-    """決算日・配当落ち日をyfinance .infoから取得する。
-    Returns:
-        [
-            {"type": "earnings", "date": "2026-03-05", "days_to": 14},
-            {"type": "dividend_ex", "date": "2026-03-20", "days_to": 29},
-        ]
-    """
-```
-
-**計算ロジック:**
-
-呼び出し元（exporter）が `yf.download` で取得済みの DataFrame (`df`, `spy_df`) を受け取り、各指標を算出する。関数内部では yfinance を呼び出さない。
-
-**データ取得期間の換算（営業日 vs カレンダー日）:**
-`yf.download` の `period` パラメータはカレンダー日数を指定する。252営業日 ≈ 365カレンダー日だが、祝日等を考慮して **`period="400d"`** を使用する。取得後の DataFrame 行数が実際の営業日数となる。
-
-```
-取得: yf.download(tickers, period="400d")  — 252営業日を確実に含むため余裕を持ったカレンダー日数
-前提: df は 252営業日分以上を含むこと（最大DDが252営業日を要するため）
-不足時: df の営業日数が 252 に満たない場合は利用可能な範囲で算出する
-
-ボラティリティ(20日年率) = df 末尾20営業日の日次リターンの標準偏差 × √252
-ボラティリティ(60日年率) = df 末尾60営業日の日次リターンの標準偏差 × √252
-β = Cov(df リターン, spy_df リターン) / Var(spy_df リターン)  ※末尾 lookback_days(90)営業日
-最大DD(1年) = df 末尾252営業日の最大ドローダウン（ピークからの最大下落率）
-```
-
-**イベント取得:**
-```python
-info = yf.Ticker(ticker).info
-# 決算日: info.get("earningsDate") → Timestampのリスト
-# 配当落ち日: info.get("exDividendDate") → Timestamp
-# セクター: info.get("sector") → 文字列 (フェーズ2で使用)
-```
-
-**`src/exporter.py` 変更:**
-
-`build_predictions_json` で enricher の出力を predictions.json に統合する。
-
+- `predictions.json`
 ```json
-// predictions.json の各レコードに追加されるフィールド
 {
-  "date": "2026-02-19",
-  "ticker": "CBRE",
-  "current_price": 152.01,
-  "predicted_price": 425.23,
-  "predicted_change_pct": 179.74,
-  "ci_pct": 2.89,
-  "actual_price": null,
-  "status": "予測済み",
-  "hit": null,
-  // ↓ 新規追加フィールド
-  "risk": {
-    "vol_20d_ann": 0.28,
-    "vol_60d_ann": 0.25,
-    "beta": 1.10,
-    "max_drawdown_1y": -0.18
-  },
-  "events": [
-    {"type": "earnings", "date": "2026-03-05", "days_to": 14},
-    {"type": "dividend_ex", "date": "2026-03-20", "days_to": 29}
-  ]
+  "prob_up": 0.62,
+  "prob_up_calibrated": null
 }
 ```
 
-**`src/main.py` は変更しない。**
-
-enricher の実行責務は **exporter のみに統一** する。理由:
-- `python -m src.exporter` の単体実行でも enrichment が動作する必要がある（GitHub Actions ワークフローで exporter は独立ステップとして実行される）
-- main.py に enricher を入れると、main 経由と exporter 単体実行で enrichment の有無が分岐し、データ欠落のリスクがある
-- Google Sheets のスキーマ変更を避ける（既存の9列ヘッダーを維持）
-
-**実装詳細（exporter の変更）:**
-
-```python
-# exporter.py に追加
-def build_predictions_json(records: list[dict], enrichment: dict) -> list[dict]:
-    """records: Sheetsの全レコード, enrichment: {(date, ticker): {risk: ..., events: ...}}"""
-    results = []
-    for r in records:
-        item = {
-            "date": r["日付"],
-            "ticker": r["ティッカー"],
-            # ... 既存フィールド ...
-        }
-        # enrichment は (date, ticker) キーで最新週のみ存在
-        key = (r["日付"], r["ティッカー"])
-        ticker_data = enrichment.get(key, {})
-        if ticker_data:
-            item["risk"] = ticker_data.get("risk")
-            item["events"] = ticker_data.get("events")
-        results.append(item)
-    return results
-```
-
-**enrichment のスコープ制限:**
-- enrichment の辞書キーは `(date, ticker)` のタプルとする
-- exporter は最新週の予測済みレコードのみを enricher に渡し、結果を `(date, ticker)` キーで格納する
-- 過去週のレコードにはキーが一致しないため enrichment フィールドが付与されない
-- これにより、最新時点で算出したリスク指標が過去レコードに混入する時点整合性の問題を防止する
-
-**export 関数の変更フロー:**
-1. Google Sheets からレコード取得（既存）
-2. 最新週の日付を特定し、最新週の予測済みティッカーを抽出
-3. 最新週のティッカー + SPY に対して `yf.download(tickers, period="400d")` で長期株価データを一括取得（252営業日を確実に含むためカレンダー日数に余裕を持たせる）
-4. 各銘柄の DataFrame と SPY DataFrame を `enricher.compute_risk_metrics(df, spy_df)` に渡しリスク指標を算出
-5. `enricher.fetch_events(ticker)` でイベント情報を取得（ticker 文字列を渡す。内部で `.info` を呼ぶ）
-6. （フェーズ3追加）`enricher.compute_explanations(ticker, df, config)` に長期 DataFrame をそのまま渡してスコア内訳を算出。日付ベースの期間切り出しは関数内部で行う（呼び出し側では切り出さない）
-7. 結果を `{(date, ticker): {...}}` 形式で格納
-8. enrichment データと records を `build_predictions_json` に渡す
-9. JSON出力（既存）
-
-### フロントエンド変更
-
-**`dashboard/js/stock.js` 変更:**
-
-銘柄詳細ページにリスクパネルとイベントバッジを追加する。
-
-```
-価格推移チャートの上に:
-┌──────────────────────────────────────────────┐
-│ CBRE                                         │
-│ 予測: +12.5% (4週)                            │
-│                                               │
-│ ボラ(20日): 28%年率  β: 1.10  最大DD: -18%     │
-│                                               │
-│ [決算まで14日] [配当落ちまで29日]                │
-└──────────────────────────────────────────────┘
-```
-
-- `risk` フィールドが存在する最新レコードからリスク指標を表示
-- `events` フィールドからイベントバッジを生成
-- リスク指標がない過去レコードは表示をスキップ
-
-**`dashboard/js/index.js` 変更:**
-
-予測カードにリスク情報を1行追加する。
-
-```
-┌─────────────────────────────┐
-│ CBRE                        │
-│ $152.01 → $425.23  +179.7%  │
-│ 実績: -           未確定     │
-│ ボラ28% | β1.10 | DD-18%    │  ← 新規追加行
-│ [決算14日後]                 │  ← 新規追加行
-└─────────────────────────────┘
-```
-
-**`dashboard/css/style.css` 変更:**
-
-- `.risk-row` スタイル追加（薄いグレー背景、小フォント）
-- `.event-badge` スタイル追加（ピル型バッジ、オレンジ系）
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/enricher.py` | **新規作成**: リスク指標算出 + イベント取得 |
-| `src/exporter.py` | enricher 呼び出し + 結果を predictions.json に統合 |
-| `dashboard/js/stock.js` | リスクパネル + イベントバッジ描画 |
-| `dashboard/js/index.js` | カードにリスク情報行追加 |
-| `dashboard/css/style.css` | リスク行・イベントバッジのスタイル |
-| `tests/test_enricher.py` | **新規作成**: enricher のユニットテスト |
-
----
-
-## フェーズ2: エビデンス指標（モメンタム/バリュー/クオリティ/低リスク）
-
-### 概要
-research2.md「エビデンス指標スナップショット」に対応。
-AI予測が"どのタイプの上昇"かを実証研究で裏づけのある因子（ファクター）で分解表示する。
-
-### バックエンド変更
-
-**`src/enricher.py` に追加:**
-
-```python
-def compute_evidence_signals(ticker: str, peer_tickers: list[str]) -> dict:
-    """銘柄のエビデンス指標を対象銘柄群内の z-score で算出する。
-    Returns:
-        {
-            "momentum_z": float,    # 12ヶ月モメンタム (直近1ヶ月除外) の z-score
-            "value_z": float,       # バリュー指標 (P/B逆数) の z-score
-            "quality_z": float,     # 収益性 (ROE or 利益率) の z-score
-            "low_risk_z": float,    # 低リスク (ボラティリティ逆数) の z-score
-            "composite": float,     # 合成スコア (0〜100)
-        }
-    """
-```
-
-**各指標の算出方法:**
-
-| 指標 | 算出元 | 計算方法 |
-|------|--------|---------|
-| momentum_z | yfinance 過去株価 | 過去12ヶ月リターン（直近1ヶ月除外）→ 対象銘柄群内z-score |
-| value_z | yfinance `.info["priceToBook"]` | P/B の逆数 → 対象銘柄群内z-score（高いほどバリュー） |
-| quality_z | yfinance `.info["returnOnEquity"]` | ROE → 対象銘柄群内z-score |
-| low_risk_z | フェーズ1の vol_20d_ann | ボラティリティの逆数 → 対象銘柄群内z-score（低ボラほど高スコア） |
-| composite | 上記4指標 | `0.3*momentum + 0.25*value + 0.25*quality + 0.2*low_risk` → 0〜100に正規化 |
-
-**z-score の計算:**
-```
-z = (銘柄の値 - 対象銘柄群平均) / 対象銘柄群標準偏差
-```
-対象銘柄群 = 最新週の予測対象銘柄（topN）。
-
-**サンプルサイズに関する注意:**
-- topN（現行設定: 10銘柄）は統計的に十分な母集団とは言えないため、z-score は市場全体に対する絶対的な位置づけではなく、**選出銘柄間の相対比較** として解釈する
-- フロントエンドの表示ラベルも「市場平均比」ではなく「選出銘柄内の相対位置」とする
-- 将来的に母集団を拡大する場合は、screener が中間結果（全銘柄の指標値）をファイルに保存し enricher が参照する方式を検討する
-
-**データ取得の最適化:**
-- `yf.Ticker(ticker).info` の呼び出しはフェーズ1の `fetch_events` と共通化する
-- 1回の `.info` 呼び出しでリスク・イベント・ファンダメンタルデータを一括取得
-- レート制限対策: バッチ間に1秒のスリープ（既存 screener と同じパターン）
-
-### フロントエンド変更
-
-**`dashboard/js/stock.js` 変更:**
-
-銘柄詳細ページに「根拠パネル」を追加する。
-
-```
-┌──────────────────────────────────────────────┐
-│ エビデンス指標                                 │
-│                                               │
-│ モメンタム  ████████░░  +1.25  ▲ 支持          │
-│ バリュー    ███░░░░░░░  -0.40  ▼ 反対          │
-│ 収益性      ██████░░░░  +0.70  ▲ 支持          │
-│ 低リスク    ████░░░░░░  +0.30  ▲ 支持          │
-│                                               │
-│ 合成スコア: 63 / 100                           │
-└──────────────────────────────────────────────┘
-```
-
-- z-score の絶対値でバーの長さを決定
-- z > 0 → 緑「▲ 支持」、z < 0 → 赤「▼ 反対」
-- z-score が null の場合は「データなし」と表示
-
-**`dashboard/css/style.css` 変更:**
-
-- `.evidence-panel` コンテナスタイル
-- `.evidence-bar` 横棒グラフスタイル（CSS のみで描画、Chart.js 不要）
-- `.evidence-support` / `.evidence-oppose` 色分け
-
-### predictions.json への追加フィールド
-
+- `accuracy.json`
 ```json
 {
-  "evidence": {
-    "momentum_z": 1.25,
-    "value_z": -0.40,
-    "quality_z": 0.70,
-    "low_risk_z": 0.30,
-    "composite": 63
-  }
-}
-```
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/enricher.py` | `compute_evidence_signals` 関数追加、`.info` 取得の共通化 |
-| `src/exporter.py` | evidence フィールドを predictions.json に追加 |
-| `dashboard/js/stock.js` | 根拠パネル描画 |
-| `dashboard/css/style.css` | エビデンスバー・パネルのスタイル |
-| `tests/test_enricher.py` | エビデンス指標のテスト追加 |
-
----
-
-## フェーズ3: 予測根拠の表示（スコア内訳）
-
-### 概要
-research2.md「局所説明（SHAP風）」に対応。
-完全なSHAPは本プロジェクトのモデル構成（Prophet + ルールベーススコアリング）には不向きなため、スクリーニングスコアの内訳をそのまま「なぜこの銘柄が選ばれたか」の根拠として表示する。
-
-**再計算タイミングに関する注意:**
-explanations は exporter 実行時に株価データを再取得し、日付ベースで切り出した `sliced_df` を `screener.compute_indicators(sliced_df)` に渡して算出する。予測自体は `src.main` 実行時点で確定済みであり、GitHub Actions ワークフロー上 main と exporter は別ステップ（数分〜数十分の時間差）で実行される。そのため、exporter 時点の指標値が main 実行時と微妙に異なる可能性がある（市場クローズ後の実行を前提とするため通常は同一だが、API レスポンスのタイミング差は排除できない）。この仕様を明示するため、JSON 出力と UI に「エクスポート時点の再計算値」である旨を記載する。
-
-### バックエンド変更
-
-**`src/screener.py` は変更しない。**
-
-screener の戻り値（`current_price`, `price_change_1m`, `volume_trend`, `rsi`, `macd_bullish`）は既存のまま維持する。スコア内訳の算出は enricher が単独で行う。
-
-**`src/enricher.py` に追加:**
-
-enricher が screener の `compute_indicators` 関数をインポートし、最新週のティッカーに対してスコア内訳を再計算する。Google Sheets にはスコア内訳を保存しない。
-
-**因子名 → 重みキー → スコア変換の対応表:**
-
-`compute_indicators` が返す指標キーと `config.yaml` の重みキーは一致しないものがある。enricher はこの対応を正しくマッピングする必要がある。
-
-| `compute_indicators` の返却キー | `config.yaml` の重みキー | スコア変換ロジック（`score_stock` 準拠） |
-|------|------|------|
-| `price_change_1m` | `price_change_1m` (0.3) | `max(0.0, raw)` |
-| `volume_trend` | `volume_trend` (0.2) | `max(0.0, raw)` |
-| `rsi` | `rsi_score` (0.25) | 40-60 → 1.0 / 30-70 → 0.5 / else → 0.0 |
-| `macd_bullish` | `macd_signal` (0.25) | そのまま (0.0 or 1.0) |
-
-各ファクターの寄与度 (impact) = 変換後スコア × 重み
-
-```python
-def compute_explanations(ticker: str, df: pd.DataFrame, config: dict) -> list[dict]:
-    """screener の関数を再利用してスコア内訳を算出する。
-    screener.py 自体は変更せず、enricher 内で内訳を組み立てる。
-
-    注意: screener.compute_indicators のシグネチャは
-    compute_indicators(df: pd.DataFrame) -> dict であり、
-    ticker 文字列ではなく株価 DataFrame を受け取る。
-
-    重要: compute_indicators は df の先頭と末尾で price_change_1m を
-    計算する（close.iloc[-1] - close.iloc[0]）。フェーズ1のリスク指標用
-    DataFrame は最大252日分を含むため、そのまま渡すと price_change_1m が
-    「1年間の変動率」になり、screener が使う30日間の値と乖離する。
-    必ず日付ベースで screener と同一のカレンダー日数に切り出してから渡すこと。
-
-    期間切り出しの注意（営業日 vs カレンダー日）:
-    - config["screening"]["lookback_days"] はカレンダー日を意味する
-    - screener は yf.download(period=f"{lookback_days}d") でカレンダー日指定
-    - df.tail(lookback_days) は営業日数（行数）指定のため不一致になる
-    - 日付ベース切り出し（pd.Timedelta）を使うことで screener と同条件になる
-
-    手順:
-    1. フェーズ1で取得済みの長期 DataFrame を受け取る
-    2. 日付ベースで切り出す:
-       cutoff = df.index.max() - pd.Timedelta(days=config["screening"]["lookback_days"])
-       sliced_df = df.loc[df.index >= cutoff]
-       ※ tail() ではなく Timedelta を使い、screener の period=f"{lookback_days}d" と同じカレンダー日数で切り出す
-    3. screener.compute_indicators(sliced_df) で生指標を取得
-    4. score_stock と同じ変換ロジックを適用し、config.yaml の重みで寄与度を算出
-    5. 寄与度降順で上位3項目を返す
-
-    Args:
-        ticker: ティッカーシンボル（表示用）
-        df: yf.download で取得済みの株価 DataFrame（Close, Volume 列を含む）
-            ※ フェーズ1のリスク指標用に取得した長期データを想定
-        config: config.yaml の設定辞書
-
-    Returns:
-        [{"factor": "macd_bullish", "impact": 0.25, "text": "MACD買いシグナル"}, ...]
-    """
-    lookback = config["screening"]["lookback_days"]  # 現行: 30（カレンダー日）
-    cutoff = df.index.max() - pd.Timedelta(days=lookback)
-    sliced_df = df.loc[df.index >= cutoff]
-    indicators = screener.compute_indicators(sliced_df)
-    # ... 以降、score_stock と同じ変換ロジックで寄与度を算出 ...
-```
-
-**実装方針:**
-- exporter が最新週のティッカーリストを enricher に渡す（フェーズ1・2 と同じフロー）
-- enricher はフェーズ1のリスク指標算出時に取得済みの長期株価 DataFrame を再利用する（重複取得を避ける）
-- **DataFrame の期間切り出し（重要）:** `compute_indicators` は `df` の先頭行と末尾行で `price_change_1m` を計算する（`screener.py:105-107`）。フェーズ1 のリスク指標用 DataFrame は最大252日分を含むため、日付ベースで screener と同一のカレンダー日数に切り出してから渡す（`cutoff = df.index.max() - pd.Timedelta(days=lookback_days)` / `df.loc[df.index >= cutoff]`）。`tail()` は営業日数（行数）指定であり、screener の `period=f"{lookback_days}d"`（カレンダー日）と一致しないため使用しない。これにより explanations の指標値が実際の銘柄選出時と整合する
-- `screener.compute_indicators(sliced_df)` に切り出し後の DataFrame を渡して生指標を取得する
-- `score_stock` と同じスコア変換ロジック（RSI の帯判定、max(0, x) 等）を enricher 内で再現し、`config.yaml` の重みを掛けて各ファクターの寄与度を算出する
-- 結果を `(date, ticker)` キーの enrichment 辞書に `explanations` として格納
-
-### フロントエンド変更
-
-**`dashboard/js/stock.js` 変更:**
-
-銘柄詳細ページに「選出理由」セクションを追加する。
-
-```
-┌──────────────────────────────────────────────┐
-│ 選出理由                                      │
-│                                               │
-│ この銘柄がトップ10に入った主因:                  │
-│ ① MACD買いシグナルが出ている (+0.25)            │
-│ ② RSIが安定圏にある (+0.25)                     │
-│ ③ 1ヶ月株価上昇率が高い (+0.045)                │
-│                                               │
-│ ※ エクスポート時点の指標値に基づく再計算結果です  │
-└──────────────────────────────────────────────┘
-```
-
-- 寄与度（weighted）降順で上位3項目を表示
-- 短い日本語の説明テンプレートを付与
-- 再計算値である旨の注記を末尾に表示
-
-### predictions.json への追加フィールド
-
-```json
-{
-  "explanations": {
-    "factors": [
-      {"factor": "macd_bullish", "weight_key": "macd_signal", "impact": 0.25, "text": "MACD買いシグナル"},
-      {"factor": "rsi",          "weight_key": "rsi_score",    "impact": 0.25, "text": "RSI安定圏"},
-      {"factor": "price_change_1m", "weight_key": "price_change_1m", "impact": 0.045, "text": "1ヶ月株価上昇率が高い"}
-    ],
-    "recalculated_at": "2026-02-19T06:15:00Z",
-    "note": "エクスポート時点の指標値に基づく再計算結果"
-  }
-}
-```
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/enricher.py` | screener の関数を再利用してスコア内訳を算出・explanations 形式に変換 |
-| `src/exporter.py` | explanations フィールドを predictions.json に追加 |
-| `dashboard/js/stock.js` | 選出理由セクション描画 |
-| `dashboard/css/style.css` | 選出理由セクションのスタイル |
-
----
-
-## フェーズ4: 予測誤差分析（帯別精度・MAE）
-
-### 概要
-research2.md「予測の校正ダッシュボード」の方向性を踏まえつつ、現状のモデル出力に適合した形で実装する。
-
-**現状のモデルは確率を出力しない**（上昇予測のみをフィルタした予測上昇率%を出力）。そのため research2.md が前提とする「確率予測の校正（calibration）」（Brier Score、reliability diagram 等）は適用できない。確率出力（例: `prob_positive`）を導入するまでは「校正」を名乗らず、**「予測誤差分析」** として予測上昇率と実績上昇率のずれを定量化する。
-
-### バックエンド変更
-
-**`src/exporter.py` 変更:**
-
-accuracy.json に予測誤差分析データを追加する。
-
-```python
-def build_accuracy_json(records: list[dict]) -> dict:
-    # 既存の weekly + cumulative に加えて:
-    accuracy["error_analysis"] = build_error_analysis(records)
-    return accuracy
-
-def build_error_analysis(records: list[dict]) -> dict:
-    """予測上昇率 vs 実際変動率の誤差分析データを構築する。"""
-    # 確定済み + 実績あり (actual_price が数値) のレコードのみ対象
-    # predicted_change_pct をビン分割（0-5%, 5-10%, 10-20%, 20%+）
-    # 各ビンの平均予測上昇率 vs 平均実際変動率 を算出
-    # MAE (Mean Absolute Error) を算出
-```
-
-**accuracy.json への追加フィールド:**
-
-```json
-{
-  "updated_at": "2026-02-19T...",
-  "weekly": [...],
-  "cumulative": {...},
-  "error_analysis": {
-    "mae_pct": 5.3,
-    "bins": [
-      {
-        "range": "0-5%",
-        "avg_predicted_pct": 3.2,
-        "avg_actual_pct": 2.8,
-        "hit_rate_pct": 72.0,
-        "count": 45
-      },
-      {
-        "range": "5-10%",
-        "avg_predicted_pct": 7.1,
-        "avg_actual_pct": 4.5,
-        "hit_rate_pct": 65.0,
-        "count": 30
-      }
-    ],
-    "notes": "予測上昇率の帯ごとに実績変動率を比較。MAEは予測と実績の平均絶対誤差。"
-  }
-}
-```
-
-**MAE の計算:**
-```
-actual_change_pct = (actual_price - current_price) / current_price * 100
-MAE = mean(|predicted_change_pct - actual_change_pct|)
-```
-
-**将来の拡張（確率出力導入後）:**
-- predictor がクラス確率（例: `prob_positive: 0.72`）を出力するようになった段階で、Brier Score・reliability diagram・ECE 等の校正指標を追加する
-- その際に `error_analysis` を `calibration` に昇格させる
-
-### フロントエンド変更
-
-**`dashboard/js/accuracy.js` 変更:**
-
-的中率ページに「予測誤差分析」セクションを追加する。
-
-```
-┌──────────────────────────────────────────────┐
-│ 予測誤差分析                                   │
-│                                               │
-│ 平均予測誤差 (MAE): 5.3%                       │
-│                                               │
-│ [予測上昇率 vs 実際変動率 のバーチャート]        │
-│                                               │
-│ 予測帯     予測平均  実績平均  的中率  件数      │
-│ 0-5%      +3.2%    +2.8%   72%    45         │
-│ 5-10%     +7.1%    +4.5%   65%    30         │
-│ 10-20%    +14.2%   +8.1%   58%    20         │
-│ 20%+      +35.0%   +12.3%  50%    10         │
-└──────────────────────────────────────────────┘
-```
-
-- Chart.js でグループ化バーチャート（予測 vs 実績）
-- テーブルで詳細数値
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/exporter.py` | `build_error_analysis` 関数追加、accuracy.json 拡張 |
-| `dashboard/js/accuracy.js` | 予測誤差分析セクション + チャート + テーブル描画 |
-| `dashboard/accuracy.html` | 予測誤差分析セクション用 HTML 追加 |
-| `dashboard/css/style.css` | 誤差分析テーブル・チャートのスタイル |
-
----
-
-## フェーズ5: 予測ガードレール（research2.md 最優先）
-
-### 概要
-research2.md「予測ガードレール（最優先）」に対応。現状の predictions.json には +100% を超えるような非現実的な予測が含まれ得る（Prophet の外れ値・変化点推定の影響）。利用者が予測の信頼性を判断できるよう、異常フラグと上昇率クリップを追加する。
-
-**research2.md の根拠:** predictions.json の短期上昇率が非現実的に大きいケースがあり、「当たる/外れる」以前にモデルの破綻有無を利用者が判断できない。Prophet の外れ値や変化点推定の不安定さが原因として指摘されている。
-
-### バックエンド変更
-
-**`src/exporter.py` 変更:**
-
-```python
-# 予測変更率の異常判定しきい値 (config.yaml で定義)
-# guardrail:
-#   clip_pct: 30.0       # 週次±30%を超えたらクリップ
-#   warn_pct:  20.0      # 週次±20%を超えたら警告フラグ
-
-def apply_guardrail(predicted_change_pct: float, config: dict) -> dict:
-    """予測上昇率にガードレールを適用する。
-
-    Returns:
-        {
-            "predicted_change_pct_clipped": float,  # クリップ後の値
-            "sanity_flags": list[str],              # "OK" / "WARN_HIGH" / "CLIPPED"
-        }
-    """
-    clip = config.get("guardrail", {}).get("clip_pct", 30.0)
-    warn = config.get("guardrail", {}).get("warn_pct", 20.0)
-    flags = []
-
-    clipped = max(-clip, min(clip, predicted_change_pct))
-    if abs(predicted_change_pct) > clip:
-        flags.append("CLIPPED")
-    elif abs(predicted_change_pct) > warn:
-        flags.append("WARN_HIGH")
-    else:
-        flags.append("OK")
-
-    return {
-        "predicted_change_pct_clipped": round(clipped, 4),
-        "sanity_flags": flags,
+  "calibration": {
+    "overall": {
+      "brier_score": 0.205,
+      "log_loss": 0.623,
+      "ece": 0.031,
+      "reliability_bins": [
+        {"p_bin": "0.5-0.6", "n": 45, "mean_pred": 0.54, "empirical": 0.56}
+      ],
+      "n_calibrated": 87
+    },
+    "recent_n_weeks": {
+      "n_weeks": 12,
+      "brier_score": 0.198,
+      "log_loss": 0.610,
+      "ece": 0.028,
+      "n_calibrated": 24
     }
+  }
+}
 ```
 
-**`config.yaml` 追加:**
+### フロントエンド変更
+- `dashboard/accuracy.html`
+  - `#calibration-section` を追加。
+- `dashboard/js/accuracy.js`
+  - reliability diagram（Chart.js）描画（`overall` データを使用）。
+  - 指標（Brier/log-loss/ECE）を「全期間」と「直近N週」で並列表示。
+  - `n_calibrated < 30` は非表示または「データ蓄積中」を表示。
+- `dashboard/css/style.css`
+  - 校正セクションのスタイル追加。
+
+### 対象ファイル
+- `src/predictor.py`
+- `src/exporter.py`
+- `dashboard/accuracy.html`
+- `dashboard/js/accuracy.js`
+- `dashboard/css/style.css`
+- `tests/test_predictor.py`
+
+---
+
+## フェーズ8: ポジションサイジング + 損切り規律
+
+### 概要
+- フェーズ1で算出済みのボラティリティを使い、
+  - 最大保有比率（ボラターゲット）
+  - 推奨損切り水準
+  を算出して提示する。
+
+### バックエンド変更
+- `src/enricher.py`
+  - `compute_sizing(vol_ann, config)` を追加。
+  - `sizing` フィールドを `enrichment` に追加。
+- `src/exporter.py`
+  - `predictions.json` へ `sizing` を組み込み。
+- `config.yaml`
 ```yaml
-guardrail:
-  clip_pct: 30.0   # 週次±30% でクリップ
-  warn_pct: 20.0   # 週次±20% で警告
+sizing:
+  vol_target_ann: 0.10
+  max_weight_cap: 0.20
+  stop_loss_multiplier: 1.0
 ```
 
-**predictions.json への追加フィールド:**
+### 出力スキーマ追加
+- `predictions.json`
 ```json
 {
-  "predicted_change_pct": 179.74,
-  "predicted_change_pct_clipped": 30.0,
-  "sanity_flags": ["CLIPPED"]
-}
-```
-
-### フロントエンド変更
-
-**`dashboard/js/index.js` 変更:**
-- カードの予測上昇率表示を `predicted_change_pct_clipped` に変更
-- `sanity_flags` に "CLIPPED" または "WARN_HIGH" が含まれる場合、カードに警告バッジを表示
-
-```
-┌─────────────────────────────────┐
-│ CBRE                            │
-│ $152.01 → clipped  +30.0% ⚠️    │  ← CLIPPED: 元値は+179.7%
-│ ⚠️ 予測が不安定（外れ値の可能性） │
-└─────────────────────────────────┘
-```
-
-**`dashboard/js/stock.js` 変更:**
-- 銘柄詳細の予測カードにも同様の警告表示
-- `sanity_flags == "CLIPPED"` の場合、元の `predicted_change_pct` も括弧内に表示
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/exporter.py` | `apply_guardrail` 関数追加、predictions.json に `predicted_change_pct_clipped` と `sanity_flags` を追加 |
-| `config.yaml` | `guardrail` セクション追加 |
-| `dashboard/js/index.js` | clipped 値の表示 + 警告バッジ |
-| `dashboard/js/stock.js` | 銘柄詳細への警告表示 |
-| `dashboard/css/style.css` | `.sanity-warn` バッジスタイル追加 |
-
----
-
-## フェーズ6: ベースライン比較（research2.md 第2優先）
-
-### 概要
-research2.md「ベースライン比較（AIの価値を証明する柱）」に対応。「AI予測が単純戦略より本当に優れているか」を定量的に示す。週次バックテスト結果として、AI戦略 vs 12-1モメンタム vs ベンチマーク（**初期版: SPY のみ**）の成績を比較する。
-
-**ベンチマーク定義（初期版）:**
-- 採用: **SPY**（S&P500 ETF）。yfinance で既に取得済みのため追加コストなし。
-- 将来拡張: TOPIX（`^TOPX` または `1306.T`）は日本株対象に切り替える際に追加する。
-
-**research2.md の根拠:** 単純予測はアウト・オブ・サンプルで崩れやすいことが知られており、比較枠を作ることが必須とされる（Welch & Goyal 2008 等）。
-
-### バックエンド変更
-
-**新規ファイル: `src/baseline.py`**
-
-```python
-def compute_baseline_momentum(prices: dict[str, pd.DataFrame], top_n: int = 10) -> pd.Series:
-    """12-1モメンタム上位N銘柄の等金額ポートフォリオ週次リターンを算出する。
-
-    Args:
-        prices: {ticker: DataFrame} 長期株価データ（全スクリーニング対象銘柄）
-        top_n: 毎週選出する銘柄数
-
-    Returns:
-        pd.Series: 週次日付をインデックスとする累積リターン系列
-    """
-```
-
-```python
-def build_comparison_json(
-    ai_weekly: list[dict],     # 既存 simulator.json 相当
-    momentum_weekly: list[dict],
-    benchmark_weekly: list[dict],  # SPY の週次リターン
-) -> dict:
-    """3戦略の比較データを構築する。
-
-    Returns:
-        {
-            "updated_at": "...",
-            "strategies": {
-                "ai":         {"cagr": 0.12, "max_drawdown": -0.15, "sharpe": 0.8,  "equity_curve": [...]},
-                "momentum_12_1": {"cagr": 0.07, "max_drawdown": -0.18, "sharpe": 0.5, "equity_curve": [...]},
-                "benchmark_spy":  {"cagr": 0.10, "max_drawdown": -0.20, "sharpe": 0.6, "equity_curve": [...]},
-            }
-        }
-    """
-```
-
-**`src/exporter.py` 変更:**
-- `baseline.build_comparison_json` を呼び出し `dashboard/data/comparison.json` を出力
-
-**comparison.json スキーマ:**
-```json
-{
-  "updated_at": "2026-02-20T00:00:00Z",
-  "strategies": {
-    "ai": {
-      "label": "AI予測 (週次Top10)",
-      "cagr": 0.12,
-      "max_drawdown": -0.15,
-      "sharpe": 0.80,
-      "equity_curve": [
-        {"date": "2025-01-09", "equity": 1.00},
-        {"date": "2025-01-16", "equity": 1.02}
-      ]
-    },
-    "momentum_12_1": {
-      "label": "12-1モメンタム (Top10)",
-      "cagr": 0.07,
-      "max_drawdown": -0.18,
-      "sharpe": 0.50,
-      "equity_curve": [...]
-    },
-    "benchmark_spy": {
-      "label": "SPY (ベンチマーク)",
-      "cagr": 0.10,
-      "max_drawdown": -0.20,
-      "sharpe": 0.60,
-      "equity_curve": [...]
-    }
+  "sizing": {
+    "vol_target_ann": 0.10,
+    "max_position_weight": 0.20,
+    "stop_loss_pct": -0.087,
+    "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
   }
 }
 ```
 
 ### フロントエンド変更
+- `dashboard/js/stock.js`
+  - リスクパネルに `max_position_weight` / `stop_loss_pct` を追記。
+- `dashboard/js/index.js`
+  - カードのリスク行にサイズ目安を追記。
+- `dashboard/css/style.css`
+  - `.sizing-panel`, `.sizing-note` を追加。
 
-**`dashboard/accuracy.html` + `dashboard/js/accuracy.js` 変更:**
-
-精度ページに「戦略比較」セクションを追加する。
-
-```
-┌──────────────────────────────────────────────────┐
-│ 戦略別パフォーマンス比較                            │
-│                                                  │
-│ [累積リターンチャート（3本線: AI/モメンタム/SPY）]   │
-│                                                  │
-│ 戦略            年率    最大DD   Sharpe           │
-│ AI予測         +12.0%   -15%    0.80             │
-│ 12-1モメンタム  +7.0%   -18%    0.50             │
-│ SPY            +10.0%  -20%    0.60             │
-│                                                  │
-│ ※ 取引コスト・スリッページは考慮していません         │
-└──────────────────────────────────────────────────┘
-```
-
-- Chart.js で3戦略の累積リターン折れ線グラフ
-- テーブルで指標比較（CAGR・最大DD・Sharpe）
-- 注記：手数料未考慮・過去成績は将来を保証しない旨を明記
-
-### 対象ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/baseline.py` | **新規作成**: 12-1モメンタム計算 + 比較JSON構築 |
-| `src/exporter.py` | `comparison.json` 出力処理を追加 |
-| `dashboard/data/comparison.json` | **新規出力**: 3戦略の比較データ |
-| `dashboard/accuracy.html` | 戦略比較セクション用 HTML 追加 |
-| `dashboard/js/accuracy.js` | 累積リターンチャート + 比較テーブル描画 |
-| `dashboard/css/style.css` | 比較セクションのスタイル |
-| `tests/test_baseline.py` | **新規作成**: baseline のユニットテスト |
+### 対象ファイル
+- `src/enricher.py`
+- `src/exporter.py`
+- `config.yaml`
+- `dashboard/js/stock.js`
+- `dashboard/js/index.js`
+- `dashboard/css/style.css`
+- `tests/test_enricher.py`
 
 ---
 
-## 実装順序
+## フェーズ9: バックテスト品質開示（過剰最適化対策）
 
-### 実装済みフェーズ（参考）
+### 概要
+- フェーズ6の比較結果に、検証品質メタデータを追加。
+- 「どれだけ試して、どう評価したか」を公開する。
 
-フェーズ1〜3 は実装済み。以下は着手順の履歴として記録する。
+### バックエンド変更
+- `src/baseline.py`
+  - `build_backtest_hygiene(config, oos_start)` を追加。
+  - `comparison.json` に `backtest_hygiene` を追加。
+  - `reality_check_pvalue`・`pbo`・`deflated_sharpe` の算出・格納を担当。
+- `config.yaml`
+```yaml
+backtest:
+  num_rules_tested: 1        # 推奨: 2以上。pbo/reality_check 算出には最低2、推奨10以上
+  num_parameters_tuned: 4
+  oos_start: "2025-01-01"
+  min_rules_for_pbo: 2       # pbo / reality_check_pvalue を算出する最小 num_rules_tested
+```
 
-| 順番（履歴） | フェーズ | 理由 |
-|-------------|---------|------|
-| 1 | フェーズ1: リスク指標 + イベント ✅ | yfinance の既存データのみで実装可能。最も少ない工数で最大のユーザー価値 |
-| 2 | フェーズ3: 予測根拠 ✅ | screener.py の既存スコアを再利用するため低工数。フェーズ2の前に仕組みを作る |
-| 3 | フェーズ2: エビデンス指標 ✅ | `.info` API呼び出しの共通化が必要。フェーズ1の enricher を拡張 |
+### 出力スキーマ追加
+- `comparison.json`
+```json
+{
+  "backtest_hygiene": {
+    "num_rules_tested": 1,
+    "num_parameters_tuned": 4,
+    "oos_start": "2025-01-01",
+    "data_coverage_weeks": 52,
+    "transaction_cost_note": "取引コスト・税金は未考慮",
+    "survivorship_bias_note": "上場廃止銘柄は評価対象外（サバイバーシップバイアスあり）",
+    "hygiene_status": "insufficient_trials",
+    "reality_check_pvalue": null,
+    "pbo": null,
+    "deflated_sharpe": null,
+    "hygiene_note": "num_rules_tested が min_rules_for_pbo 未満のため品質指標は算出不可"
+  }
+}
+```
 
-### 残タスク優先順（これから着手）
+備考:
+- `hygiene_status`:
+  - `"insufficient_trials"`: `num_rules_tested < min_rules_for_pbo` のため pbo / reality_check_pvalue が算出不可。
+  - `"computed"`: 全品質指標が算出済み。
+  - `"partial"`: deflated_sharpe のみ算出済み（単一戦略でも算出可能）。
+- `reality_check_pvalue`: White's Reality Check（複数戦略の多重検定補正済みp値）。`num_rules_tested >= min_rules_for_pbo` で算出。
+- `pbo`: Probability of Backtest Overfitting（CSCV法）。`num_rules_tested >= min_rules_for_pbo` で算出。
+- `deflated_sharpe`: Deflated Sharpe Ratio（テスト回数・多重比較を考慮した調整済みSharpe）。`num_rules_tested` / `num_parameters_tuned` をもとに単独算出可能。
 
-research2.md の優先付けに基づき、フェーズ5→6→4 の順で実施する。
+### フロントエンド変更
+- `dashboard/accuracy.html`
+  - `#backtest-hygiene-section` を追加。
+- `dashboard/js/accuracy.js`
+  - 品質情報パネル描画。
+- `dashboard/css/style.css`
+  - 品質情報パネルスタイル追加。
 
-| 順番 | フェーズ | 理由 |
-|------|---------|------|
-| 1 | **フェーズ5: 予測ガードレール** | research2.md 最優先・低工数。exporter のみの変更。非現実的な予測を即排除できる |
-| 2 | **フェーズ6: ベースライン比較** | research2.md 第2優先・低工数。AI の価値を定量証明。baseline.py の新規作成のみ |
-| 3 | フェーズ4: 予測誤差分析 | 十分な確定済みデータが蓄積されてから意味を持つ。exporter の変更のみ |
+### 対象ファイル
+- `src/baseline.py`
+- `config.yaml`
+- `dashboard/accuracy.html`
+- `dashboard/js/accuracy.js`
+- `dashboard/css/style.css`
+- `tests/test_baseline.py`（以下を検証対象とする）
+  - `num_rules_tested < min_rules_for_pbo` で `hygiene_status == "insufficient_trials"` となること
+  - `num_rules_tested >= min_rules_for_pbo` で `reality_check_pvalue` / `pbo` の算出分岐へ進むこと
 
 ---
 
-## 技術的制約と設計判断
+## フェーズ10: マクロ指標統合（FRED）
 
-### enricher の実行タイミング（責務の一本化）
+### 概要
+- FRED API を使い主要系列を取得し、`macro.json` を生成。
+- index にマクロ環境バナーを表示。
 
-enricher は **exporter からのみ呼び出される** 設計とする。main.py は enricher を呼び出さない。理由:
-- `python -m src.exporter` の単体実行（GitHub Actions の独立ステップ）でも enrichment が正しく動作する
-- main.py と exporter の両方から呼び出すと、実行経路によって enrichment の有無が分岐し、データ欠落や重複実行のリスクがある
-- Google Sheets のスキーマ変更を避ける（既存の9列ヘッダーを維持）
-- リスク指標は「その時点の最新データ」で計算すべき（1週間前のボラティリティは古い）
+### スコープ明確化
+- 本フェーズ初期版は **FRED のみ** を対象。
+- BOJ/e-Stat/EDINET 連携は将来拡張（別フェーズ）とする。
 
-**フェーズ3（スコア内訳）も同じフロー:** enricher がフェーズ1で取得済みの長期株価 DataFrame を日付ベースで screener と同一のカレンダー日数に切り出し（`cutoff = df.index.max() - pd.Timedelta(days=config["screening"]["lookback_days"])` / `df.loc[df.index >= cutoff]`）、`screener.compute_indicators(sliced_df)` に渡して生指標を取得する。`lookback_days` はカレンダー日であり `tail()` による営業日数切り出しとは異なる点に注意。`config.yaml` の重み定義を参照して寄与度を enricher 内で算出する。screener.py 自体は一切変更しない（戻り値・インターフェースとも既存のまま維持）。
+### バックエンド変更
+- 新規: `src/macro_fetcher.py`
+  - `fetch_fred_series(...)`
+  - `build_macro_json(api_key)`
+- `src/exporter.py`
+  - `FRED_API_KEY` がある場合のみ `macro.json` を生成。
+- ワークフロー
+  - `weekly_run.yml` で `secrets.FRED_API_KEY` を注入。
 
-### explanations の再計算タイミング（仕様）
-
-explanations（選出理由）は **exporter 実行時に再計算** する設計とする。予測自体は `src.main` 実行時点で確定しているが、explanations は exporter ステップで株価データを再取得し、日付ベースで切り出した `sliced_df` を `screener.compute_indicators(sliced_df)` に渡して算出する。
-
-**タイミングのずれに関する仕様:**
-- GitHub Actions ワークフローでは main と exporter は別ステップで実行される（`weekly_run.yml:36`, `weekly_run.yml:41`）
-- 市場クローズ後の日曜 00:00 UTC 実行を前提とするため、通常は main 時点と exporter 時点で株価データは同一
-- ただし API レスポンスのタイミング差（キャッシュ更新等）により微差が生じる可能性は排除できない
-- この仕様を明示するため、JSON 出力に `recalculated_at` タイムスタンプを付与し、フロントエンドに注記を表示する
-
-**main.py に explanation 元データを保存しない理由:**
-- main.py の責務を増やさない（enricher の責務は exporter に一本化する設計方針に準拠）
-- Google Sheets のスキーマ変更を避ける
-- 市場クローズ後の実行であれば実質的な差異は無視できる
-
-### yfinance API 呼び出しの最適化
-
-#### フェーズ1-3（enricher: topN 銘柄のみ）
-
-```
-対象銘柄数: 最新週の予測対象銘柄（topN = 最大10銘柄）
-.info 呼び出し: 最大10銘柄 × 1回 = 10回（フェーズ1/2 で共通化）
-  → P/B, ROE 等のファンダメンタルデータもフェーズ1の .info 呼び出しで一括取得
-株価データ取得 (period="400d"): yf.download でバッチ取得（既存パターン）
-ベンチマーク (SPY): 1回の追加取得
-合計: 約11回の API 呼び出し追加
+### 出力スキーマ追加
+- `macro.json`
+```json
+{
+  "as_of_utc": "2026-02-20T00:10:00Z",
+  "data_as_of_utc": "2026-02-19T18:00:00Z",
+  "series": {
+    "FEDFUNDS": {"latest_value": 5.33, "unit": "%"},
+    "T10Y2Y": {"latest_value": -0.12, "unit": "%"},
+    "VIXCLS": {"latest_value": 18.5, "unit": "pts"}
+  },
+  "regime": {
+    "is_risk_off": false,
+    "note": "VIX > 25 またはイールドカーブ負転でリスクオフ"
+  }
+}
 ```
 
-フェーズ1-3 は topN に限定されるため yfinance のレート制限内で十分。
+備考:
+- `as_of_utc`: JSON 生成時刻（UTC）。全 JSON で統一された「生成時刻」の意味を持つ。
+- `data_as_of_utc`: FRED から取得した最新系列の基準日時（UTC）。`as_of_utc` と区別するため別名で保持する。
 
-#### フェーズ6（baseline: 全スクリーニング対象銘柄）
+### フロントエンド変更
+- `dashboard/index.html`
+  - マクロサマリーバナー領域を追加。
+- 新規: `dashboard/js/macro.js`
+  - `macro.json` を読み込み、存在時のみ描画。
+- `dashboard/css/style.css`
+  - `.macro-banner`, `.risk-off` を追加。
 
-フェーズ6 の `compute_baseline_momentum` は **全スクリーニング対象銘柄**（現行: 最大数百銘柄）の株価データを要する。フェーズ1-3 の見積もりとは分離して設計する。
-
-```
-対象銘柄数: screener.py が参照する全ユニバース（N 銘柄）
-株価データ取得: yf.download でバッチ取得（複数バッチに分割推奨）
-.info 呼び出し: 0回（baseline は価格データのみ使用）
-推定 API 呼び出し: N を ticker_chunk_size=50 で分割 → ceil(N/50) 回の yf.download
-推定所要時間: N=200 銘柄の場合、約 4 回の download リクエスト（各 5-10 秒）≈ 20-40 秒
-```
-
-**設計方針:**
-- `yf.download` はバッチ取得可能なため `.info` と異なりレート制限リスクは低い
-- 取得失敗時は `try/except` でスキップし、データが揃った銘柄のみでモメンタム計算を続行
-- ダウンロード結果を `exporter` 内のローカルキャッシュに保持し、フェーズ1-3 の `stock_data` と統合して二重取得を防ぐ
-- GitHub Actions の実行時間予算（デフォルト6分）内に収まるよう、ユニバースサイズを `config.yaml` の `baseline.universe_max` で上限設定する
-
-### 既存テストへの影響
-
-- `tests/test_exporter.py`: `build_predictions_json` のシグネチャ変更に伴うテスト修正が必要
-- `tests/test_enricher.py`: 新規テスト作成。yfinance 呼び出しはモックで対応
-- 既存の `test_screener.py`, `test_predictor.py` は変更不要
-
-### フロントエンドの互換性
-
-- `risk`, `evidence`, `explanations` フィールドは **オプショナル**（存在しない場合は表示しない）
-- 既存の predictions.json にフィールドがない過去データでも正常動作する
-- ES5互換を維持（既存コードに合わせる）
+### 対象ファイル
+- `src/macro_fetcher.py`
+- `src/exporter.py`
+- `.github/workflows/weekly_run.yml`
+- `dashboard/index.html`
+- `dashboard/js/macro.js`
+- `dashboard/css/style.css`
+- `tests/test_macro_fetcher.py`
 
 ---
 
-## 参考: research2.md との対応表
+## 共通仕様: 透明性メタデータ（予測/評価系JSON）
 
-| research2.md の提案 | 本計画での対応 | 備考 |
-|--------------------|--------------|------|
-| 予測ガードレール | フェーズ5 | ±clip_pct クリップ + sanity_flags |
-| ベースライン比較 | フェーズ6 | 12-1モメンタム vs AI vs SPY |
-| 期待リターン×リスク表示 | フェーズ1 | ボラ・β・最大DDを実装 |
-| イベント注釈 | フェーズ1 | 決算日・配当落ち日 |
-| エビデンス指標スナップショット | フェーズ2 | momentum/value/quality/low-risk の z-score |
-| シグナル集約とランキング分解 | フェーズ2 (composite) | 合成スコアとして実装 |
-| 局所説明（SHAP風） | フェーズ3 | スクリーニングスコアの内訳で代替 |
-| 予測の校正ダッシュボード | フェーズ4 | 現段階は予測誤差分析（MAE + 帯別精度）。確率出力（prob_positive）導入後に Brier/校正図へ昇格 |
-| セクター/市場中立ランキング | 対象外 | 工数に対して効果が限定的。将来検討 |
-| バックテスト強化（WF・手数料） | 対象外 | フェーズ6ベースライン比較の延長で将来対応 |
-| 過学習警告 | 対象外 | 現時点でバックテストデータが不足 |
-| アラート（RSS/Slack） | 対象外 | 週次更新では効果が薄い |
-| データ基盤移行（J-Quants/EDINET） | 対象外 | 中〜高工数。将来の独立フェーズとして検討 |
+research3.md の最低要件として、予測・評価系成果物 JSON に `as_of_utc` と `data_coverage_weeks` を統一付与する。
+
+**適用範囲の方針（方針B）**: 対象を「予測/評価系JSON（predictions.json / accuracy.json / comparison.json）」に限定する。
+`macro.json` は外部データ（FRED）を取得して生成するため `data_coverage_weeks` は対象外とし、`as_of_utc` のみ付与する。
+
+### 対象ファイルと付与フィールド
+
+| ファイル | as_of_utc | data_coverage_weeks | 担当モジュール |
+|---------|-----------|---------------------|--------------|
+| `predictions.json` | ✓ | ✓ | `src/exporter.py` |
+| `accuracy.json` | ✓ | ✓ | `src/exporter.py` |
+| `comparison.json` | ✓ | ✓ | `src/baseline.py` |
+| `macro.json` | ✓ | ✗（外部データのため対象外） | `src/macro_fetcher.py` |
+
+### スキーマ例（予測/評価系）
+```json
+{
+  "as_of_utc": "2026-02-20T00:10:00Z",
+  "data_coverage_weeks": 52
+}
+```
+
+### 実装方針
+- `as_of_utc` の意味（方針A採用）: 全 JSON で「生成時刻（UTC現在時刻）」に統一。`datetime.utcnow().isoformat() + "Z"` を書き込み時に付与する。
+- `macro.json` の FRED 系列基準日: `as_of_utc` とは別に `data_as_of_utc`（FRED の最新系列日時）を付与する。
+- `data_coverage_weeks`: 確定済みレコード（`hit` が "的中" or "外れ"）の週数を集計。
+- 共通関数配置: `src/meta.py` に `build_common_meta(records)` を新設し、`src/exporter.py` と `src/baseline.py` の両方から import して使用する。`macro.json` 生成時は `src/macro_fetcher.py` が直接 `as_of_utc` を付与する（`data_coverage_weeks` は不要）。
+
+---
+
+## 実装順序（research3）
+
+1. フェーズ7: 確率化 + 校正ダッシュボード
+2. フェーズ8: ポジションサイジング + 損切り規律
+3. フェーズ9: バックテスト品質開示
+4. フェーズ10: マクロ指標統合（FRED）
+
+---
+
+## 依存関係
+
+- フェーズ7
+  - 依存なし（単独着手可能）
+  - 校正品質表示は `n_calibrated` の蓄積件数に依存
+- フェーズ8
+  - フェーズ1の `risk.vol_20d_ann` を再利用（実装済み）
+- フェーズ9
+  - フェーズ6の `comparison.json` を拡張（実装済み）
+- フェーズ10
+  - 他フェーズに依存せず独立実装可能
+
+---
+
+## レビュー結果（今回反映）
+
+- 実装済みフェーズ（1〜6）の詳細記述を削除し、要約のみへ整理。
+- 旧計画（research2）と新規計画（research3）が同一粒度で混在していた構成を解消。
+- フェーズ10の対象を「FRED初期版」に明示し、BOJ等との差分を明確化。
+
+### review.md 指摘事項の反映（2026-02-20 第1回）
+
+- [x] 参照パス誤記修正: `docs/gpt_reseach.md/research3.md` → `docs/gpt_reseach/research3.md`
+- [x] フェーズ9: `reality_check_pvalue` / `pbo` / `deflated_sharpe` を出力スキーマに追加、`src/baseline.py` の算出責務を明記
+- [x] 共通メタデータ: 予測/評価系JSON（predictions.json / accuracy.json / comparison.json）に `as_of_utc` / `data_coverage_weeks` を統一追加
+- [x] フェーズ7の校正指標を `overall` + `recent_n_weeks` の2ウィンドウ構成に分割、UI要件に「全期間と直近N週の並列表示」を追記
+
+### review.md 指摘事項の反映（2026-02-20 第2回）
+
+- [x] 透明性メタデータの適用範囲を方針B（予測/評価系のみ）に統一。`macro.json` は `as_of_utc` のみ・`data_coverage_weeks` は対象外と明記
+- [x] フェーズ9: `config.yaml` に `min_rules_for_pbo` を追加し、品質指標の算出条件を明示
+- [x] フェーズ9: `hygiene_status`（`insufficient_trials` / `computed` / `partial`）を `comparison.json` スキーマに追加し、`null` のまま固定化しないためのステータス管理を定義
+
+### review.md 指摘事項の反映（2026-02-20 第3回）
+
+- [x] `as_of_utc` の意味を全 JSON で「生成時刻（UTC現在時刻）」に統一（方針A採用）。`macro.json` の FRED 系列基準日は `data_as_of_utc` として別名で保持するよう明記
+- [x] 共通メタ関数 `build_common_meta` を `src/meta.py` に分離し、`src/exporter.py` と `src/baseline.py` から import して使用する設計を明示
+
+### review.md 指摘事項の反映（2026-02-20 第4回）
+
+- [x] フェーズ7のスキーマ例冒頭に「共通メタデータは共通仕様セクション準拠」の注記を追加し、実装漏れを防止
+- [x] フェーズ9の対象ファイルに `tests/test_baseline.py` を追加し、`hygiene_status` 分岐と `min_rules_for_pbo` 条件の検証対象を明記
+
+### review.md 指摘事項の反映（2026-02-20 第6回）
+
+- [x] フェーズ7注記の「全成果物に統一付与」を「予測/評価系成果物に統一付与（macro.jsonは対象外）」へ修正し、共通仕様セクションの適用範囲と文言を統一
+
+### 受け入れ確認チェック
+
+- `plan.md` の research3参照パスが実在パスと一致している。
+- フェーズ9仕様に Reality Check / PBO / Deflated Sharpe が含まれている。
+- `macro.json` の `data_coverage` 方針が計画全体で一貫している（`as_of_utc` のみ・`data_coverage_weeks` は対象外）。
+- `predictions.json` / `accuracy.json` / `comparison.json` に `as_of_utc` / `data_coverage_weeks` が定義されている。
+- 校正指標が「全期間（overall）+ 直近N週（recent_n_weeks）」で表示される。
+- フェーズ9で品質指標が `null` のまま固定化しないための `hygiene_status` と最小試行数要件（`min_rules_for_pbo`）が定義されている。
+- `as_of_utc` の意味が全成果物で「生成時刻」に統一され、FRED 系列基準日は `data_as_of_utc` として区別されている。
+- 共通メタ生成ロジックが `src/meta.py` に分離され、`src/exporter.py` と `src/baseline.py` の依存関係が明示されている。
+- フェーズ別スキーマ例と共通仕様の必須フィールド定義に齟齬がない（フェーズ7に共通仕様参照注記あり）。
+- フェーズ9の品質指標ロジックに対するユニットテスト（`tests/test_baseline.py`）追加が計画に含まれている。
+- フェーズ7注記と共通仕様セクションで、`data_coverage_weeks` の適用範囲が同一文言で定義されている（予測/評価系JSONのみ、macro.jsonは対象外）。

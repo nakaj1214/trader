@@ -60,6 +60,22 @@
       </div>
     </section>
 
+    <!-- Phase 7: 校正ダッシュボード -->
+    <section id="calibration-section" style="display:none">
+      <h2>確率校正ダッシュボード</h2>
+      <div class="calibration-stats" id="calibration-stats"></div>
+      <div class="chart-container">
+        <canvas id="calibration-chart"></canvas>
+      </div>
+      <p class="calibration-note">※ データが30件以上蓄積されると表示されます。Brier スコアは低いほど良好、ECE は0に近いほど校正精度が高い。</p>
+    </section>
+
+    <!-- Phase 9: バックテスト品質開示 -->
+    <section id="backtest-hygiene-section" style="display:none">
+      <h2>バックテスト品質開示</h2>
+      <div id="backtest-hygiene-panel"></div>
+    </section>
+
     <!-- Phase 6: 戦略比較 -->
     <section id="comparison-section" style="display:none">
       <h2>戦略別パフォーマンス比較</h2>

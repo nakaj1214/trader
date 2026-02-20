@@ -54,3 +54,16 @@ notifications:
 guardrail:
   clip_pct: 30.0   # 週次±30% でクリップ
   warn_pct: 20.0   # 週次±20% で警告
+
+# フェーズ8: ポジションサイジング + 損切り規律
+sizing:
+  vol_target_ann: 0.10      # 目標年率ボラティリティ (ポジションサイズ計算の基準)
+  max_weight_cap: 0.20      # 最大保有比率の上限
+  stop_loss_multiplier: 1.0 # 損切り水準 = multiplier × 月次ボラティリティ
+
+# フェーズ9: バックテスト品質開示
+backtest:
+  num_rules_tested: 1        # 推奨: 2以上。pbo/reality_check 算出には最低2、推奨10以上
+  num_parameters_tuned: 4
+  oos_start: "2025-01-01"
+  min_rules_for_pbo: 2       # pbo / reality_check_pvalue を算出する最小 num_rules_tested

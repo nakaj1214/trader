@@ -12,7 +12,8 @@
         loadJSON("predictions.json"),
         loadJSON("accuracy.json"),
       ]);
-      predictions = data[0];
+      var predictionsJson = data[0];
+      predictions = predictionsJson.predictions || predictionsJson;
       var accuracy = data[1];
 
       showLastUpdated(accuracy);

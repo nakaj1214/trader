@@ -725,6 +725,205 @@ th {
   opacity: 0.88;
 }
 
+/* Phase 7: 校正ダッシュボード */
+.calibration-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.calibration-stat-group {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.calibration-stat-group h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.calibration-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.calibration-stat-label {
+  color: var(--color-text-muted);
+}
+
+.calibration-stat-value {
+  font-weight: 600;
+}
+
+.calibration-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+/* Phase 10: マクロ環境バナー */
+.macro-banner {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: var(--radius);
+  padding: 0.625rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.macro-banner.risk-off {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.macro-banner-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.macro-banner-label {
+  font-weight: 700;
+  color: #0369a1;
+  white-space: nowrap;
+}
+
+.macro-banner.risk-off .macro-banner-label {
+  color: #c2410c;
+}
+
+.macro-banner-series {
+  font-family: monospace;
+  color: var(--color-text);
+}
+
+.macro-banner-note {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.macro-banner-asof {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+/* Phase 9: バックテスト品質開示パネル */
+.hygiene-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.hygiene-status {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.hygiene-status-insufficient_trials {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.hygiene-status-computed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.hygiene-status-partial {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.hygiene-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.hygiene-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hygiene-label {
+  color: var(--color-text-muted);
+}
+
+.hygiene-value {
+  font-weight: 600;
+}
+
+.hygiene-notes {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  margin-top: 0.5rem;
+}
+
+.hygiene-note-detail {
+  font-size: 0.8125rem;
+  color: var(--color-warning);
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
+/* Phase 8: ポジションサイジングパネル */
+.sizing-panel .sizing-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sizing-panel .sizing-row:last-of-type {
+  border-bottom: none;
+}
+
+.sizing-label {
+  color: var(--color-text-muted);
+}
+
+.sizing-value {
+  font-weight: 600;
+}
+
+.sizing-value.sizing-stop {
+  color: var(--color-danger);
+}
+
+.sizing-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
 /* Mobile adjustments */
 @media (max-width: 600px) {
   .header-inner {

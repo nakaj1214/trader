@@ -6,6 +6,42 @@ import pandas as pd
 import pytest
 
 
+# --- compute_prob_up ---
+
+
+def test_compute_prob_up_center():
+    """予測変化 = 0 のとき prob_up = 0.5 になること。"""
+    from src.predictor import compute_prob_up
+    assert abs(compute_prob_up(0.0, 5.0) - 0.5) < 1e-4
+
+
+def test_compute_prob_up_positive():
+    """正の予測変化のとき prob_up > 0.5 になること。"""
+    from src.predictor import compute_prob_up
+    assert compute_prob_up(5.0, 5.0) > 0.5
+
+
+def test_compute_prob_up_negative():
+    """負の予測変化のとき prob_up < 0.5 になること。"""
+    from src.predictor import compute_prob_up
+    assert compute_prob_up(-5.0, 5.0) < 0.5
+
+
+def test_compute_prob_up_zero_ci():
+    """ci_pct = 0 のとき、prob_up は 1.0 (正) または 0.0 (負) になること。"""
+    from src.predictor import compute_prob_up
+    assert compute_prob_up(5.0, 0.0) == 1.0
+    assert compute_prob_up(-5.0, 0.0) == 0.0
+
+
+def test_compute_prob_up_symmetry():
+    """prob_up(+x) + prob_up(-x) = 1.0 になること（正規分布の対称性）。"""
+    from src.predictor import compute_prob_up
+    p_pos = compute_prob_up(3.0, 6.0)
+    p_neg = compute_prob_up(-3.0, 6.0)
+    assert abs(p_pos + p_neg - 1.0) < 1e-4
+
+
 def test_make_future_dataframe_uses_business_days():
     """make_future_dataframe に freq='B' が渡されることを検証する。"""
     # Prophet をモック化

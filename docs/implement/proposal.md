@@ -1,7 +1,1 @@
-現状はgithub actionsが成功しcloudflareに表示できています
-・home1.png が実際の表示なんですが、この並び順はなんなのか
-・料金シミュレータ（どれだけ買っていたら、どれくらい儲けがあったか）を作成
-・サマリー、的中率は画面右上に移動
-・
-
-
+docs\gpt_reseach.md\research2.md を確認し実装計画書を docs\implement\plan.md に記述

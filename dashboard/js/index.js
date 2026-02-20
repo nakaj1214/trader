@@ -46,11 +46,13 @@
       }
     });
 
-    // predicted_change_pct 降順でソート
+    // predicted_change_pct_clipped (あれば) 降順でソート
     var deduped = Object.keys(tickerMap)
       .map(function (k) { return tickerMap[k]; })
       .sort(function (a, b) {
-        return b.predicted_change_pct - a.predicted_change_pct;
+        var av = a.predicted_change_pct_clipped != null ? a.predicted_change_pct_clipped : a.predicted_change_pct;
+        var bv = b.predicted_change_pct_clipped != null ? b.predicted_change_pct_clipped : b.predicted_change_pct;
+        return bv - av;
       });
 
     var dateLabel = document.getElementById("latest-date");
@@ -58,7 +60,15 @@
 
     var html = "";
     deduped.forEach(function (p) {
-      var changeClass = p.predicted_change_pct >= 0 ? "positive" : "negative";
+      // Phase 5: clipped 値を優先表示
+      var displayPct = p.predicted_change_pct_clipped != null
+        ? p.predicted_change_pct_clipped
+        : p.predicted_change_pct;
+      var flags = p.sanity_flags || [];
+      var isClipped = flags.indexOf("CLIPPED") >= 0;
+      var isWarn = flags.indexOf("WARN_HIGH") >= 0;
+      var changeClass = displayPct >= 0 ? "positive" : "negative";
+
       html +=
         '<div class="card">' +
         '  <div class="ticker">' +
@@ -67,6 +77,8 @@
         '">' +
         p.ticker +
         "</a>" +
+        (isClipped ? ' <span class="badge sanity-clipped">CLIPPED</span>' : "") +
+        (isWarn ? ' <span class="badge sanity-warn">WARN</span>' : "") +
         "  </div>" +
         '  <div class="price-row">' +
         '    <span class="price">' +
@@ -77,7 +89,8 @@
         '    <span class="change ' +
         changeClass +
         '">' +
-        formatPct(p.predicted_change_pct) +
+        formatPct(displayPct) +
+        (isClipped ? ' <span class="sanity-original">(元値: ' + formatPct(p.predicted_change_pct) + ")</span>" : "") +
         "</span>" +
         "  </div>" +
         '  <div class="price-row">' +

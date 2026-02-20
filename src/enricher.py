@@ -339,17 +339,19 @@ def compute_evidence_signals(
         return float((val - np.mean(arr)) / np.std(arr))
 
     # --- Momentum: 12ヶ月リターン (直近1ヶ月除外) ---
+    # 標準的な「12-1モメンタム」: end = t-1ヶ月 (≈22営業日前), start = t-13ヶ月 (≈end-252営業日)
+    # 必要な最小行数: 22 (1ヶ月) + 252 (12ヶ月) = 274営業日
+    _MOMENTUM_END = 22    # 直近1ヶ月のスキップ (営業日)
+    _MOMENTUM_SPAN = 252  # 12ヶ月 (営業日)
+    _MOMENTUM_MIN = _MOMENTUM_END + _MOMENTUM_SPAN  # 274
+
     def _calc_momentum(peer):
         df = peer.get("df")
-        if df is None or len(df) < 22:
+        if df is None or len(df) < _MOMENTUM_MIN:
             return None
         close = df["Close"].squeeze()
-        # 直近1ヶ月 ≈ 21営業日を除外
-        if len(close) > 21:
-            end_price = float(close.iloc[-22])
-        else:
-            return None
-        start_price = float(close.iloc[0])
+        end_price = float(close.iloc[-_MOMENTUM_END])           # 1ヶ月前
+        start_price = float(close.iloc[-_MOMENTUM_MIN])        # 13ヶ月前 (= end から12ヶ月前)
         if start_price <= 0:
             return None
         return (end_price - start_price) / start_price

@@ -49,3 +49,8 @@ notifications:
     enabled: true
   line:
     enabled: false  # true にするとSlack通知後にLINEでチェックを促す
+
+# フェーズ5: 予測ガードレール
+guardrail:
+  clip_pct: 30.0   # 週次±30% でクリップ
+  warn_pct: 20.0   # 週次±20% で警告

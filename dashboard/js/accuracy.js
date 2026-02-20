@@ -8,15 +8,18 @@
       var data = await Promise.all([
         loadJSON("accuracy.json"),
         loadJSON("predictions.json"),
+        loadJSON("comparison.json").catch(function () { return null; }),
       ]);
       var accuracy = data[0];
       var predictions = data[1];
+      var comparison = data[2];
 
       showLastUpdated(accuracy);
       renderHeaderAccuracy(accuracy);
       renderCumulativeStat(accuracy);
       renderWeeklyChart(accuracy);
       renderErrorAnalysis(accuracy);
+      renderComparison(comparison);
       renderTickerRanking(filterPredictions(predictions));
     } catch (e) {
       document.getElementById("accuracy-content").innerHTML =
@@ -204,6 +207,106 @@
         "<td>" + formatPct(b.avg_actual_pct) + "</td>" +
         "<td>" + b.hit_rate_pct.toFixed(1) + "%</td>" +
         "<td>" + b.count + "</td>" +
+        "</tr>";
+    });
+
+    html += "</tbody></table></div>";
+    container.innerHTML = html;
+  }
+
+  // --- Phase 6: 戦略比較 ---
+
+  function renderComparison(comparison) {
+    var section = document.getElementById("comparison-section");
+    if (!section) return;
+    if (!comparison || !comparison.strategies || Object.keys(comparison.strategies).length === 0) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+
+    var strategies = comparison.strategies;
+    renderComparisonChart(strategies);
+    renderComparisonTable(strategies);
+  }
+
+  function renderComparisonChart(strategies) {
+    var canvas = document.getElementById("comparison-chart");
+    if (!canvas) return;
+
+    var colors = {
+      ai:             { border: "rgba(37, 99, 235, 1)",  bg: "rgba(37, 99, 235, 0.1)" },
+      momentum_12_1:  { border: "rgba(22, 163, 74, 1)",  bg: "rgba(22, 163, 74, 0.1)" },
+      benchmark_spy:  { border: "rgba(156, 163, 175, 1)", bg: "rgba(156, 163, 175, 0.1)" },
+    };
+
+    var datasets = [];
+    Object.keys(strategies).forEach(function (key) {
+      var s = strategies[key];
+      if (!s.equity_curve || s.equity_curve.length === 0) return;
+      var c = colors[key] || { border: "rgba(100,100,100,1)", bg: "rgba(100,100,100,0.1)" };
+      datasets.push({
+        label: s.label,
+        data: s.equity_curve.map(function (pt) { return pt.equity; }),
+        borderColor: c.border,
+        backgroundColor: c.bg,
+        borderWidth: 2,
+        fill: false,
+        tension: 0.1,
+        pointRadius: 0,
+      });
+    });
+
+    if (datasets.length === 0) return;
+
+    // ラベルは AI 戦略の日付を使用 (なければ最初の戦略)
+    var labelSource = strategies.ai || strategies[Object.keys(strategies)[0]];
+    var labels = labelSource.equity_curve.map(function (pt) { return pt.date; });
+
+    new Chart(canvas, {
+      type: "line",
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          title: { display: true, text: "累積リターン比較 (初期値=1.0)" },
+          legend: { position: "top" },
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: function (v) { return v.toFixed(2); },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function renderComparisonTable(strategies) {
+    var container = document.getElementById("comparison-table");
+    if (!container) return;
+
+    var html =
+      '<div class="table-wrapper"><table>' +
+      "<thead><tr>" +
+      "<th>戦略</th>" +
+      "<th>年率 (CAGR)</th>" +
+      "<th>最大DD</th>" +
+      "<th>Sharpe</th>" +
+      "</tr></thead><tbody>";
+
+    Object.keys(strategies).forEach(function (key) {
+      var s = strategies[key];
+      var cagr = s.cagr != null ? (s.cagr >= 0 ? "+" : "") + (s.cagr * 100).toFixed(1) + "%" : "-";
+      var dd   = s.max_drawdown != null ? (s.max_drawdown * 100).toFixed(1) + "%" : "-";
+      var sh   = s.sharpe != null ? s.sharpe.toFixed(2) : "-";
+      html +=
+        "<tr>" +
+        "<td>" + s.label + "</td>" +
+        "<td>" + cagr + "</td>" +
+        "<td>" + dd + "</td>" +
+        "<td>" + sh + "</td>" +
         "</tr>";
     });
 

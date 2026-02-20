@@ -24,11 +24,15 @@
           <a href="accuracy.html">的中率</a>
           <a href="simulator.html">シミュレータ</a>
         </nav>
+        <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
       </div>
     </div>
   </header>
   <main id="stock-content">
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
+
+    <!-- Phase 5: 予測ガードレール警告 -->
+    <div id="sanity-banner" style="display:none"></div>
 
     <!-- Phase 1: リスク指標 + イベント -->
     <div id="risk-panel" class="info-panel" style="display:none"></div>

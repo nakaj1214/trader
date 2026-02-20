@@ -53,7 +53,7 @@
         return;
       }
 
-      // 最新レコード（risk/events/evidence/explanations がある可能性）
+      // 最新レコード（risk/events/evidence/explanations/sanity_flags がある可能性）
       var latestWithRisk = null;
       for (var i = tickerPredictions.length - 1; i >= 0; i--) {
         if (tickerPredictions[i].risk) {
@@ -61,6 +61,12 @@
           break;
         }
       }
+
+      // Phase 5: 最新予測の sanity フラグ警告表示
+      var latestPred = tickerPredictions.length > 0
+        ? tickerPredictions[tickerPredictions.length - 1]
+        : null;
+      renderSanityBanner(latestPred);
 
       renderRiskPanel(latestWithRisk);
       renderEvidencePanel(latestWithRisk);
@@ -72,6 +78,44 @@
         '<div class="empty-state">データを読み込めませんでした。</div>';
       console.error(e);
     }
+  }
+
+  // --- Phase 5: sanity バナー ---
+
+  function renderSanityBanner(prediction) {
+    var container = document.getElementById("sanity-banner");
+    if (!container) return;
+    if (!prediction || !prediction.sanity_flags) {
+      container.style.display = "none";
+      return;
+    }
+    var flags = prediction.sanity_flags;
+    var isClipped = flags.indexOf("CLIPPED") >= 0;
+    var isWarn = flags.indexOf("WARN_HIGH") >= 0;
+
+    if (!isClipped && !isWarn) {
+      container.style.display = "none";
+      return;
+    }
+
+    var displayPct = prediction.predicted_change_pct_clipped != null
+      ? prediction.predicted_change_pct_clipped
+      : prediction.predicted_change_pct;
+
+    if (isClipped) {
+      container.className = "alert alert-warning sanity-banner";
+      container.innerHTML =
+        "<strong>⚠ 予測が不安定（外れ値の可能性）</strong><br>" +
+        "モデルの予測上昇率が異常に大きいため表示値をクリップしています。" +
+        "表示値: " + formatPct(displayPct) +
+        "（元の予測値: " + formatPct(prediction.predicted_change_pct) + "）";
+    } else {
+      container.className = "alert alert-warning sanity-banner";
+      container.innerHTML =
+        "<strong>⚠ 予測上昇率が高水準</strong><br>" +
+        "予測上昇率が警告しきい値を超えています（" + formatPct(prediction.predicted_change_pct) + "）。参考程度にご確認ください。";
+    }
+    container.style.display = "";
   }
 
   // --- Phase 1: リスクパネル + イベントバッジ ---
@@ -279,6 +323,20 @@
       "</tr></thead><tbody>";
 
     sorted.forEach(function (p) {
+      // Phase 5: sanity フラグ表示
+      var flags = p.sanity_flags || [];
+      var isClipped = flags.indexOf("CLIPPED") >= 0;
+      var isWarn = flags.indexOf("WARN_HIGH") >= 0;
+      var displayPct = p.predicted_change_pct_clipped != null
+        ? p.predicted_change_pct_clipped
+        : p.predicted_change_pct;
+      var pctCell = formatPct(displayPct);
+      if (isClipped) {
+        pctCell += ' <span class="badge sanity-clipped">CLIPPED</span>';
+      } else if (isWarn) {
+        pctCell += ' <span class="badge sanity-warn">WARN</span>';
+      }
+
       html +=
         "<tr>" +
         "<td>" +
@@ -291,7 +349,7 @@
         formatPrice(p.actual_price) +
         "</td>" +
         "<td>" +
-        formatPct(p.predicted_change_pct) +
+        pctCell +
         "</td>" +
         "<td>" +
         hitBadge(p.hit) +

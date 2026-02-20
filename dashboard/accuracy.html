@@ -23,6 +23,7 @@
           <a href="accuracy.html" class="active">的中率</a>
           <a href="simulator.html">シミュレータ</a>
         </nav>
+        <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
       </div>
     </div>
   </header>
@@ -55,6 +56,18 @@
         <canvas id="error-chart"></canvas>
       </div>
       <div id="error-table">
+        <div class="loading">読み込み中...</div>
+      </div>
+    </section>
+
+    <!-- Phase 6: 戦略比較 -->
+    <section id="comparison-section" style="display:none">
+      <h2>戦略別パフォーマンス比較</h2>
+      <p class="comparison-note">※ 取引コスト・スリッページは考慮していません。過去の成績は将来を保証しません。</p>
+      <div class="chart-container">
+        <canvas id="comparison-chart"></canvas>
+      </div>
+      <div id="comparison-table">
         <div class="loading">読み込み中...</div>
       </div>
     </section>

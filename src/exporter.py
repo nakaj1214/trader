@@ -158,6 +158,12 @@ def build_predictions_json(
             # Phase 24: 決算禁則警告（JP 株のみ）
             if "earnings_warning" in ticker_data:
                 item["earnings_warning"] = ticker_data["earnings_warning"]
+            # Phase 17+: JP 株追加財務指標（EPS・配当・営業利益率・CFO）
+            if "jp_fundamentals" in ticker_data:
+                item["jp_fundamentals"] = ticker_data["jp_fundamentals"]
+            # Phase 17+: JP 株銘柄マスタ（セクター・市場区分）
+            if "jp_listed_info" in ticker_data:
+                item["jp_listed_info"] = ticker_data["jp_listed_info"]
 
         results.append(item)
     return results
@@ -582,10 +588,11 @@ def export(config: dict | None = None) -> bool:
         records = fetch_all_records(config)
     except Exception as exc:
         if _is_drive_quota_exceeded_error(exc):
-            logger.warning(
+            logger.error(
                 "Google Drive の保存容量超過のため、今回のエクスポートをスキップします。"
+                " Drive の空き容量を確認してください。"
             )
-            return True
+            return False
         logger.exception("Google Sheets からのデータ取得に失敗")
         return False
 
@@ -652,6 +659,16 @@ def export(config: dict | None = None) -> bool:
             logger.info("comparison.json 出力完了")
     except Exception:
         logger.exception("baseline comparison でエラーが発生しましたが、処理を続行します")
+
+    # Phase 1: ウォークフォワード評価 (walkforward.json)
+    # TODO: walkforward.json は dashboard JS 未参照。Phase 1 ダッシュボード対応時に表示を実装する
+    try:
+        from src.walkforward import compute_walkforward
+        wf = compute_walkforward(records, config)
+        _safe_write_json(wf, DATA_DIR / "walkforward.json")
+        logger.info("walkforward.json 出力完了 (%d ウィンドウ)", len(wf.get("windows", [])))
+    except Exception:
+        logger.exception("walkforward.json 生成でエラーが発生しましたが、処理を続行します")
 
     # Phase 10: マクロ指標統合 (macro.json) - FRED_API_KEY がある場合のみ実行
     fred_api_key = os.environ.get("FRED_API_KEY")

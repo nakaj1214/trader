@@ -9,8 +9,8 @@
 6. ダッシュボードデータエクスポート (exporter)
 """
 
+import copy
 import logging
-import sys
 
 from src.utils import load_config
 
@@ -21,15 +21,28 @@ def run() -> None:
     """ワークフロー全体を実行する。"""
     config = load_config()
 
+    # Phase 0: 実行メタ情報の記録・config スナップショット保存
+    from src.meta import build_run_meta, save_config_snapshot
+    run_meta = build_run_meta(config)
+    logger.info(
+        "実行開始 | timestamp=%s git=%s config_hash=%s",
+        run_meta["run_timestamp"],
+        run_meta["git_commit"],
+        run_meta["config_hash"],
+    )
+    save_config_snapshot(config, run_meta)
+
     # ステップ1: 自動スクリーニング（米国株）
     logger.info("=" * 50)
     logger.info("ステップ1: 自動スクリーニング（米国株）")
     logger.info("=" * 50)
     from src.screener import screen
 
-    # 米国株: sp500 / nasdaq100 のみ対象
+    # 米国株: sp500 / nasdaq100 のみ対象（nikkei225 を除外して別フローで実行）
     us_markets = [m for m in config["screening"]["markets"] if m != "nikkei225"]
-    screened = screen(config, market=None)  # 後続ステップ(predict/sheets/notify)は米国株のみ
+    us_config = copy.deepcopy(config)
+    us_config["screening"]["markets"] = us_markets
+    screened = screen(us_config)  # US 市場のみ。JP は後続の独立フローで実行
 
     # Phase 15: 日本株スクリーニングを独立フローで実行（失敗しても米国株フローに影響しない）
     if "nikkei225" in config["screening"]["markets"]:

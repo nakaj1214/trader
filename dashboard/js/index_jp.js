@@ -110,6 +110,29 @@
         html += '  <div class="risk-row" style="color:#555;">' + unitInfo + "</div>";
       }
 
+      // Phase 17+: セクター・市場区分（JP 株のみ）
+      if (p.jp_listed_info) {
+        var li = p.jp_listed_info;
+        var sectorText = [li.sector_17, li.market_section].filter(Boolean).join(" | ");
+        if (sectorText) {
+          html += '  <div class="risk-row" style="color:#555;font-size:0.85em;">' + sectorText + "</div>";
+        }
+      }
+
+      // Phase 17+: 追加財務指標（EPS・配当・営業利益率）
+      if (p.jp_fundamentals) {
+        var f = p.jp_fundamentals;
+        var fundParts = [];
+        if (f.eps != null) fundParts.push("EPS ¥" + Number(f.eps).toLocaleString("ja-JP", {maximumFractionDigits: 0}));
+        if (f.forecast_eps != null) fundParts.push("予EPS ¥" + Number(f.forecast_eps).toLocaleString("ja-JP", {maximumFractionDigits: 0}));
+        if (f.dividend_annual != null) fundParts.push("配当 ¥" + Number(f.dividend_annual).toLocaleString("ja-JP", {maximumFractionDigits: 0}) + "/年");
+        if (f.payout_ratio != null) fundParts.push("配当性向 " + (f.payout_ratio * 100).toFixed(0) + "%");
+        if (f.operating_margin != null) fundParts.push("営業利益率 " + (f.operating_margin * 100).toFixed(1) + "%");
+        if (fundParts.length > 0) {
+          html += '  <div class="risk-row" style="font-size:0.85em;color:#444;">' + fundParts.join(" | ") + "</div>";
+        }
+      }
+
       if (p.risk) {
         var riskText = "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
           " | β" + p.risk.beta.toFixed(2) +

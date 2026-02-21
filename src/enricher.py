@@ -226,10 +226,19 @@ def _fetch_info(ticker: str, config: dict | None = None) -> dict:
 
 
 def _supplement_jp_info(info: dict, ticker: str, config: dict | None = None) -> dict:
-    """J-Quants API で priceToBook / returnOnEquity の null を補完する。
+    """J-Quants API で財務指標の null を補完する。
 
     config["jquants"]["enabled"] が false の場合はスキップ。
     JQUANTS_MAIL_ADDRESS / JQUANTS_PASSWORD が未設定の場合も {} を返す（degraded mode）。
+
+    補完対象（yfinance .info 形式のキーにマップ）:
+        priceToBook       ← PBR
+        returnOnEquity    ← ROE（小数）
+        trailingEps       ← EPS（実績）
+        forwardEps        ← FEPS（今期予想）
+        dividendRate      ← DivAnn（年間配当、円）
+        payoutRatio       ← PayoutRatioAnn（配当性向、小数）
+        operatingMargins  ← OP/Sales（営業利益率、小数）
     """
     if config is not None:
         if not config.get("jquants", {}).get("enabled", True):
@@ -240,12 +249,21 @@ def _supplement_jp_info(info: dict, ticker: str, config: dict | None = None) -> 
         if not jq:
             return info
         info = dict(info)  # コピーして変更
-        if info.get("priceToBook") is None and "priceToBook" in jq:
-            info["priceToBook"] = jq["priceToBook"]
-            logger.debug("J-Quants PBR 補完: %s → %.2f", ticker, jq["priceToBook"])
-        if info.get("returnOnEquity") is None and "returnOnEquity" in jq:
-            info["returnOnEquity"] = jq["returnOnEquity"]
-            logger.debug("J-Quants ROE 補完: %s → %.4f", ticker, jq["returnOnEquity"])
+
+        # yfinance キー → J-Quants キー のマッピング
+        field_map = [
+            ("priceToBook",      "priceToBook"),
+            ("returnOnEquity",   "returnOnEquity"),
+            ("trailingEps",      "eps"),
+            ("forwardEps",       "forecast_eps"),
+            ("dividendRate",     "dividend_annual"),
+            ("payoutRatio",      "payout_ratio"),
+            ("operatingMargins", "operating_margin"),
+        ]
+        for yf_key, jq_key in field_map:
+            if info.get(yf_key) is None and jq_key in jq:
+                info[yf_key] = jq[jq_key]
+                logger.debug("J-Quants %s 補完: %s → %s", jq_key, ticker, jq[jq_key])
     except Exception:
         logger.warning("J-Quants 補完失敗: %s（従来の info を使用）", ticker)
     return info
@@ -861,5 +879,42 @@ def enrich(
         ew = _fetch_earnings_warning(ticker, config)
         if ew is not None:
             enrichment[key]["earnings_warning"] = ew
+
+    # Phase 17+: JP 株セクター情報（Listed Issue Master 連携）
+    if config.get("jquants", {}).get("enabled", True):
+        for ticker in tickers:
+            if not is_jp_ticker(ticker):
+                continue
+            key = (date, ticker)
+            if key not in enrichment:
+                continue
+            try:
+                from src.jquants_fetcher import fetch_listed_info
+                li = fetch_listed_info(ticker)
+                if li:
+                    enrichment[key]["jp_listed_info"] = li
+            except Exception:
+                logger.warning("J-Quants 銘柄マスタ取得失敗: %s", ticker)
+
+    # Phase 17+: JP 株追加財務指標（EPS・配当・営業利益率・CFO）
+    if config.get("jquants", {}).get("enabled", True):
+        for ticker in tickers:
+            if not is_jp_ticker(ticker):
+                continue
+            key = (date, ticker)
+            if key not in enrichment:
+                continue
+            try:
+                from src.jquants_fetcher import fetch_financial_data
+                jq = fetch_financial_data(ticker)
+                extra_keys = [
+                    "eps", "forecast_eps", "dividend_annual",
+                    "payout_ratio", "operating_margin", "cfo",
+                ]
+                jp_fundamentals = {k: jq[k] for k in extra_keys if k in jq}
+                if jp_fundamentals:
+                    enrichment[key]["jp_fundamentals"] = jp_fundamentals
+            except Exception:
+                logger.warning("J-Quants 追加財務指標取得失敗: %s", ticker)
 
     return enrichment

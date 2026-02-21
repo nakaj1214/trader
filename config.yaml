@@ -89,3 +89,14 @@ prophet:
   interval_width: 0.95           # ⚠️ 変更する場合は compute_prob_up の z 値も要修正
   changepoint_prior_scale: 0.05  # トレンド変化点の感度（0.001〜0.5）
   uncertainty_samples: 1000      # 確率予測のサンプル数（精度 vs 速度）
+
+# Phase 3: 価格系列の統一（Close / Adj Close どちらを使うか）
+# "Close" を使用する場合、日本株の配当落ち時に疑似的な価格下落が生じる点に注意。
+# 変更する場合は全モジュール（screener / predictor / tracker / enricher / baseline / exporter）への影響を確認すること。
+price_column: "Close"
+
+# Phase 1: ウォークフォワード評価設定
+walkforward:
+  train_weeks: 52      # ルール決定に使う期間（最低52週推奨）
+  test_weeks: 13       # 評価期間（1クォーター）
+  min_train_weeks: 26  # これ未満のデータ週数ではウィンドウをスキップ

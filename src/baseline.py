@@ -247,7 +247,9 @@ def build_backtest_hygiene(config: dict, records: list[dict]) -> dict:
         reality_check_pvalue: float | None = round(1.0 / num_rules, 4)
         pbo: float | None = round(0.5 / num_rules, 4)
         hygiene_status = "computed"
-        hygiene_note = "品質指標算出済み（簡略推定値）"
+        hygiene_note = "品質指標算出済み（簡略推定値・参考値）"
+        # Phase 2: pbo / reality_check_pvalue / deflated_sharpe は簡略推定であり本物ではない
+        is_placeholder = True
     else:
         reality_check_pvalue = None
         pbo = None
@@ -256,6 +258,7 @@ def build_backtest_hygiene(config: dict, records: list[dict]) -> dict:
             f"num_rules_tested ({num_rules}) が min_rules_for_pbo ({min_rules}) 未満のため"
             " pbo / reality_check_pvalue は算出不可"
         )
+        is_placeholder = None  # 算出不可（true/false ではなく null）
 
     return {
         "num_rules_tested": num_rules,
@@ -265,6 +268,7 @@ def build_backtest_hygiene(config: dict, records: list[dict]) -> dict:
         "transaction_cost_note": "取引コスト・税金は未考慮",
         "survivorship_bias_note": "上場廃止銘柄は評価対象外（サバイバーシップバイアスあり）",
         "hygiene_status": hygiene_status,
+        "is_placeholder": is_placeholder,
         "reality_check_pvalue": reality_check_pvalue,
         "pbo": pbo,
         "deflated_sharpe": deflated_sharpe,

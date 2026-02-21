@@ -205,13 +205,76 @@ def fetch_events(ticker: str) -> list[dict]:
     return events
 
 
-def _fetch_info(ticker: str) -> dict:
-    """yfinance .info を取得する。フェーズ1(events)とフェーズ2(evidence)で共通化。"""
+def _fetch_info(ticker: str, config: dict | None = None) -> dict:
+    """yfinance .info を取得する。フェーズ1(events)とフェーズ2(evidence)で共通化。
+
+    Phase 17: JP 株は J-Quants で null フィールドを補完。
+    Phase 19: null が残っていれば FMP で最終補完（US/JP 両対応）。
+    """
     try:
-        return yf.Ticker(ticker).info or {}
+        info = yf.Ticker(ticker).info or {}
     except Exception:
         logger.warning(".info 取得失敗: %s", ticker)
-        return {}
+        info = {}
+    # Phase 17: JP 株は J-Quants で補完
+    if is_jp_ticker(ticker):
+        info = _supplement_jp_info(info, ticker, config)
+    # Phase 19: null が残っていれば FMP で最終補完（US/JP 両対応）
+    if info.get("priceToBook") is None or info.get("returnOnEquity") is None:
+        info = _supplement_fmp_info(info, ticker, config)
+    return info
+
+
+def _supplement_jp_info(info: dict, ticker: str, config: dict | None = None) -> dict:
+    """J-Quants API で priceToBook / returnOnEquity の null を補完する。
+
+    config["jquants"]["enabled"] が false の場合はスキップ。
+    JQUANTS_MAIL_ADDRESS / JQUANTS_PASSWORD が未設定の場合も {} を返す（degraded mode）。
+    """
+    if config is not None:
+        if not config.get("jquants", {}).get("enabled", True):
+            return info
+    try:
+        from src.jquants_fetcher import fetch_financial_data
+        jq = fetch_financial_data(ticker)
+        if not jq:
+            return info
+        info = dict(info)  # コピーして変更
+        if info.get("priceToBook") is None and "priceToBook" in jq:
+            info["priceToBook"] = jq["priceToBook"]
+            logger.debug("J-Quants PBR 補完: %s → %.2f", ticker, jq["priceToBook"])
+        if info.get("returnOnEquity") is None and "returnOnEquity" in jq:
+            info["returnOnEquity"] = jq["returnOnEquity"]
+            logger.debug("J-Quants ROE 補完: %s → %.4f", ticker, jq["returnOnEquity"])
+    except Exception:
+        logger.warning("J-Quants 補完失敗: %s（従来の info を使用）", ticker)
+    return info
+
+
+def _supplement_fmp_info(info: dict, ticker: str, config: dict | None = None) -> dict:
+    """FMP API で priceToBook / returnOnEquity の null を最終補完する。
+
+    config["fmp"]["enabled"] が false の場合はスキップ。
+    FMP_API_KEY が未設定の場合も {} を返す（degraded mode）。
+    """
+    if config is not None:
+        if not config.get("fmp", {}).get("enabled", True):
+            return info
+    try:
+        from src.fmp_fetcher import fetch_key_metrics
+        fmp = fetch_key_metrics(ticker)
+        if not fmp:
+            return info
+        info = dict(info)
+        if info.get("priceToBook") is None and "priceToBook" in fmp:
+            info["priceToBook"] = fmp["priceToBook"]
+            logger.debug("FMP PBR 補完: %s → %.2f", ticker, fmp["priceToBook"])
+        if info.get("returnOnEquity") is None and "returnOnEquity" in fmp:
+            info["returnOnEquity"] = fmp["returnOnEquity"]
+            logger.debug("FMP ROE 補完: %s → %.4f", ticker, fmp["returnOnEquity"])
+    except Exception:
+        logger.warning("FMP 補完失敗: %s（従来の info を使用）", ticker)
+    return info
 
 
 def fetch_events_from_info(info: dict, ticker: str) -> list[dict]:
@@ -600,6 +663,75 @@ def enrich_52w_high(ticker: str, info: dict) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 24: 決算禁則警告（JP 株のみ、J-Quants 決算カレンダー連携）
+# ---------------------------------------------------------------------------
+
+def _fetch_earnings_warning(ticker: str, config: dict | None = None) -> dict | None:
+    """JP 銘柄の決算禁則警告を返す（Phase 24）。
+
+    決算発表が exclude_days_to_earnings 日以内なら警告情報を返す。
+    JP 株以外・設定なし・API 未設定 → None。
+
+    Returns:
+        {"announcement_date": str, "days_to_earnings": int, "exclude": bool} or None
+    """
+    if not is_jp_ticker(ticker):
+        return None
+    if config is None:
+        return None
+    threshold = config.get("screening", {}).get("exclude_days_to_earnings", 0)
+    if threshold <= 0:
+        return None
+    try:
+        from src.jquants_fetcher import fetch_earnings_calendar
+        cal = fetch_earnings_calendar(ticker)
+        if cal is None:
+            return None
+        days = cal["days_to_earnings"]
+        return {
+            "announcement_date": cal["announcement_date"],
+            "days_to_earnings": days,
+            "exclude": days <= threshold,  # True: 除外推奨
+        }
+    except Exception:
+        logger.warning("決算禁則警告取得失敗: %s", ticker)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 18: Finnhub ニュース・センチメント（US 株のみ）
+# ---------------------------------------------------------------------------
+
+def _enrich_news_sentiment(ticker: str, config: dict | None = None) -> dict | None:
+    """US 銘柄のニュース・センチメントを返す。
+
+    JP 株・API キー未設定・config["finnhub"]["enabled"]=false 時は None を返す（degraded mode）。
+
+    Returns:
+        {
+            "score": float,         # companyNewsScore (0〜1)
+            "bullish_pct": float,   # bullishPercent
+            "bearish_pct": float,   # bearishPercent
+            "weekly_buzz": float,   # buzz.weeklyAverage
+            "signal": str           # "bullish" / "neutral" / "bearish"
+        }
+        or None
+    """
+    if config is not None:
+        if not config.get("finnhub", {}).get("enabled", True):
+            return None
+    if is_jp_ticker(ticker):
+        return None
+    try:
+        from src.finnhub_fetcher import fetch_news_sentiment
+        result = fetch_news_sentiment(ticker)
+        return result or None
+    except Exception:
+        logger.warning("Finnhub センチメント取得失敗: %s", ticker)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Phase 1+2+3 統合: enrich
 # ---------------------------------------------------------------------------
 
@@ -631,7 +763,7 @@ def enrich(
     risk_cache: dict[str, dict] = {}
 
     for ticker in tickers:
-        info_cache[ticker] = _fetch_info(ticker)
+        info_cache[ticker] = _fetch_info(ticker, config)
 
     # Phase 1: リスク指標 + イベント
     for ticker in tickers:
@@ -711,5 +843,23 @@ def enrich(
         if fw is not None:
             enrichment[key]["fifty2w_score"] = fw["fifty2w_score"]
             enrichment[key]["fifty2w_pct_from_high"] = fw["fifty2w_pct_from_high"]
+
+    # Phase 18: Finnhub ニュース・センチメント（US 株のみ）
+    for ticker in tickers:
+        key = (date, ticker)
+        if key not in enrichment:
+            continue
+        ns = _enrich_news_sentiment(ticker, config)
+        if ns is not None:
+            enrichment[key]["news_sentiment"] = ns
+
+    # Phase 24: 決算禁則警告（JP 株のみ）
+    for ticker in tickers:
+        key = (date, ticker)
+        if key not in enrichment:
+            continue
+        ew = _fetch_earnings_warning(ticker, config)
+        if ew is not None:
+            enrichment[key]["earnings_warning"] = ew
 
     return enrichment

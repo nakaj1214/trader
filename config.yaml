@@ -8,6 +8,9 @@ screening:
     - "nikkei225"   # Phase 15: 日本株データ収集を有効化
   top_n: 10
   min_market_cap: 10_000_000_000  # 100億ドル以上
+  min_avg_dollar_volume_us: 1_000_000    # Phase 23: US株 日次平均売買代金下限（ドル建て、0で無効）
+  min_avg_dollar_volume_jp: 500_000_000  # Phase 23: JP株 日次平均売買代金下限（円建て、0で無効）
+  exclude_days_to_earnings: 5     # Phase 24: 決算 N 日前の JP 銘柄を警告（0で無効）
   lookback_days: 30               # 直近30日間のデータで評価
   # スコアリング重み（合計1.0）
   weights:
@@ -68,3 +71,21 @@ backtest:
   num_parameters_tuned: 4
   oos_start: "2025-01-01"
   min_rules_for_pbo: 2       # pbo / reality_check_pvalue を算出する最小 num_rules_tested
+
+# フェーズ17: J-Quants API（日本株ファンダメンタルデータ補完）
+jquants:
+  enabled: true   # false にすると yfinance のみで動作（Phase 17 以前と同じ）
+
+# フェーズ18: Finnhub ニュース・センチメント（US 株のみ）
+finnhub:
+  enabled: true   # false にすると従来動作（news_sentiment: null）
+
+# フェーズ19: Financial Modeling Prep（グローバル財務データ最終フォールバック）
+fmp:
+  enabled: true   # false にすると FMP 補完を無効化
+
+# フェーズ25: Prophet 設定（予測モデルのパラメータ）
+prophet:
+  interval_width: 0.95           # ⚠️ 変更する場合は compute_prob_up の z 値も要修正
+  changepoint_prior_scale: 0.05  # トレンド変化点の感度（0.001〜0.5）
+  uncertainty_samples: 1000      # 確率予測のサンプル数（精度 vs 速度）

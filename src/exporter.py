@@ -152,6 +152,12 @@ def build_predictions_json(
                 item["fifty2w_score"] = ticker_data["fifty2w_score"]
             if "fifty2w_pct_from_high" in ticker_data:
                 item["fifty2w_pct_from_high"] = ticker_data["fifty2w_pct_from_high"]
+            # Phase 18: Finnhub ニュース・センチメント（US 株のみ）
+            if "news_sentiment" in ticker_data:
+                item["news_sentiment"] = ticker_data["news_sentiment"]
+            # Phase 24: 決算禁則警告（JP 株のみ）
+            if "earnings_warning" in ticker_data:
+                item["earnings_warning"] = ticker_data["earnings_warning"]
 
         results.append(item)
     return results

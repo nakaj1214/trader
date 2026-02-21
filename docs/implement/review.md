@@ -1,20 +1,18 @@
-# plan.md レビュー（2026-02-20 再レビュー）
+﻿# plan.md レビュー（2026-02-21 再レビュー）
 
 ## Findings
-- 新規の High / Medium 指摘はありません。
+1. [Low] フェーズ25の `config` 受け渡し説明で呼び出し方向が逆になっている
+- 根拠: `docs/implement/plan.md:1626` に「`predict_stock()` が `predict()` を呼ぶ際」とありますが、実コードは `predict()` から `predict_stock()` を呼ぶ構造です（`src/predictor.py:57`, `src/predictor.py:111`）。同様の方向表現がステップにも残っています（`docs/implement/plan.md:1636`）。
+- 影響: 実装者が引数受け渡しの改修箇所を誤認する可能性があります。
+- 修正提案: 文言を「`predict()` が `predict_stock()` を呼ぶ際に `config`（または prophet設定）を渡す」に修正してください。
 
 ## Resolved From Previous Review
-- フェーズ11/12のUI導線不整合は解消済み。
-  - `dashboard/stock.html` に `short-interest-panel` / `institutional-panel` が追加され、`stock.js` 側の描画先と一致。
-  - 根拠: `docs/implement/plan.md:31`, `docs/implement/plan.md:70`, `dashboard/stock.html:44`, `dashboard/stock.html:47`, `dashboard/js/stock.js:298`, `dashboard/js/stock.js:324`
-- フェーズ15の設定構造不整合は解消済み。
-  - `config.yaml` 例が `screening.markets` 配下へ修正され、実装参照構造と一致。
-  - 根拠: `docs/implement/plan.md:251`, `docs/implement/plan.md:258`, `config.yaml:4`, `src/screener.py:225`
-
-## Residual Risks / Testing Gaps
-- フェーズ11/12のUI接続は手動確認前提になっているため、`short-interest-panel` / `institutional-panel` のDOM存在を担保する軽量フロントエンドテスト（または静的検証）を追加すると再発防止に有効です。
-- フェーズ15/16は将来計画として妥当ですが、`predictions_us.json` / `predictions_jp.json` 分離時に既存 `exporter.py` の出力契約（`predictions.json`）をどう互換維持するかを、着手時に明文化しておくと移行が安全です。
+- フェーズ22: APIバージョン制御の矛盾は解消済み。
+  - `config` 制御をやめ、`JQUANTS_API_KEY` 有無で自動判定する方針に統一されています。
+  - 根拠: `docs/implement/plan.md:1089`, `docs/implement/plan.md:1139`
+- フェーズ23: 流動性閾値仕様の曖昧さは解消済み。
+  - US/JP 別閾値（`min_avg_dollar_volume_us` / `min_avg_dollar_volume_jp`）で仕様・実装案・受け入れ条件が揃っています。
+  - 根拠: `docs/implement/plan.md:1219`, `docs/implement/plan.md:1260`, `docs/implement/plan.md:1315`
 
 ## Summary
-- 現在の `plan.md` は、前回レビューで挙げた主要不整合を解消済みです。
-- 現時点では実装計画として着手可能な品質です。
+- 新規の High / Medium 指摘はありません。実装前に上記 Low 1件の文言を直せば、計画としての整合性は高い状態です。

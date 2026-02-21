@@ -255,6 +255,27 @@ def screen(config: dict | None = None, market: str | None = None) -> pd.DataFram
         n_unknown = sum(1 for t in stock_data if market_caps.get(t) is None)
         logger.info("時価総額フィルタ後: %d 銘柄 (未取得: %d)", len(stock_data), n_unknown)
 
+    # Phase 23: 流動性フィルタ（日次平均売買代金 ADDV、US/JP 通貨別閾値）
+    min_addv_us = screening_cfg.get("min_avg_dollar_volume_us", 0)
+    min_addv_jp = screening_cfg.get("min_avg_dollar_volume_jp", 0)
+    if min_addv_us > 0 or min_addv_jp > 0:
+        before = len(stock_data)
+        for ticker in list(stock_data.keys()):
+            is_jp = ticker.endswith(".T")
+            threshold = min_addv_jp if is_jp else min_addv_us
+            if threshold <= 0:
+                continue
+            df = stock_data[ticker]
+            close = df["Close"].squeeze()
+            volume = df["Volume"].squeeze()
+            addv = float((volume * close).mean())
+            if addv < threshold:
+                stock_data.pop(ticker, None)
+        logger.info(
+            "流動性フィルタ後: %d → %d 銘柄 (ADDV 閾値未満を除外)",
+            before, len(stock_data),
+        )
+
     # Phase 13: 52週高値データ取得
     remaining_tickers = list(stock_data.keys())
     fifty2w_data = _fetch_52w_data(remaining_tickers)

@@ -91,3 +91,96 @@ def test_predict_filters_bullish_only():
     assert len(result) == 2
     assert list(result["ticker"]) == ["UP1", "UP2"]
     assert all(result["predicted_change_pct"] > 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 25: Prophet config 読み込みテスト
+# ---------------------------------------------------------------------------
+
+def test_predict_stock_uses_prophet_cfg():
+    """predict_stock() が prophet_cfg のパラメータを Prophet に渡すこと。"""
+    mock_model = MagicMock()
+    mock_model.make_future_dataframe.return_value = pd.DataFrame({"ds": []})
+    mock_model.predict.return_value = pd.DataFrame({
+        "ds": ["2026-02-20"],
+        "yhat": [100.0],
+        "yhat_lower": [95.0],
+        "yhat_upper": [105.0],
+    })
+
+    history_df = pd.DataFrame({
+        "ds": pd.bdate_range("2025-11-01", periods=60),
+        "y": range(100, 160),
+    })
+
+    prophet_cfg = {
+        "interval_width": 0.95,
+        "changepoint_prior_scale": 0.1,
+        "uncertainty_samples": 500,
+    }
+
+    with (
+        patch("src.predictor.fetch_history", return_value=history_df),
+        patch("src.predictor.Prophet", return_value=mock_model) as mock_prophet,
+    ):
+        from src.predictor import predict_stock
+        predict_stock("TEST", history_days=90, forecast_days=5, prophet_cfg=prophet_cfg)
+
+    init_kwargs = mock_prophet.call_args[1]
+    assert init_kwargs["changepoint_prior_scale"] == pytest.approx(0.1)
+    assert init_kwargs["interval_width"] == pytest.approx(0.95)
+    assert init_kwargs["uncertainty_samples"] == 500
+
+
+def test_predict_passes_prophet_cfg_to_predict_stock():
+    """predict() が config["prophet"] を predict_stock() に渡すこと。"""
+    from src.predictor import predict
+
+    mock_results = [
+        {"ticker": "AAPL", "current_price": 100, "predicted_price": 110,
+         "predicted_change_pct": 10.0, "ci_lower": 105, "ci_upper": 115, "ci_pct": 5.0},
+    ]
+    screened_df = pd.DataFrame({"ticker": ["AAPL"]})
+    prophet_cfg = {"interval_width": 0.95, "changepoint_prior_scale": 0.1}
+
+    with patch("src.predictor.predict_stock", side_effect=mock_results) as mock_ps:
+        predict(
+            screened_df,
+            config={
+                "prediction": {"history_days": 90, "forecast_days": 5},
+                "prophet": prophet_cfg,
+            },
+        )
+
+    # predict_stock に prophet_cfg が渡されていること（4番目の positional arg）
+    call_args = mock_ps.call_args[0]
+    assert call_args[3] == prophet_cfg
+
+
+def test_predict_stock_defaults_when_no_prophet_cfg():
+    """prophet_cfg=None の場合、デフォルト値（interval_width=0.95）で動作すること。"""
+    mock_model = MagicMock()
+    mock_model.make_future_dataframe.return_value = pd.DataFrame({"ds": []})
+    mock_model.predict.return_value = pd.DataFrame({
+        "ds": ["2026-02-20"],
+        "yhat": [100.0],
+        "yhat_lower": [95.0],
+        "yhat_upper": [105.0],
+    })
+
+    history_df = pd.DataFrame({
+        "ds": pd.bdate_range("2025-11-01", periods=60),
+        "y": range(100, 160),
+    })
+
+    with (
+        patch("src.predictor.fetch_history", return_value=history_df),
+        patch("src.predictor.Prophet", return_value=mock_model) as mock_prophet,
+    ):
+        from src.predictor import predict_stock
+        predict_stock("TEST", history_days=90, forecast_days=5, prophet_cfg=None)
+
+    init_kwargs = mock_prophet.call_args[1]
+    assert init_kwargs["interval_width"] == pytest.approx(0.95)
+    assert init_kwargs["changepoint_prior_scale"] == pytest.approx(0.05)
+    assert init_kwargs["uncertainty_samples"] == 1000

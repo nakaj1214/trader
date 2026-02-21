@@ -22,6 +22,7 @@ SCOPES = [
 ]
 
 # スプレッドシートのヘッダー
+# Phase 21: 列10 に "prob_up" を追加（update_actuals の update_cell(7/8/9) はそのまま維持）
 HEADERS = [
     "日付",
     "ティッカー",
@@ -29,9 +30,10 @@ HEADERS = [
     "予測価格",
     "予測上昇率(%)",
     "信頼区間(%)",
-    "翌週実績価格",
-    "的中",
-    "ステータス",
+    "翌週実績価格",    # 列7
+    "的中",            # 列8
+    "ステータス",      # 列9
+    "prob_up",         # 列10（Phase 21 追加）
 ]
 
 
@@ -69,6 +71,32 @@ def get_or_create_worksheet(
     return worksheet
 
 
+def migrate_headers(worksheet: gspread.Worksheet) -> bool:
+    """既存ワークシートのヘッダーを HEADERS と同期する。
+
+    現在のヘッダー行を取得し、HEADERS にあるが存在しない列を末尾に追記する。
+    新規作成ワークシートではすでに HEADERS が設定されているためスキップされる。
+
+    Returns:
+        True: ヘッダーを追記した場合
+        False: 追記不要（すでに最新）
+    """
+    try:
+        current = worksheet.row_values(1)
+        missing = [h for h in HEADERS if h not in current]
+        if not missing:
+            return False
+        # 既存ヘッダー末尾の次の列から追記
+        start_col = len(current) + 1
+        for i, header in enumerate(missing):
+            worksheet.update_cell(1, start_col + i, header)
+        logger.info("ヘッダー移行: %s を追加", missing)
+        return True
+    except Exception:
+        logger.warning("ヘッダー移行失敗（既存シートをそのまま使用）")
+        return False
+
+
 def append_predictions(
     predictions_df: pd.DataFrame,
     config: dict | None = None,
@@ -96,6 +124,8 @@ def append_predictions(
     ws = get_or_create_worksheet(
         client, sheets_cfg["spreadsheet_name"], worksheet_name
     )
+    # Phase 21: 既存シートのヘッダーを最新 HEADERS に同期する
+    migrate_headers(ws)
 
     today = datetime.now().strftime("%Y-%m-%d")
     rows = []
@@ -110,6 +140,7 @@ def append_predictions(
             "",       # 翌週実績価格 (翌週に記入)
             "",       # 的中 (翌週に判定)
             "予測済み",
+            row.get("prob_up", ""),  # 列10: prob_up (Phase 21)
         ])
 
     if rows:

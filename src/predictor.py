@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 def compute_prob_up(predicted_change_pct: float, ci_pct: float) -> float:
     """予測上昇率と信頼区間から上昇確率を正規分布近似で算出する。
 
+    Prophet は interval_width=0.95 で fit するため、ci_pct は 95% CI の半幅。
     モデルの予測値 μ = predicted_change_pct、95% CI 半幅 = ci_pct から
-    σ = ci_pct / 1.96 を逆算し、P(X > 0) = Φ(μ / σ) を返す。
+    σ = ci_pct / 1.96 を逆算し（z=1.96 は 95% CI に対応）、P(X > 0) = Φ(μ / σ) を返す。
 
     Args:
         predicted_change_pct: 予測上昇率（%）
@@ -53,8 +54,16 @@ def fetch_history(ticker: str, days: int) -> pd.DataFrame:
     return prophet_df.dropna().reset_index(drop=True)
 
 
-def predict_stock(ticker: str, history_days: int, forecast_days: int) -> dict | None:
+def predict_stock(
+    ticker: str, history_days: int, forecast_days: int, prophet_cfg: dict | None = None
+) -> dict | None:
     """1銘柄についてProphetで予測を行う。
+
+    Args:
+        ticker: ティッカーシンボル
+        history_days: 過去データの取得日数
+        forecast_days: 予測する将来の営業日数
+        prophet_cfg: Prophet パラメータ設定（Phase 25）。None の場合はデフォルト値を使用。
 
     Returns:
         dict with keys: ticker, current_price, predicted_price,
@@ -68,12 +77,19 @@ def predict_stock(ticker: str, history_days: int, forecast_days: int) -> dict | 
 
     current_price = float(df["y"].iloc[-1])
 
+    if prophet_cfg is None:
+        prophet_cfg = {}
+
     try:
+        # Phase 25: config["prophet"] からパラメータを読み込む
+        # interval_width は必ず 0.95 がデフォルト（compute_prob_up の z=1.96 と整合）
         model = Prophet(
             daily_seasonality=False,
             weekly_seasonality=True,
             yearly_seasonality=True,
-            changepoint_prior_scale=0.05,
+            changepoint_prior_scale=prophet_cfg.get("changepoint_prior_scale", 0.05),
+            interval_width=prophet_cfg.get("interval_width", 0.95),
+            uncertainty_samples=int(prophet_cfg.get("uncertainty_samples", 1000)),
         )
         model.fit(df)
 
@@ -125,6 +141,8 @@ def predict(screened_df: pd.DataFrame, config: dict | None = None) -> pd.DataFra
     pred_cfg = config["prediction"]
     history_days = pred_cfg.get("history_days", 90)
     forecast_days = pred_cfg.get("forecast_days", 5)
+    # Phase 25: Prophet パラメータを config から読み込み、predict_stock() に渡す
+    prophet_cfg = config.get("prophet", {})
 
     tickers = screened_df["ticker"].tolist()
     logger.info("予測開始: %d 銘柄", len(tickers))
@@ -132,7 +150,7 @@ def predict(screened_df: pd.DataFrame, config: dict | None = None) -> pd.DataFra
     results = []
     for ticker in tickers:
         logger.info("予測中: %s", ticker)
-        result = predict_stock(ticker, history_days, forecast_days)
+        result = predict_stock(ticker, history_days, forecast_days, prophet_cfg)
         if result is not None:
             results.append(result)
 

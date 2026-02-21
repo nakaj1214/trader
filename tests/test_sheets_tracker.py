@@ -286,3 +286,81 @@ def test_fetch_close_at_insufficient_trading_days():
 
     # 5取引日に達していないため、価格は返されない (→ close_unfetched で評価不能に)
     assert "AAPL" not in prices
+
+
+# ---------------------------------------------------------------------------
+# Phase 21: prob_up 列追加後の列番号回帰テスト
+# ---------------------------------------------------------------------------
+
+def test_update_actuals_column_numbers_unchanged_after_prob_up_added():
+    """prob_up 列（列10）追加後も update_actuals が列7/8/9 に書き込むこと。
+
+    HEADERS 末尾に prob_up を追加したため、update_actuals の列番号は変化しない。
+    このテストは列番号がずれていないことの回帰確認。
+    """
+    from unittest.mock import MagicMock, patch
+
+    records = [
+        {"日付": "2026-02-08", "ティッカー": "AAPL", "現在価格": 200,
+         "予測価格": 210, "予測上昇率(%)": 5.0, "信頼区間(%)": 2.0,
+         "翌週実績価格": "", "的中": "", "ステータス": "予測済み"},
+    ]
+
+    mock_ws = MagicMock()
+    mock_ws.get_all_records.return_value = records
+
+    with (
+        patch("src.sheets.get_client"),
+        patch("src.sheets.get_or_create_worksheet", return_value=mock_ws),
+    ):
+        from src.sheets import update_actuals
+        update_actuals(
+            actual_prices={"AAPL": 210.0},
+            target_date="2026-02-08",
+            config={"google_sheets": {"spreadsheet_name": "t", "worksheet_name": "t"}},
+        )
+
+    # 列7: 翌週実績価格、列8: 的中、列9: ステータス（prob_up が列10 なのでずれなし）
+    call_args = [call.args for call in mock_ws.update_cell.call_args_list]
+    col_nums = [args[1] for args in call_args]  # (row, col, value) の col
+    assert 7 in col_nums, "翌週実績価格は列7に書き込まれること"
+    assert 8 in col_nums, "的中は列8に書き込まれること"
+    assert 9 in col_nums, "ステータスは列9に書き込まれること"
+    assert 10 not in col_nums, "update_actuals は prob_up 列(10)に書き込まない"
+
+
+def test_migrate_headers_adds_missing_column():
+    """migrate_headers が既存シートに prob_up 列を追加できること。"""
+    from unittest.mock import MagicMock, call
+
+    mock_ws = MagicMock()
+    # prob_up が含まれていない旧ヘッダー
+    mock_ws.row_values.return_value = [
+        "日付", "ティッカー", "現在価格", "予測価格",
+        "予測上昇率(%)", "信頼区間(%)", "翌週実績価格", "的中", "ステータス",
+    ]
+
+    from src.sheets import migrate_headers
+    result = migrate_headers(mock_ws)
+
+    assert result is True
+    # 列10 に "prob_up" を追記
+    mock_ws.update_cell.assert_called_once_with(1, 10, "prob_up")
+
+
+def test_migrate_headers_skips_when_already_updated():
+    """migrate_headers が prob_up 追加済みシートでは何もしないこと。"""
+    from unittest.mock import MagicMock
+
+    mock_ws = MagicMock()
+    # prob_up が既に含まれているヘッダー
+    mock_ws.row_values.return_value = [
+        "日付", "ティッカー", "現在価格", "予測価格",
+        "予測上昇率(%)", "信頼区間(%)", "翌週実績価格", "的中", "ステータス", "prob_up",
+    ]
+
+    from src.sheets import migrate_headers
+    result = migrate_headers(mock_ws)
+
+    assert result is False
+    mock_ws.update_cell.assert_not_called()

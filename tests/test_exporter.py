@@ -352,7 +352,8 @@ def test_export_integration(mock_get_ws, mock_get_client, tmp_path):
     assert (tmp_path / "stock_history.json").exists()
 
     # predictions.json の内容検証
-    predictions = json.loads((tmp_path / "predictions.json").read_text(encoding="utf-8"))
+    raw = json.loads((tmp_path / "predictions.json").read_text(encoding="utf-8"))
+    predictions = raw["predictions"]
     assert len(predictions) == 3
     assert predictions[0]["ticker"] == "AAPL"
 

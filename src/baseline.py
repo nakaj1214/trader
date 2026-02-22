@@ -41,7 +41,8 @@ def _portfolio_stats(returns: pd.Series) -> dict:
     max_dd = round(float(dd.min()), 4)
 
     std = returns.std()
-    sharpe = round(float((returns.mean() / std) * (52 ** 0.5)), 2) if std > 0 else None
+    eps = 1e-12
+    sharpe = round(float((returns.mean() / std) * (52 ** 0.5)), 2) if std > eps else None
 
     return {"cagr": cagr, "max_drawdown": max_dd, "sharpe": sharpe}
 

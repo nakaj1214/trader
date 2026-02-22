@@ -391,7 +391,7 @@ def compute_explanations(
     """
     from src.screener import compute_indicators
 
-    lookback = config["screening"]["lookback_days"]  # カレンダー日
+    lookback = config.get("screening", {}).get("lookback_days", 252)  # カレンダー日
     cutoff = df.index.max() - pd.Timedelta(days=lookback)
     sliced_df = df.loc[df.index >= cutoff]
 
@@ -410,7 +410,7 @@ def compute_explanations(
             "note": "エクスポート時点の指標値に基づく再計算結果",
         }
 
-    weights = config["screening"].get("weights", {})
+    weights = config.get("screening", {}).get("weights", {})
     factors = []
 
     for factor_key, (weight_key, text_template) in _FACTOR_META.items():

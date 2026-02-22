@@ -220,6 +220,15 @@ class TestComputeExplanations:
         impacts = [f["impact"] for f in result["factors"]]
         assert impacts == sorted(impacts, reverse=True)
 
+    def test_compute_explanations_no_screening_key(self):
+        from src.enricher import compute_explanations
+
+        df = _make_price_df(list(range(100, 400)))  # 300 日分
+        result = compute_explanations("AAPL", df, {})
+        assert result is not None
+        result2 = compute_explanations("AAPL", df, {"sizing": {}})
+        assert result2 is not None
+
 
 # --- Phase 3: _transform_score ---
 

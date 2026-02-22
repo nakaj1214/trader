@@ -1,9 +1,33 @@
 {
-  "updated_at": "2026-02-19T06:33:36.065945+00:00",
+  "updated_at": "2026-02-22T08:46:13.182165+00:00",
   "weekly": [],
   "cumulative": {
     "hit_rate_pct": 0.0,
     "hits": 0,
     "total": 0
+  },
+  "error_analysis": {
+    "mae_pct": null,
+    "bins": [],
+    "notes": "予測上昇率の帯ごとに実績変動率を比較。MAEは予測と実績の平均絶対誤差。"
+  },
+  "as_of_utc": "2026-02-22T08:46:13Z",
+  "data_coverage_weeks": 0,
+  "calibration": {
+    "overall": {
+      "brier_score": null,
+      "log_loss": null,
+      "ece": null,
+      "reliability_bins": [],
+      "n_calibrated": 0
+    },
+    "recent_n_weeks": {
+      "brier_score": null,
+      "log_loss": null,
+      "ece": null,
+      "reliability_bins": [],
+      "n_calibrated": 0,
+      "n_weeks": 0
+    }
   }
 }

@@ -23,6 +23,10 @@
     {
       "date": "2026-02-19",
       "predicted_price": 516.09
+    },
+    {
+      "date": "2026-02-22",
+      "predicted_price": 371.48
     }
   ],
   "WTW": [
@@ -43,6 +47,10 @@
     {
       "date": "2026-02-19",
       "predicted_price": 668.72
+    },
+    {
+      "date": "2026-02-22",
+      "predicted_price": 423.98
     }
   ],
   "TYL": [
@@ -73,6 +81,18 @@
     {
       "date": "2026-02-19",
       "predicted_price": 255.55
+    }
+  ],
+  "ROL": [
+    {
+      "date": "2026-02-22",
+      "predicted_price": 120.96
+    }
+  ],
+  "EA": [
+    {
+      "date": "2026-02-22",
+      "predicted_price": 232.43
     }
   ]
 }

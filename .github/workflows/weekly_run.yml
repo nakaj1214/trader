@@ -3,9 +3,8 @@ name: Weekly Stock Analysis
 on:
   schedule:
     - cron: '0 0 * * 0'  # 毎週日曜 UTC 00:00 (JST 09:00)
-  workflow_dispatch:        # 手動実行も可能
+  workflow_dispatch:
 
-# 同時実行制御: schedule と workflow_dispatch が重なっても競合しないよう直列化する
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -16,11 +15,13 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # 30 → 60: Prophet × 10銘柄 + 複数API呼び出しを考慮
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # pull --rebase と push を安全にする
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,9 +30,12 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          # テスト用依存が requirements に入っていないケースに備えて pytest を明示的に入れる
+          python -m pip install pytest
 
-      # テストゲート: 回帰が混入した状態でデータを配信しないようにする
       - name: Run tests
         run: python -m pytest tests/ -q
 
@@ -47,14 +51,87 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python -m src.main
 
-      # src/main.py のステップ6で export() が実行済みのため独立ステップは不要
-      # (二重実行を防ぐため削除)
-
       - name: Commit and push dashboard data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dashboard/data/*.json
+
+          # ファイルが無い初回でも落ちにくいようにディレクトリ単位で add
+          git add dashboard/data/
+
+          # 変更が無ければ commit しない
           git diff --staged --quiet || git commit -m "chore: update dashboard data [skip ci]"
-          git pull --rebase origin ${{ github.ref_name }}
+
+          git pull --rebase origin "${{ github.ref_name }}"
           git push
+
+      # 成功/失敗に関わらず Slack に結果を通知（「動いてるのに通知が来ない」を防ぐ）
+      - name: Notify Slack (always)
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"Weekly Stock Analysis: ${{ job.status }}\\nworkflow=${{ github.workflow }}\\nref=${{ github.ref_name }}\\nrun=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${SLACK_WEBHOOK_URL}"
+
+# name: Weekly Stock Analysis
+
+# on:
+#   schedule:
+#     - cron: '0 0 * * 0'  # 毎週日曜 UTC 00:00 (JST 09:00)
+#   workflow_dispatch:        # 手動実行も可能
+
+# # 同時実行制御: schedule と workflow_dispatch が重なっても競合しないよう直列化する
+# concurrency:
+#   group: ${{ github.workflow }}
+#   cancel-in-progress: false
+
+# permissions:
+#   contents: write
+
+# jobs:
+#   analyze:
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 60  # 30 → 60: Prophet × 10銘柄 + 複数API呼び出しを考慮
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.11'
+#           cache: 'pip'
+
+#       - name: Install dependencies
+#         run: pip install -r requirements.txt
+
+#       # テストゲート: 回帰が混入した状態でデータを配信しないようにする
+#       - name: Run tests
+#         run: python -m pytest tests/ -q
+
+#       - name: Run stock analysis
+#         env:
+#           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+#           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+#           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+#           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+#           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+#           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+#           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+#           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+#         run: python -m src.main
+
+#       # src/main.py のステップ6で export() が実行済みのため独立ステップは不要
+#       # (二重実行を防ぐため削除)
+
+#       - name: Commit and push dashboard data
+#         run: |
+#           git config user.name "github-actions[bot]"
+#           git config user.email "github-actions[bot]@users.noreply.github.com"
+#           git add dashboard/data/*.json
+#           git diff --staged --quiet || git commit -m "chore: update dashboard data [skip ci]"
+#           git pull --rebase origin ${{ github.ref_name }}
+#           git push

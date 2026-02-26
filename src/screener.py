@@ -39,7 +39,10 @@ def fetch_stock_data(
     tickers: list[str], lookback_days: int
 ) -> dict[str, pd.DataFrame]:
     """yfinance で各銘柄の株価データを取得する。"""
-    period = f"{lookback_days}d"
+    # SMA200 計算に必要な営業日数を確保するため、カレンダー日補正（× 1.5）を適用する
+    # 例: lookback_days=252 → 252 × 1.5 ≈ 378 カレンダー日 ≈ 270 営業日
+    CALENDAR_DAY_FACTOR = 1.5
+    period = f"{int(lookback_days * CALENDAR_DAY_FACTOR)}d"
     data: dict[str, pd.DataFrame] = {}
     # バッチで取得 (レート制限回避のため小分け)
     batch_size = 50
@@ -148,14 +151,18 @@ def compute_indicators(df: pd.DataFrame) -> dict:
 
     current_price = float(close.iloc[-1])
 
-    # 直近1ヶ月の株価変動率
-    price_start = float(close.iloc[0])
-    price_change_1m = (current_price - price_start) / price_start
+    # 直近1ヶ月の株価変動率（固定窓: 直近21営業日 ≒ 1ヶ月 — lookback_days に依存しない）
+    price_change_1m = (
+        (close.iloc[-1] - close.iloc[-22]) / close.iloc[-22]
+        if len(close) >= 22 else (close.iloc[-1] - close.iloc[0]) / close.iloc[0]
+    )
 
-    # 出来高トレンド (後半 vs 前半の比率)
-    mid = len(volume) // 2
-    vol_first = volume.iloc[:mid].mean()
-    vol_second = volume.iloc[mid:].mean()
+    # 出来高トレンド（固定窓: 直近42営業日を前半/後半21日ずつ比較 — lookback_days に依存しない）
+    VOL_WINDOW = 42
+    vol_data = volume.iloc[-VOL_WINDOW:] if len(volume) >= VOL_WINDOW else volume
+    mid = len(vol_data) // 2
+    vol_first = vol_data.iloc[:mid].mean()
+    vol_second = vol_data.iloc[mid:].mean()
     volume_trend = (vol_second - vol_first) / vol_first if vol_first > 0 else 0.0
 
     # RSI (14日)
@@ -164,8 +171,44 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     # MACD
     macd_ind = ta.trend.MACD(close)
     macd_val = macd_ind.macd().iloc[-1]
-    macd_signal = macd_ind.macd_signal().iloc[-1]
-    macd_bullish = 1.0 if macd_val > macd_signal else 0.0
+    macd_signal_val = macd_ind.macd_signal().iloc[-1]
+    macd_bullish = 1.0 if macd_val > macd_signal_val else 0.0
+
+    # Golden Cross: SMA50 > SMA200（None=データ不足, 1.0=GC, 0.0=DC）
+    if len(close) < 200:
+        logger.warning("データ不足（%d本）: SMA200 計算不可。golden_cross=None。", len(close))
+        golden_cross = None
+    else:
+        sma50 = close.rolling(50).mean().iloc[-1]
+        sma200 = close.rolling(200).mean().iloc[-1]
+        if pd.isna(sma50) or pd.isna(sma200):
+            golden_cross = None
+        elif sma50 > sma200:
+            golden_cross = 1.0
+        else:
+            golden_cross = 0.0
+
+    # Bollinger Band (20日, 2σ)
+    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    bb_upper = bb.bollinger_hband().iloc[-1]
+    bb_lower = bb.bollinger_lband().iloc[-1]
+    bb_mavg = bb.bollinger_mavg().iloc[-1]
+    bb_width = (bb_upper - bb_lower) / bb_mavg if bb_mavg > 0 else 0.0
+    bb_pos = (current_price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+
+    # ADX (14日) — トレンド強度（25+: トレンドあり, 50+: 強いトレンド）
+    # High/Low 列が存在しない場合（テスト用 DataFrame 等）はデフォルト値を使用
+    if "High" in df.columns and "Low" in df.columns:
+        adx_ind = ta.trend.ADXIndicator(
+            high=df["High"].squeeze(),
+            low=df["Low"].squeeze(),
+            close=close,
+            window=14,
+        )
+        adx_val = adx_ind.adx().iloc[-1]
+        adx_score = min(float(adx_val) / 50.0, 1.0) if not pd.isna(adx_val) else 0.5
+    else:
+        adx_score = 0.5
 
     return {
         "current_price": current_price,
@@ -173,11 +216,29 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "volume_trend": float(volume_trend),
         "rsi": float(rsi),
         "macd_bullish": float(macd_bullish),
+        "golden_cross": golden_cross,
+        "bb_pos": float(bb_pos),
+        "bb_width": float(bb_width),
+        "adx_score": float(adx_score),
     }
 
 
-def score_stock(indicators: dict, weights: dict) -> float:
-    """指標にウェイトをかけてスコアを算出する。"""
+def score_stock(indicators: dict, config: dict) -> float:
+    """指標にウェイトをかけてスコアを算出する。
+
+    Args:
+        indicators: compute_indicators() の戻り値。
+        config: config.yaml の全設定辞書。weights と use_golden_cross_filter を内部で取得する。
+    """
+    use_gc_filter = config.get("screening", {}).get("use_golden_cross_filter", True)
+    weights = config.get("screening", {}).get("weights", {})
+
+    # Golden Cross ハードフィルター（DC確定かつフィルター有効 → スコア強制 0）
+    # None（データ不足）は除外しない。use_gc_filter=False 時はスキップ。
+    gc = indicators.get("golden_cross")
+    if use_gc_filter and gc is not None and gc == 0.0:
+        return 0.0
+
     # 株価上昇率スコア (正の値ほど高い)
     price_score = max(0.0, indicators["price_change_1m"])
 
@@ -196,11 +257,19 @@ def score_stock(indicators: dict, weights: dict) -> float:
     # MACDシグナルスコア
     macd_score = indicators["macd_bullish"]
 
+    # Bollinger Band スコア: 中央〜上限にいるほど高評価
+    bb_score = min(max(indicators.get("bb_pos", 0.5), 0.0), 1.0)
+
+    # ADX スコア
+    adx_score_val = indicators.get("adx_score", 0.5)
+
     score = (
         weights.get("price_change_1m", 0.3) * price_score
         + weights.get("volume_trend", 0.2) * vol_score
         + weights.get("rsi_score", 0.25) * rsi_score
         + weights.get("macd_signal", 0.25) * macd_score
+        + weights.get("bb_position", 0.0) * bb_score
+        + weights.get("adx_score", 0.0) * adx_score_val
     )
 
     # Phase 13: 52週高値モメンタムスコア (None はスキップ)
@@ -231,7 +300,6 @@ def screen(config: dict | None = None, market: str | None = None) -> pd.DataFram
     markets = [market] if market is not None else screening_cfg["markets"]
     top_n = screening_cfg.get("top_n", 10)
     lookback_days = screening_cfg.get("lookback_days", 30)
-    weights = screening_cfg.get("weights", {})
 
     # 銘柄リスト読み込み
     tickers = load_tickers(markets)
@@ -292,7 +360,7 @@ def screen(config: dict | None = None, market: str | None = None) -> pd.DataFram
             indicators["fifty2w_score"] = fw["score"]
         if fw.get("pct_from_high") is not None:
             indicators["fifty2w_pct_from_high"] = fw["pct_from_high"]
-        score = score_stock(indicators, weights)
+        score = score_stock(indicators, config)
         results.append({"ticker": ticker, **indicators, "score": score})
 
     if not results:

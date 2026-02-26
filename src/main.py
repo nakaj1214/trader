@@ -133,7 +133,12 @@ def run() -> None:
     try:
         from src.notifier import notify
 
-        success = notify(predictions, accuracy, config)
+        tickers = (
+            predictions["ticker"].tolist()
+            if not predictions.empty and "ticker" in predictions.columns
+            else None
+        )
+        success = notify(predictions, accuracy, config, tickers_for_chart=tickers)
         if success:
             logger.info("Slack通知完了")
         else:

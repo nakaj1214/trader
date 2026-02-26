@@ -5,6 +5,9 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+# @patch デコレータ解決のためモジュールを事前インポート
+import src.chart_builder  # noqa: F401
+
 
 # --- _resolve_notification_config ---
 
@@ -200,3 +203,90 @@ def test_notify_calls_slack_when_enabled(mock_slack):
 
     assert result is True
     mock_slack.assert_called_once()
+
+
+# --- チャートアップロード分岐のテスト ---
+
+
+def _chart_config(slack_chart: bool = True) -> dict:
+    """chart テスト用の共通 config ヘルパー。"""
+    return {
+        "display": {"beginner_mode": False},
+        "google_sheets": {"spreadsheet_name": "Test"},
+        "notifications": {
+            "slack": {"enabled": True},
+            "line": {"enabled": False},
+            "slack_chart": slack_chart,
+            "chart_lookback_days": 60,
+            "slack_channel_id": "C012ABCDE",
+        },
+        "screening": {"lookback_days": 252},
+        "slack": {"channel": "#stock-alerts"},
+    }
+
+
+@patch("src.notifier.send_to_slack")
+def test_notify_chart_none_tickers_no_upload(mock_slack):
+    """tickers_for_chart=None の場合はチャートアップロードが行われないことを検証する。"""
+    from src.notifier import NotificationResult, notify
+
+    mock_slack.return_value = NotificationResult(channel="slack", success=True, status_code=200)
+
+    with patch("src.notifier._upload_chart_to_slack") as mock_upload:
+        result = notify(pd.DataFrame(), config=_chart_config(), tickers_for_chart=None)
+
+    assert result is True
+    mock_upload.assert_not_called()
+
+
+@patch("src.notifier.send_to_slack")
+def test_notify_chart_disabled_no_upload(mock_slack):
+    """slack_chart=False の場合、tickers_for_chart があっても upload が呼ばれないことを検証する。"""
+    from src.notifier import NotificationResult, notify
+
+    mock_slack.return_value = NotificationResult(channel="slack", success=True, status_code=200)
+
+    with patch("src.notifier._upload_chart_to_slack") as mock_upload, \
+         patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-test"}):
+        result = notify(
+            pd.DataFrame(), config=_chart_config(slack_chart=False),
+            tickers_for_chart=["AAPL"],
+        )
+
+    assert result is True
+    mock_upload.assert_not_called()
+
+
+@patch("src.notifier.send_to_slack")
+def test_notify_chart_no_bot_token_skips_gracefully(mock_slack):
+    """SLACK_BOT_TOKEN 未設定の場合、例外なく upload をスキップすることを検証する。"""
+    from src.notifier import NotificationResult, notify
+
+    mock_slack.return_value = NotificationResult(channel="slack", success=True, status_code=200)
+
+    env = {k: v for k, v in __import__("os").environ.items() if k != "SLACK_BOT_TOKEN"}
+    with patch.dict("os.environ", env, clear=True):
+        result = notify(
+            pd.DataFrame(), config=_chart_config(),
+            tickers_for_chart=["AAPL"],
+        )
+
+    assert result is True  # スキップ扱いなので成功
+
+
+@patch("src.notifier.send_to_slack")
+def test_notify_chart_upload_failure_returns_false(mock_slack):
+    """チャートアップロードが失敗した場合に notify() が False を返すことを検証する。"""
+    from src.notifier import NotificationResult, notify
+
+    mock_slack.return_value = NotificationResult(channel="slack", success=True, status_code=200)
+
+    with patch("src.notifier._upload_chart_to_slack", return_value=False), \
+         patch("src.chart_builder.build_stock_chart", return_value=b"fakepng"), \
+         patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-test"}):
+        result = notify(
+            pd.DataFrame(), config=_chart_config(),
+            tickers_for_chart=["AAPL"],
+        )
+
+    assert result is False

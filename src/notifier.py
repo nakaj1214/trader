@@ -5,6 +5,7 @@ beginner_mode 有効時は用語解説を自動付与する。
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -163,12 +164,115 @@ def send_to_slack(text: str) -> NotificationResult:
     return result
 
 
+def _resolve_channel_id(channel_name: str, bot_token: str) -> str | None:
+    """チャンネル名（例: "#stock-alerts"）から Slack チャンネル ID を解決する。
+
+    解決失敗時は None を返す（例外を起こさない）。
+    """
+    name = channel_name.lstrip("#")
+    try:
+        resp = requests.get(
+            "https://slack.com/api/conversations.list",
+            headers={"Authorization": f"Bearer {bot_token}"},
+            params={"types": "public_channel,private_channel", "limit": 1000},
+            timeout=30,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("conversations.list 失敗: %s", data.get("error"))
+            return None
+        for ch in data.get("channels", []):
+            if ch.get("name") == name:
+                return ch["id"]
+        logger.warning("チャンネル '%s' が見つかりません", channel_name)
+    except Exception:
+        logger.exception("チャンネル ID 解決エラー: %s", channel_name)
+    return None
+
+
+def _upload_chart_to_slack(
+    ticker: str, chart_bytes: bytes, channel_id: str, bot_token: str
+) -> bool:
+    """Slack の新 API（files.getUploadURLExternal + completeUploadExternal）でチャートを upload する。
+
+    Returns:
+        True: upload 成功。False: upload 失敗（5xx 等）。
+    """
+    filename = f"{ticker}_chart.png"
+    headers = {"Authorization": f"Bearer {bot_token}"}
+
+    # Step 1: upload URL を取得
+    try:
+        url_resp = requests.post(
+            "https://slack.com/api/files.getUploadURLExternal",
+            headers=headers,
+            json={"filename": filename, "length": len(chart_bytes)},
+            timeout=30,
+        )
+        url_data = url_resp.json()
+    except Exception:
+        logger.exception("files.getUploadURLExternal エラー: %s", ticker)
+        return False
+
+    if not url_data.get("ok"):
+        logger.error("files.getUploadURLExternal 失敗: %s — %s", ticker, url_data.get("error"))
+        return False
+
+    upload_url = url_data["upload_url"]
+    file_id = url_data["file_id"]
+
+    # Step 2: ファイルを upload URL に PUT
+    try:
+        put_resp = requests.put(
+            upload_url,
+            data=chart_bytes,
+            headers={"Content-Type": "image/png"},
+            timeout=60,
+        )
+        if put_resp.status_code >= 500:
+            logger.error("チャート PUT 失敗: %s — HTTP %d", ticker, put_resp.status_code)
+            return False
+    except Exception:
+        logger.exception("チャート PUT エラー: %s", ticker)
+        return False
+
+    # Step 3: upload を完了させてチャンネルに投稿
+    try:
+        complete_resp = requests.post(
+            "https://slack.com/api/files.completeUploadExternal",
+            headers=headers,
+            json={"files": [{"id": file_id}], "channel_id": channel_id, "initial_comment": ticker},
+            timeout=30,
+        )
+        complete_data = complete_resp.json()
+        if complete_resp.status_code >= 500:
+            logger.error("files.completeUploadExternal HTTP %d: %s", complete_resp.status_code, ticker)
+            return False
+        if not complete_data.get("ok"):
+            logger.error("files.completeUploadExternal 失敗: %s — %s", ticker, complete_data.get("error"))
+            return False
+    except Exception:
+        logger.exception("files.completeUploadExternal エラー: %s", ticker)
+        return False
+
+    logger.info("チャートアップロード完了: %s (file_id=%s)", ticker, file_id)
+    return True
+
+
 def notify(
     predictions_df: pd.DataFrame,
     accuracy: dict | None = None,
     config: dict | None = None,
+    tickers_for_chart: list[str] | None = None,
 ) -> bool:
-    """レポートを生成してSlackに送信し、LINE でチェックを促す。"""
+    """レポートを生成してSlackに送信し、LINE でチェックを促す。
+
+    Args:
+        predictions_df: predictor.predict() の出力。
+        accuracy: tracker.calculate_accuracy() の出力。
+        config: 設定辞書。
+        tickers_for_chart: チャートを生成・送信する銘柄リスト。None の場合はチャート送信しない。
+    """
     if config is None:
         config = load_config()
 
@@ -194,4 +298,42 @@ def notify(
         except Exception:
             logger.exception("LINE通知でエラーが発生しました")
 
-    return slack_ok
+    # チャート添付（Bot Token 方式）
+    notif_cfg = config.get("notifications", {})
+    slack_chart_enabled = notif_cfg.get("slack_chart", False)
+    chart_ok = True
+
+    if tickers_for_chart and slack_chart_enabled:
+        bot_token = os.environ.get("SLACK_BOT_TOKEN")
+        if not bot_token:
+            logger.info("SLACK_BOT_TOKEN 未設定のためチャートアップロードをスキップ")
+        else:
+            # チャンネル ID 解決
+            channel_id = notif_cfg.get("slack_channel_id", "")
+            if not channel_id:
+                channel_id = _resolve_channel_id(
+                    config.get("slack", {}).get("channel", "#stock-alerts"),
+                    bot_token,
+                )
+            if not channel_id:
+                logger.warning("チャンネル ID を解決できません。チャートアップロードをスキップ")
+            else:
+                from src import chart_builder
+
+                lookback_days = config.get("screening", {}).get("lookback_days", 252)
+                for ticker in tickers_for_chart:
+                    try:
+                        chart_bytes = chart_builder.build_stock_chart(ticker, lookback_days, config)
+                    except Exception:
+                        logger.exception("チャート生成エラー: %s", ticker)
+                        chart_bytes = None
+
+                    if chart_bytes is None:
+                        logger.info("チャートデータなし: %s — スキップ", ticker)
+                        continue
+
+                    success = _upload_chart_to_slack(ticker, chart_bytes, channel_id, bot_token)
+                    if not success:
+                        chart_ok = False
+
+    return slack_ok and chart_ok

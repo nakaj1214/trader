@@ -2,6 +2,7 @@
 yfinance>=0.2.36
 pandas>=2.2.0
 ta>=0.11.0
+matplotlib>=3.8.0
 
 # AI予測
 prophet>=1.1.5

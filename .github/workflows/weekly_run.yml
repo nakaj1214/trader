@@ -20,6 +20,7 @@ jobs:
     # secrets は if 式で直接参照できないため env に移す
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 
     steps:
       - name: Checkout repository

@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-02-22T08:46:13.182165+00:00",
+  "updated_at": "2026-03-01T01:58:42.556408+00:00",
   "weekly": [],
   "cumulative": {
     "hit_rate_pct": 0.0,
@@ -11,7 +11,7 @@
     "bins": [],
     "notes": "予測上昇率の帯ごとに実績変動率を比較。MAEは予測と実績の平均絶対誤差。"
   },
-  "as_of_utc": "2026-02-22T08:46:13Z",
+  "as_of_utc": "2026-03-01T01:58:42Z",
   "data_coverage_weeks": 0,
   "calibration": {
     "overall": {

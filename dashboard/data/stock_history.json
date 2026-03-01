@@ -71,6 +71,10 @@
     {
       "date": "2026-02-19",
       "predicted_price": 763.19
+    },
+    {
+      "date": "2026-03-01",
+      "predicted_price": 631.81
     }
   ],
   "STE": [
@@ -81,6 +85,10 @@
     {
       "date": "2026-02-19",
       "predicted_price": 255.55
+    },
+    {
+      "date": "2026-03-01",
+      "predicted_price": 293.79
     }
   ],
   "ROL": [
@@ -93,6 +101,30 @@
     {
       "date": "2026-02-22",
       "predicted_price": 232.43
+    }
+  ],
+  "IQV": [
+    {
+      "date": "2026-03-01",
+      "predicted_price": 418.04
+    }
+  ],
+  "EXPE": [
+    {
+      "date": "2026-03-01",
+      "predicted_price": 418.08
+    }
+  ],
+  "NDAQ": [
+    {
+      "date": "2026-03-01",
+      "predicted_price": 158.45
+    }
+  ],
+  "MCO": [
+    {
+      "date": "2026-03-01",
+      "predicted_price": 708.33
     }
   ]
 }

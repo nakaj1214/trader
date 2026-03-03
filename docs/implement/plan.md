@@ -1,576 +1,523 @@
-# Antigravity × TradingView 記事 — 活用・差分実装計画
+## 実装計画: Trader プロジェクト ゼロベース再設計
 
-> 参考記事: https://note.com/xauxbt/n/n3b0a52b835ae
-> 作成日: 2026-02-27
-> 最終更新: 2026-02-27（review.md 指摘反映）
-
----
-
-## 0. 調査サマリー
-
-### 記事の主旨（公開部分から判断）
-
-「Antigravity（Google AI エージェント）× TradingView」で銘柄選びを自動化する。
-フロー: **探す → 絞る → 深掘りする** の 3 段階を AI が代行。
-
-- Antigravity はブラウザ内蔵 AI エージェント。TradingView を自動操作し、チャート分析 HTML レポートを生成する
-- 手動スクリーンショット不要で分析レポートを出力する点が差別化
-
-### 現プロジェクトとの差分
-
-| テーマ | 記事の手法 | 現プロジェクトの状態 | ギャップ |
-|--------|-----------|---------------------|---------|
-| **探す** | TradingView スクリーナー（150+指標）| yfinance + 5指標（RSI/MACD/volume/price/52wHigh）| 指標数・信号品質が少ない |
-| **絞る** | Golden Cross・Bollinger 等の定番フィルター | スコア上位 N 件のみ | トレンド方向・レンジ判定が無い |
-| **深掘り** | AI がチャート画像を読んで HTML レポート生成 | テキスト JSON + ダッシュボード | 視覚的チャートが通知・レポートに無い |
-| **通知** | HTML レポートで画像込みのアウトプット | Slack テキスト通知 | 画像なし |
+> proposal: `docs/implement/proposal.md`
+> 作成日: 2026-03-03
 
 ---
 
-## 1. 実装フェーズ一覧
-
-| Phase | 内容 | 優先度 | 難易度 |
-|-------|------|--------|--------|
-| A | スクリーナー強化（Golden Cross + Bollinger Band） | High | Low |
-| B | Slack 通知にチャート画像を添付 | High | Medium |
-| C | ADX でトレンド強度フィルターを追加 | Medium | Low |
-
----
-
-## Phase A: スクリーナー強化
-
-### 背景
-
-現在のスクリーナーは RSI・MACD・出来高・騰落率・52 週高値の 5 指標のみ。
-TradingView で最も広く使われる **Golden Cross** と **Bollinger Band** を追加し、選別精度を上げる。
-
-### A-1 Golden Cross フィルター
-
-**概要:** SMA50 > SMA200 の銘柄のみを通す。デス・クロス銘柄（下降トレンド）を排除する。
-
-#### 前提: lookback_days の引き上げ（review 指摘 #1 対応）
-
-現行 `config.yaml:14` の `lookback_days: 30` では SMA200 の計算に必要な 200 日分のデータが取得できない。
-Golden Cross フィルターを有効にするには `lookback_days` を **252（約1年）** 以上に変更する必要がある。
-
-**変更ファイル:** `config.yaml`
-
-```yaml
-screening:
-  lookback_days: 252   # 30 → 252 に変更（SMA200 計算に必要）
-```
-
-> 注意: lookback_days を大きくすると yfinance のデータ取得量・実行時間が増加する。
-> GitHub Actions の timeout-minutes: 60 の範囲内であれば問題ない。
-
-**⚠️ yfinance 取得期間のカレンダー日補正（review 指摘対応）:**
-
-現行 `fetch_stock_data()` は `period = f"{lookback_days}d"` で yfinance を呼ぶ（`src/screener.py:42`）。
-`252d` は **カレンダー日 252 日** であり、土日・祝日を含むため実際に取得できる営業日数は約 180 日にとどまる。
-SMA200 の計算には 200 本以上の営業日データが必要であり、このままでは `sma200 = NaN` → `golden_cross = None` が大量発生し、フィルターが機能しない。
-
-**変更ファイル:** `src/screener.py`（`fetch_stock_data()`）
-
-```python
-# 変更前（252d = カレンダー日 → 約 180 営業日しか取れない）
-period = f"{lookback_days}d"
-
-# 変更後（× 1.5 補正 → 252 × 1.5 ≈ 378 カレンダー日 ≈ 270 営業日）
-CALENDAR_DAY_FACTOR = 1.5
-period = f"{int(lookback_days * CALENDAR_DAY_FACTOR)}d"
-```
-
-加えて `compute_indicators()` でも `len(close)` を事前確認し、上場直後等のデータ不足銘柄を安全に処理する（後述）。
-
-**⚠️ 短期指標の計算窓の固定（review 指摘 対応）:**
-
-現行の `compute_indicators()` は `price_change_1m = (close[-1] - close[0]) / close[0]` と
-`volume_trend = 前半/後半の等分比較` を取得期間全体で計算している（`src/screener.py:151-159`）。
-`lookback_days: 252` に変更するとこれらが **252 日窓ベースに変質**し、「1ヶ月騰落率」「短期出来高トレンド」の意味が崩れる。
-`compute_indicators()` を以下のように修正し、**lookback_days に依存しない固定窓**に変更する:
-
-```python
-# 変更前（close[0] が 252 日前の値になり「1ヶ月騰落率」ではなくなる）
-price_change_1m = (close[-1] - close[0]) / close[0]
-
-# 変更後（直近 21 営業日固定 ≒ 1ヶ月 — lookback_days に依存しない）
-price_change_1m = (
-    (close.iloc[-1] - close.iloc[-22]) / close.iloc[-22]
-    if len(close) >= 22 else (close.iloc[-1] - close.iloc[0]) / close.iloc[0]
-)
-```
-
-```python
-# 変更前（全取得期間を前半/後半に等分 — 252 日だと「126 日比較」になる）
-mid = len(volume) // 2
-vol_first = volume.iloc[:mid].mean()
-vol_second = volume.iloc[mid:].mean()
-volume_trend = (vol_second - vol_first) / vol_first if vol_first > 0 else 0.0
-
-# 変更後（直近 42 営業日を固定窓として前半/後半 21 日ずつ比較 — lookback_days に依存しない）
-VOL_WINDOW = 42
-vol_data = volume.iloc[-VOL_WINDOW:] if len(volume) >= VOL_WINDOW else volume
-mid = len(vol_data) // 2
-vol_first = vol_data.iloc[:mid].mean()
-vol_second = vol_data.iloc[mid:].mean()
-volume_trend = (vol_second - vol_first) / vol_first if vol_first > 0 else 0.0
-```
-
-**変更ファイル:** `src/screener.py`
-
-`compute_indicators()` の戻り値に追加:
-
-```python
-# SMA — len(close) >= 200 を事前確認（× 1.5 補正後も上場直後等でデータ不足の可能性あり）
-if len(close) < 200:
-    logger.warning("データ不足（%d本）: SMA200 計算不可。golden_cross=None。", len(close))
-    golden_cross = None
-else:
-    sma50 = close.rolling(50).mean().iloc[-1]
-    sma200 = close.rolling(200).mean().iloc[-1]
-    # golden_cross は None（データ不足）/ 1.0（GC）/ 0.0（DC）の3値（review 指摘 #2 対応）
-    if pd.isna(sma50) or pd.isna(sma200):
-        golden_cross = None   # データ不足 → ハードフィルター対象外
-    elif sma50 > sma200:
-        golden_cross = 1.0    # ゴールデンクロス
-    else:
-        golden_cross = 0.0    # デス・クロス → ハードフィルター対象
-```
-
-`score_stock()` でのシグネチャ変更（review 指摘を受けて明示）:
-
-現行は `score_stock(indicators: dict, weights: dict)` で呼ばれている（`src/screener.py:179`, `src/screener.py:295`）。
-これを `config` 全体を受け取る設計に変更する:
-
-```python
-# 変更前
-def score_stock(indicators: dict, weights: dict) -> float:
-    ...
-
-# 変更後（config を受け取り、内部で weights と golden_cross フラグを取得）
-def score_stock(indicators: dict, config: dict) -> float:
-    use_gc_filter = config.get("screening", {}).get("use_golden_cross_filter", True)
-    weights = config.get("screening", {}).get("weights", {})
-    gc = indicators.get("golden_cross")
-    if use_gc_filter and gc is not None and gc == 0.0:
-        # デス・クロス確定 かつ フィルター有効 → ハードフィルター（スコア強制 0）
-        return 0.0
-    # gc is None（データ不足）は除外しない
-    # use_gc_filter=False の場合はフィルター全体をスキップ
-    # gc == 1.0 は通常スコアリングへ
-    ...
-```
-
-`screen()` 内の呼び出しも合わせて変更:
-
-```python
-# 変更前
-score = score_stock(indicators, weights)
-
-# 変更後
-score = score_stock(indicators, config)
-```
-
-**既存テストの更新（review 指摘 対応 — 見落とし防止）:**
-
-以下の既存テストは `score_stock(indicators, weights)` 形式で呼び出しているため、
-新シグネチャ `score_stock(indicators, config)` に合わせて更新が必要:
-
-| テスト | ファイル行 | 変更内容 |
-|--------|-----------|---------|
-| `test_score_stock_weights` | `tests/test_screener.py:54` | 第2引数を `weights` dict → `{"screening": {"weights": weights}}` 形式に変更 |
-| `test_score_stock_with_fifty2w` | `tests/test_screener.py:139` | 同上 |
-| `test_score_stock_fifty2w_none_skipped` | `tests/test_screener.py:152-153` | 同上（2箇所） |
-
-`config.yaml` に追加:
-
-```yaml
-screening:
-  use_golden_cross_filter: true   # false にすると無効化
-```
-
-**影響範囲:**
-- `config.yaml`: `lookback_days` 30 → 252、`use_golden_cross_filter` 追加
-- `src/screener.py`: `compute_indicators`（短期指標の固定窓化 + Golden Cross 追加）、`score_stock`
-- `tests/test_screener.py`: Golden Cross ありなし・データ不足（None）のテストケース追加、`price_change_1m`/`volume_trend` の固定窓動作を確認するテスト追加
-
----
-
-### A-2 Bollinger Band シグナル
-
-**概要:** 価格が Bollinger Band（20日・2σ）の上限突破後の「スクイーズからのブレイクアウト」を検出する。
-
-**変更ファイル:** `src/screener.py`
-
-`compute_indicators()` の戻り値に追加:
-
-```python
-# Bollinger Band (20日, 2σ)
-bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
-bb_upper = bb.bollinger_hband().iloc[-1]
-bb_lower = bb.bollinger_lband().iloc[-1]
-bb_width = (bb_upper - bb_lower) / bb.bollinger_mavg().iloc[-1]  # バンド幅（スクイーズ検出用）
-bb_pos = (current_price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
-# 0=下限, 0.5=中央, 1.0=上限に位置
-```
-
-`score_stock()` でのスコアリング:
-
-```python
-# Bollinger Band スコア: 中央〜上限にいるほど高評価
-bb_score = min(max(indicators.get("bb_pos", 0.5), 0.0), 1.0)
-```
-
-`config.yaml` に追加:
-
-```yaml
-screening:
-  weights:
-    bb_position: 0.10   # Bollinger Band スコアの重み（既存重みを調整して合計 1.0 に）
-```
-
-**既存重みの調整（合計 1.0 を維持 — review 指摘 #3 対応: 章間不整合を解消）:**
-
-A-2 完了時点での重み（Phase C 適用前の中間状態）:
-
-```yaml
-weights:
-  price_change_1m: 0.20   # 0.25 → 0.20
-  volume_trend:   0.15   # 変更なし
-  rsi_score:      0.20   # 変更なし（Phase C で adx_score 追加時に 0.15 へ再調整）
-  macd_signal:    0.15   # 0.20 → 0.15
-  fifty2w_score:  0.20   # 変更なし（Phase C で adx_score 追加時に 0.15 へ再調整）
-  bb_position:    0.10   # 新規追加
-# 合計: 0.20+0.15+0.20+0.15+0.20+0.10 = 1.00
-```
-
-> 最終的な全重みは「2. config.yaml 最終イメージ」の値（0.15/0.15）を正とする。
-
-**影響範囲:**
-- `src/screener.py`: `compute_indicators`, `score_stock`
-- `config.yaml`: weights セクション
-- `tests/test_screener.py`: Bollinger Band スコアのテスト追加
-
----
-
-## Phase B: Slack 通知にチャート画像を添付
-
-### 背景
-
-Antigravity の差別化点は「チャート画像込みの HTML レポート生成」。
-現行の Slack 通知はテキストのみ。週次の予測銘柄に価格チャート（終値 + SMA + BB）を添付することで、視覚的に確認しやすくする。
-
-### 通知方式の決定（review 指摘 #6 対応）
-
-**Slack Bot Token（files.upload）方式を正式採用する。**
-
-- Webhook-only では `files.upload` が使えないため、画像添付には Bot Token が必須
-- `SLACK_BOT_TOKEN=xoxb-...` を GitHub Actions Secrets および `.env` に追加する
-- Webhook-only（`SLACK_WEBHOOK_URL`）は既存のテキスト通知に引き続き使用し、Bot Token は画像 upload にのみ追加で使用する
-
----
-
-### B-1 チャート生成モジュール
-
-**新規ファイル:** `src/chart_builder.py`
-
-```python
-def build_stock_chart(ticker: str, lookback_days: int, config: dict) -> bytes:
-    """yfinance でデータを再取得し、OHLCV + SMA + BB チャートを PNG バイト列で返す。"""
-```
-
-#### データ取得設計（review 指摘 #4 対応）
-
-`chart_builder.py` 内で yfinance からデータを直接再取得する。
-これにより `screen()` の戻り値設計を変更せず、`main.py` への影響を最小化できる。
-
-取得日数は以下のルールで決定する（review 指摘 #5 対応 + カレンダー日補正 — review 指摘対応）:
-
-```python
-# 描画は chart_lookback_days 分のみ（最終 N 行を使用）
-chart_display_days = config.get("notifications", {}).get("chart_lookback_days", 60)
-
-# SMA200 計算に必要な営業日数（200本）を確保する基準を決める
-chart_fetch_days = max(chart_display_days, 252)
-
-# A-1 の fetch_stock_data() と同じカレンダー日補正（× 1.5）を適用して yfinance に渡す
-# （252 × 1.5 ≈ 378 カレンダー日 ≈ 270 営業日 → SMA200 安定計算可能 — review 指摘対応）
-CALENDAR_DAY_FACTOR = 1.5
-chart_fetch_period = f"{int(chart_fetch_days * CALENDAR_DAY_FACTOR)}d"
-# yfinance 呼び出し例: yf.download(ticker, period=chart_fetch_period, ...)
-```
-
-使用ライブラリ: `matplotlib`（requirements.txt に追加）
-
-> **注意（CI環境 — research6 指摘対応）:** Matplotlib はデフォルトで GUI バックエンドを使う場合があり、
-> GitHub Actions 上でエラーとなる。`chart_builder.py` の先頭で非対話型バックエンドを明示的に設定すること:
->
-> ```python
-> import matplotlib
-> matplotlib.use("Agg")  # 非対話型バックエンド（CI 環境必須、import前に設定）
-> import matplotlib.pyplot as plt
-> ```
-
-チャート内容:
-- 終値ライン
-- SMA20（青）, SMA50（橙）, SMA200（赤）※ カレンダー日補正（× 1.5）適用で ≈ 270 営業日を確保するため安定計算可能
-- Bollinger Band（塗りつぶし）
-- 出来高バー（下部サブプロット）
-- タイトル: `{ticker} — 直近 {chart_display_days} 日`
-
----
-
-### B-2 notifier.py の更新
-
-**変更ファイル:** `src/notifier.py`
-
-現行の `notify()` シグネチャ（後方互換維持 — review 指摘 #3 対応）:
-
-```python
-# 変更前
-def notify(
-    predictions_df: pd.DataFrame,
-    accuracy: dict | None = None,
-    config: dict | None = None,
-) -> bool:
-
-# 変更後（stock_data を optional 引数として追加 → 既存呼び出し・テストはそのまま動く）
-def notify(
-    predictions_df: pd.DataFrame,
-    accuracy: dict | None = None,
-    config: dict | None = None,
-    tickers_for_chart: list[str] | None = None,  # チャートを生成する銘柄リスト
-) -> bool:
-```
-
-`tickers_for_chart` が渡された場合のみ `chart_builder.build_stock_chart()` を呼び出し、
-Slack Bot Token を使って画像を upload する。
-
-既存の `src/main.py` 呼び出し（`notify(predictions_df, accuracy, config)` 形式）は変更不要。
-チャート添付を有効にするには `main.py` の呼び出しを拡張する。
-
-**変更ファイル:** `src/main.py`
-
-```python
-# 変更前
-notifier.notify(predictions_df, accuracy, config)
-
-# 変更後（空予測 / ticker 列なしの場合も安全に処理 — review 指摘 #2 対応）
-tickers = (
-    predictions_df["ticker"].tolist()
-    if not predictions_df.empty and "ticker" in predictions_df.columns
-    else None
-)
-notifier.notify(predictions_df, accuracy, config, tickers_for_chart=tickers)
-```
-
-**影響範囲の確定:**
-- `src/chart_builder.py`: 新規作成
-- `src/notifier.py`: `notify()` に `tickers_for_chart` optional 引数追加
-- `src/main.py`: `notify()` 呼び出しにティッカーリストを追加（空予測ガード込み）
-- `requirements.txt`: matplotlib 追加
-- `.github/workflows/weekly_run.yml`: job-level `env` に `SLACK_BOT_TOKEN` を追加（review 指摘対応 — 後述）
-- `tests/test_notifier.py`: 新規分岐のテストを追加（review 指摘 #4 対応）
-- `tests/test_chart_builder.py`: 新規作成
-- `README.md`: GitHub Actions 必要 Secrets に `SLACK_BOT_TOKEN` を追記（research6 指摘対応）
-- `.env.example`: `SLACK_BOT_TOKEN` を追記（review 指摘対応）
-
-**`.github/workflows/weekly_run.yml` の変更内容（review 指摘対応 — 注入位置の明記）:**
-
-`SLACK_BOT_TOKEN` は `src/main.py` から参照されるため、`SLACK_WEBHOOK_URL` と同じ **job-level `env`** に追加する:
-
-```yaml
-jobs:
-  analyze:
-    env:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}   # 追加
-```
-
----
-
-**`tests/test_notifier.py` に追加するテストケース（review 指摘 #4 対応）:**
-
-| テストケース | 確認内容 |
-|---|---|
-| `tickers_for_chart=None` | 既存動作と同一（chart_builder を呼ばない） |
-| `slack_chart=false` かつ `tickers_for_chart` あり | upload が呼ばれない |
-| `SLACK_BOT_TOKEN` 未設定 かつ `tickers_for_chart` あり | 例外を起こさず upload をスキップ |
-| upload API が 5xx を返す | `notify()` が `False` を返す（Slack 送信失敗扱い） |
-
-**環境変数の追加:**
+### 目的
+
+現行の Trader プロジェクト（週次株式スクリーニング・Prophet予測・Google Sheets永続化・静的HTMLダッシュボード）を
+ゼロから再設計し、拡張性・保守性・予測精度・開発体験を根本的に改善する。
+Perplexity Finance 等の新規データソース統合も視野に入れた、プラグイン型アーキテクチャへ移行する。
+
+### スコープ
+
+- 含むもの:
+  - アーキテクチャ全体の再設計（モジュール分割、依存関係整理）
+  - データパイプラインの非同期化・並列化
+  - SQLite → PostgreSQL 移行可能な永続化レイヤー導入（Google Sheets依存脱却）
+  - 予測モデルのプラグイン化（Prophet + LightGBM/XGBoost アンサンブル）
+  - フロントエンドの近代化（React or Svelte + Vite）
+  - データソースのプラグイン型統合基盤（Perplexity Sonar API 含む）
+  - テスト基盤の強化（統合テスト追加、カバレッジ80%以上）
+  - CI/CD パイプラインの改善
+
+- 含まないもの:
+  - リアルタイムトレーディング機能（デイトレ・HFT）
+  - 有料データベンダー（Bloomberg Terminal 等）との統合
+  - モバイルアプリ開発
+  - Google Sheets データの完全自動マイグレーション（`scripts/migrate_sheets_to_db.py` で半自動対応、手動確認が必要）
+  - Perplexity Finance Web UIのスクレイピング（ToS 違反）
+
+### 影響範囲（変更/追加予定ファイル）
+
+#### 新規ディレクトリ構成（`trader/` 配下を全面再構成）
 
 ```
-SLACK_BOT_TOKEN=xoxb-...   # 画像アップロード用（Bot Token 方式）
+trader/
+├── pyproject.toml                    # パッケージ管理（requirements.txt 廃止）
+├── config/
+│   ├── default.yaml                  # デフォルト設定
+│   ├── production.yaml               # 本番オーバーライド
+│   └── test.yaml                     # テスト用設定
+├── src/
+│   ├── __init__.py
+│   ├── cli.py                        # CLIエントリポイント（Typer）
+│   ├── orchestrator.py               # パイプライン実行制御
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── models.py                 # Pydantic データモデル（Prediction, Stock, etc.）
+│   │   ├── config.py                 # 設定ロード・バリデーション（utils.py 統合）
+│   │   ├── meta.py                   # 実行メタ情報（git hash, config hash）
+│   │   ├── glossary.py               # 用語解説辞書（beginner_mode 連動）
+│   │   └── exceptions.py             # カスタム例外定義
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── providers/                # データソースプラグイン
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py               # DataProvider ABC
+│   │   │   ├── yfinance_provider.py  # yfinance（価格・財務）
+│   │   │   ├── jquants_provider.py   # J-Quants（JP株）
+│   │   │   ├── finnhub_provider.py   # Finnhub（センチメント）
+│   │   │   ├── fmp_provider.py       # FMP（財務フォールバック）
+│   │   │   ├── fred_provider.py      # FRED（マクロ指標）
+│   │   │   └── perplexity_provider.py # Perplexity Sonar（AIニュース要約）
+│   │   └── repository.py            # DB永続化レイヤー（SQLAlchemy）
+│   ├── screening/
+│   │   ├── __init__.py
+│   │   ├── universe.py               # ユニバース定義（銘柄リスト管理）
+│   │   ├── filters.py                # フィルタチェーン（時価総額、流動性、GC等）
+│   │   ├── indicators.py             # テクニカル指標計算
+│   │   └── scorer.py                 # スコアリング（重み付き合成スコア）
+│   ├── prediction/
+│   │   ├── __init__.py
+│   │   ├── base.py                   # PredictionModel ABC
+│   │   ├── prophet_model.py          # Prophet モデル
+│   │   ├── lightgbm_model.py         # LightGBM モデル
+│   │   ├── ensemble.py               # アンサンブル制御
+│   │   └── calibrator.py             # 確率キャリブレーション（Platt Scaling）
+│   ├── enrichment/
+│   │   ├── __init__.py
+│   │   ├── base.py                   # Enricher ABC
+│   │   ├── risk_enricher.py          # リスク指標（vol, beta, drawdown）
+│   │   ├── event_enricher.py         # イベント検出（決算、配当）
+│   │   ├── evidence_enricher.py      # ファクター分析（momentum, value, quality）
+│   │   ├── sentiment_enricher.py     # ニュースセンチメント
+│   │   └── sizing_enricher.py        # ポジションサイジング
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   ├── tracker.py                # 的中率追跡
+│   │   ├── backtest.py               # 戦略比較バックテスト（baseline.py 統合）
+│   │   ├── walkforward.py            # ウォークフォワード評価
+│   │   ├── alpha_survey.py           # アノマリー統計検証
+│   │   └── calibration_metrics.py    # Brier Score, ECE 等
+│   ├── notification/
+│   │   ├── __init__.py
+│   │   ├── base.py                   # Notifier ABC
+│   │   ├── slack_notifier.py         # Slack通知
+│   │   ├── line_notifier.py          # LINE通知
+│   │   └── chart_builder.py          # チャート画像生成（matplotlib）
+│   └── export/
+│       ├── __init__.py
+│       ├── json_exporter.py          # ダッシュボードJSON出力
+│       └── sheets_exporter.py        # Google Sheets出力（後方互換）
+├── dashboard/                        # フロントエンド（Svelte + Vite）
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── src/
+│   │   ├── App.svelte
+│   │   ├── routes/
+│   │   ├── components/
+│   │   ├── stores/
+│   │   └── lib/
+│   ├── static/
+│   │   └── _headers                  # Cloudflare Pages キャッシュ制御（現行 dashboard/_headers を移植）
+│   └── public/
+│       └── data/                     # ビルド後JSONデータ配置先
+├── tests/
+│   ├── unit/                         # ユニットテスト
+│   ├── integration/                  # 統合テスト
+│   └── conftest.py                   # 共通フィクスチャ
+├── scripts/
+│   └── migrate_sheets_to_db.py      # Google Sheets → SQLite 移行スクリプト
+├── data/
+│   ├── universes/                    # 銘柄リストCSV
+│   ├── glossary.yaml                # 株式用語定義（現行位置を維持）
+│   └── migrations/                   # DBマイグレーション（Alembic）
+└── .github/
+    └── workflows/
+        ├── weekly_run.yml            # 週次実行
+        ├── test.yml                  # PRテスト
+        └── deploy_dashboard.yml      # ダッシュボードデプロイ
 ```
 
-**Slack チャンネル指定（research6・review 指摘対応）:**
+#### 主要な変更理由
 
-`files.upload` API（および後継 `files.getUploadURLExternal`）にはチャンネル **ID** が必要。
-現行 `config.yaml` の `slack.channel: "#stock-alerts"` はチャンネル名であり、ID ではない。
+- `src/enricher.py`（920行）→ `src/enrichment/` に5ファイル分割: 単一責任原則違反の解消
+- `src/exporter.py`（701行）→ `src/export/` + `src/evaluation/`: 責務分離
+- `src/screener.py`（383行）→ `src/screening/` に4ファイル分割: フィルタ・指標・スコアリングの独立
+- `dashboard/js/accuracy.js`（610行）+ 他JSファイル群 → Svelte コンポーネント群: Vanilla JS の保守性向上
+- Google Sheets 永続化 → SQLite/PostgreSQL: SPOF排除、クエリ性能向上
+- `requirements.txt` → `pyproject.toml`: 依存管理の近代化（uv 使用、pip フォールバック対応）
 
-`config.yaml` にチャンネル ID 用のキーを追加し、名前→ID 解決を回避する:
+#### 現行モジュール移行マッピング
 
-```yaml
-notifications:
-  slack_channel_id: ""   # Bot Token 使用時の upload 先チャンネル ID（例: "C012AB3CD"）
-                         # 空のままの場合は conversations.list API で slack.channel 名から自動解決
-```
+| 現行ファイル | 移行先 | 方針 |
+|---|---|---|
+| `src/screener.py` | `src/screening/` (4ファイル) | 分割移植 |
+| `src/predictor.py` | `src/prediction/prophet_model.py` | 移植 |
+| `src/tracker.py` | `src/evaluation/tracker.py` | 移植 |
+| `src/sheets.py` | `src/export/sheets_exporter.py` | 移植（後方互換） |
+| `src/notifier.py` | `src/notification/slack_notifier.py` | 移植 |
+| `src/exporter.py` | `src/export/json_exporter.py` + `src/orchestrator.py` | 分割（エクスポート責務とオーケストレーション責務を分離） |
+| `src/enricher.py` | `src/enrichment/` (5ファイル) | 分割移植 |
+| `src/jquants_fetcher.py` | `src/data/providers/jquants_provider.py` | 移植 |
+| `src/finnhub_fetcher.py` | `src/data/providers/finnhub_provider.py` | 移植 |
+| `src/fmp_fetcher.py` | `src/data/providers/fmp_provider.py` | 移植 |
+| `src/macro_fetcher.py` | `src/data/providers/fred_provider.py` + `src/export/json_exporter.py` | FRED取得ロジックはprovider、`macro.json`出力はexporter |
+| `src/line_notifier.py` | `src/notification/line_notifier.py` | 移植 |
+| `src/alpha_survey.py` | `src/evaluation/alpha_survey.py` | 移植（evaluationドメイン） |
+| `src/baseline.py` | `src/evaluation/backtest.py` | 統合移植（3戦略比較ロジック） |
+| `src/walkforward.py` | `src/evaluation/walkforward.py` | 移植 |
+| `src/chart_builder.py` | `src/notification/chart_builder.py` | 移植（Slack通知チャート生成） |
+| `src/meta.py` | `src/core/meta.py` | 移植（実行メタ情報はcore基盤） |
+| `src/utils.py` | `src/core/config.py` | 統合（`load_config()`, `get_env()` → Pydantic Settings、`ROOT_DIR` → config定数） |
+| `src/glossary.py` | `src/core/glossary.py` | 移植（`beginner_mode` 連動の用語辞書） |
+| `src/main.py` | `src/orchestrator.py` + `src/cli.py` | 分割（実行制御とCLIインターフェース） |
 
-`notifier.py` での解決ロジック:
+#### 静的データ移行
 
-```python
-channel_id = config.get("notifications", {}).get("slack_channel_id", "")
-if not channel_id:
-    # 名前から ID を解決（conversations.list API を使用）
-    # 解決失敗時は upload をスキップして警告ログを出力
-    channel_id = _resolve_channel_id(
-        config.get("slack", {}).get("channel", "#stock-alerts"),
-        bot_token,
-    )
-# requests を使って files.upload / files.getUploadURLExternal に POST
-# （slack_sdk は使わず既存 requests で統一）
-```
+| 現行ファイル | 移行先 | 方針 |
+|---|---|---|
+| `data/sp500.csv` | `data/universes/sp500.csv` | ディレクトリ移動 |
+| `data/nasdaq100.csv` | `data/universes/nasdaq100.csv` | ディレクトリ移動 |
+| `data/nikkei225.csv` | `data/universes/nikkei225.csv` | ディレクトリ移動 |
+| `data/glossary.yaml` | `data/glossary.yaml` | 配置維持（`src/core/glossary.py` から参照） |
+| `config.yaml` | `config/default.yaml` | 構造再編（下記マッピング参照） |
+| `Dockerfile` | `Dockerfile` | 維持（`uv` ベースに更新） |
+| `docker-compose.yml` | `docker-compose.yml` | 維持（DB追加等を反映） |
+| `dashboard/_headers` | `dashboard/static/_headers` | Cloudflare Pages キャッシュ制御ヘッダー（SvelteKit static ディレクトリに移動） |
 
-> 注意: Bot が当該チャンネルに参加している必要がある（Bot をチャンネルに招待すること）。
-> `files.upload` が非推奨になる可能性があるため、
-> 実装時は Slack API ドキュメントの最新仕様（`files.getUploadURLExternal` + `files.completeUploadExternal`）を確認すること。
+#### `config.yaml` → `config/default.yaml` 設定キー対応表
 
-`config.yaml` に追加:
+> 現行キーは `config.yaml` の実態（2026-03-03 時点）に基づく。新規追加キーは末尾に別表で記載。
 
-```yaml
-notifications:
-  slack_chart: true          # チャート添付を有効にするか（false で従来のテキスト通知のみ）
-  chart_lookback_days: 60    # チャートに表示する日数（取得は max(60, 252) 日分）
-```
+| 現行キー | 新設計キー | 備考 |
+|---|---|---|
+| `screening.markets` | `screening.markets` | 維持 |
+| `screening.top_n` | `screening.top_n` | 維持 |
+| `screening.min_market_cap` | `screening.filters.market_cap.min` | フィルタ配下に階層化 |
+| `screening.min_avg_dollar_volume_us` | `screening.filters.liquidity.min_dollar_volume_us` | フィルタ配下に階層化（US株用） |
+| `screening.min_avg_dollar_volume_jp` | `screening.filters.liquidity.min_dollar_volume_jp` | フィルタ配下に階層化（JP株用） |
+| `screening.exclude_days_to_earnings` | `screening.filters.earnings_exclusion.days` | フィルタ配下に階層化 |
+| `screening.lookback_days` | `screening.lookback_days` | 維持 |
+| `screening.use_golden_cross_filter` | `screening.filters.golden_cross.enabled` | フィルタ配下に階層化 |
+| `screening.weights.*` | `screening.scoring.weights.*` | scoring配下に移動 |
+| `prediction.history_days` | `prediction.history_days` | 維持 |
+| `prediction.forecast_days` | `prediction.forecast_days` | 維持 |
+| `prophet.interval_width` | `prediction.prophet.interval_width` | prediction配下に統合 |
+| `prophet.changepoint_prior_scale` | `prediction.prophet.changepoint_prior_scale` | prediction配下に統合 |
+| `prophet.uncertainty_samples` | `prediction.prophet.uncertainty_samples` | prediction配下に統合 |
+| `guardrail.clip_pct` | `prediction.guardrail.clip_pct` | prediction配下に移動 |
+| `guardrail.warn_pct` | `prediction.guardrail.warn_pct` | prediction配下に移動 |
+| `openai.*` | 削除 | 現行コードで未使用のため削除 |
+| `google_sheets.spreadsheet_name` | `export.google_sheets.spreadsheet_name` | export配下に移動 |
+| `google_sheets.worksheet_name` | `export.google_sheets.worksheet_name` | export配下に移動 |
+| `slack.channel` | `notification.slack.channel` | notification配下に移動 |
+| `display.beginner_mode` | `notification.beginner_mode` | notification配下に移動 |
+| `line.enabled` | `notification.line.enabled` | notification配下に移動 |
+| `notifications.slack.enabled` | `notification.slack.enabled` | notification配下に統合 |
+| `notifications.line.enabled` | `notification.line.enabled` | notification配下に統合 |
+| `notifications.slack_chart` | `notification.slack.chart_enabled` | notification.slack配下に統合 |
+| `notifications.chart_lookback_days` | `notification.chart.lookback_days` | notification.chart配下に統合 |
+| `notifications.slack_channel_id` | `notification.slack.channel_id` | notification.slack配下に統合 |
+| `sizing.vol_target_ann` | `enrichment.sizing.vol_target_ann` | enrichment配下に移動 |
+| `sizing.max_weight_cap` | `enrichment.sizing.max_weight_cap` | enrichment配下に移動 |
+| `sizing.stop_loss_multiplier` | `enrichment.sizing.stop_loss_multiplier` | enrichment配下に移動 |
+| `backtest.num_rules_tested` | `evaluation.backtest.num_rules_tested` | evaluation配下に移動 |
+| `backtest.num_parameters_tuned` | `evaluation.backtest.num_parameters_tuned` | evaluation配下に移動 |
+| `backtest.oos_start` | `evaluation.backtest.oos_start` | evaluation配下に移動 |
+| `backtest.min_rules_for_pbo` | `evaluation.backtest.min_rules_for_pbo` | evaluation配下に移動 |
+| `walkforward.train_weeks` | `evaluation.walkforward.train_weeks` | evaluation配下に移動 |
+| `walkforward.test_weeks` | `evaluation.walkforward.test_weeks` | evaluation配下に移動 |
+| `walkforward.min_train_weeks` | `evaluation.walkforward.min_train_weeks` | evaluation配下に移動 |
+| `jquants.enabled` | `providers.jquants.enabled` | providers配下に統合 |
+| `finnhub.enabled` | `providers.finnhub.enabled` | providers配下に統合 |
+| `fmp.enabled` | `providers.fmp.enabled` | providers配下に統合 |
+| `price_column` | `data.price_column` | data配下に移動 |
 
-**依存ライブラリ追加（requirements.txt）:**
+#### 新規追加キー（現行 `config.yaml` に存在しないもの）
 
-```
-matplotlib>=3.8.0
-```
+| 新設計キー | デフォルト値 | 備考 |
+|---|---|---|
+| `prediction.model` | `"prophet"` | `"prophet"` / `"lightgbm"` / `"ensemble"` |
+| `prediction.ensemble.weights` | `{prophet: 0.4, lightgbm: 0.6}` | アンサンブル時の重み |
+| `providers.fred.enabled` | `false` | FRED マクロ指標取得 |
+| `providers.perplexity.enabled` | `false` | Perplexity Sonar API |
+| `providers.perplexity.model` | `"sonar"` | `sonar` / `sonar-pro` |
+| `providers.perplexity.max_tickers` | `5` | API コスト制限 |
 
----
+### 実装ステップ
 
-## Phase C: ADX トレンド強度フィルター
+#### Step 1: プロジェクト基盤構築
 
-### 背景
+- [ ] `pyproject.toml` 作成（PEP 621 準拠、uv / pip 両対応）
+  - `[project.dependencies]` (core): `yfinance`, `pandas`, `ta`, `matplotlib`, `pydantic>=2.0`, `sqlalchemy>=2.0`, `alembic`, `gspread`, `google-auth`, `requests`, `pyyaml`, `python-dotenv`, `typer`, `structlog`, `tenacity`, `cachetools`
+  - `[project.optional-dependencies.ml]`: `prophet`, `lightgbm`, `scikit-learn`
+  - `[project.optional-dependencies.dev]`: `pytest`, `pytest-cov`, `mypy`, `ruff`, `black`, `isort`, `pre-commit`
+- [ ] `src/core/models.py` 作成（Pydantic v2 データモデル定義）
+  - `Stock`, `Prediction`, `Enrichment`, `TrackingResult`, `BacktestResult`
+- [ ] `src/core/config.py` 作成（Pydantic Settings + YAML マージ）
+  - `config/default.yaml`, `config/production.yaml`, `config/test.yaml`
+- [ ] `src/core/exceptions.py` 作成（`DataProviderError`, `PredictionError`, `ConfigError`）
+- [ ] `src/core/meta.py` 移植（`build_run_meta()`, `build_common_meta()`, `save_config_snapshot()`）
+- [ ] `src/core/glossary.py` 移植（`data/glossary.yaml` 読み込み、`beginner_mode` 連動の用語辞書）
+- [ ] `src/cli.py` 作成（Typer CLI: `run`, `screen`, `predict`, `export` サブコマンド）
+- [ ] ロガー設定（structlog: JSON構造化ログ）
 
-RSI・MACD・Golden Cross だけでは「弱いトレンドの銘柄」を誤選出することがある。
-ADX（Average Directional Index）でトレンド強度を測り、スコアに反映する。
+**検証**: `uv run python -m src.cli --help` でサブコマンド一覧が表示されること
 
-**変更ファイル:** `src/screener.py`
+#### Step 2: データプロバイダー基盤
 
-`compute_indicators()` の戻り値に追加:
+- [ ] `src/data/providers/base.py` 作成（`DataProvider` ABC）
+  - 共通インターフェース: `fetch_price()`, `fetch_info()`, `is_available()`, `cache_key()`
+  - セッション内メモリキャッシュ（`functools.lru_cache` or `cachetools.TTLCache`）
+  - APIキー未設定時の degraded mode（`is_available() → False` で skip）
+  - リトライ（`tenacity` ライブラリ: 指数バックオフ、最大3回）
+- [ ] `src/data/providers/yfinance_provider.py` 移植
+  - バッチ取得（50銘柄/バッチ）維持
+  - Phase A では同期実装。Phase B 以降で `asyncio` + `aiohttp` による非同期化を検討
+- [ ] `src/data/providers/jquants_provider.py` 移植
+- [ ] `src/data/providers/finnhub_provider.py` 移植
+- [ ] `src/data/providers/fmp_provider.py` 移植
+- [ ] `src/data/providers/fred_provider.py` 移植
+- [ ] `src/data/providers/perplexity_provider.py` 新規作成
+  - Perplexity Sonar API (`sonar` / `sonar-pro` モデル)
+  - AIニュース要約 + センチメント分類（bullish/neutral/bearish）
 
-```python
-# ADX (14日) — ta ライブラリに実装済み
-adx_ind = ta.trend.ADXIndicator(
-    high=df["High"].squeeze(),
-    low=df["Low"].squeeze(),
-    close=close,
-    window=14
-)
-adx_val = adx_ind.adx().iloc[-1]
-# 25+ = トレンドあり, 50+ = 強いトレンド
-adx_score = min(float(adx_val) / 50.0, 1.0) if not pd.isna(adx_val) else 0.5
-```
+**検証**: 各プロバイダーの `is_available()` が環境変数に応じて正しく動作すること
 
-`score_stock()` でのスコアリング:
+#### Step 3: 永続化レイヤー（SQLite + SQLAlchemy）
 
-```python
-adx_score = indicators.get("adx_score", 0.5)
-```
+- [ ] `src/data/repository.py` 作成（SQLAlchemy 2.0 + SQLite）
+  - テーブル: `predictions`, `tracking_results`, `enrichments`, `backtest_results`
+  - `PredictionRepository`: CRUD + 週次集計クエリ
+  - `TrackingRepository`: 的中率計算クエリ
+  - マイグレーション基盤: Alembic 初期設定
+- [ ] `data/migrations/` ディレクトリ作成（Alembic 設定）
+- [ ] Google Sheets エクスポーター残置（`src/export/sheets_exporter.py`）
+  - 後方互換: 新DBから Google Sheets への一方向同期オプション
+- [ ] `scripts/migrate_sheets_to_db.py` 作成（Google Sheets → SQLite データ移行）
+  - Google Sheets の全レコードを取得し、SQLite の `predictions` / `tracking_results` テーブルに投入
+  - 冪等実行可能（同一日付+ティッカーの重複レコードは skip）
+  - ドライランモード: `--dry-run` で移行対象件数のみ表示
 
-> **注意（research6 指摘対応）:** ADX はトレンドの「強さ」を示すが「方向」は示さない。
-> 強い下降トレンド銘柄も ADX が高くなるため、高スコアになり得る。
-> ただし A-1 の Golden Cross フィルター（`use_golden_cross_filter: true`）により
-> デス・クロス銘柄はスコア 0 で除外されるため、実運用上の影響は限定的。
-> 将来的に ADX + DI+/DI- を組み合わせてトレンド方向を加味する拡張も可能。
+**検証**: `alembic upgrade head` でテーブル作成、`PredictionRepository.save()` → `.find_by_date()` が往復できること。`scripts/migrate_sheets_to_db.py --dry-run` で対象件数が表示されること
 
-`config.yaml` に追加:
+#### Step 4: スクリーニングモジュール分割
 
-```yaml
-screening:
-  weights:
-    adx_score: 0.10   # ADX スコアの重み（BB と合わせて既存重みを再調整）
-```
+- [ ] 既存 `data/*.csv` を `data/universes/` へ移設
+  - `data/sp500.csv` → `data/universes/sp500.csv`
+  - `data/nasdaq100.csv` → `data/universes/nasdaq100.csv`
+  - `data/nikkei225.csv` → `data/universes/nikkei225.csv`
+- [ ] `src/screening/universe.py` 作成
+  - `data/universes/*.csv` から銘柄リストロード
+  - US（S&P500, NASDAQ100）、JP（日経225）ユニバース
+- [ ] `src/screening/filters.py` 作成（フィルタチェーンパターン）
+  - `MarketCapFilter`, `LiquidityFilter`, `GoldenCrossFilter`
+  - `FilterChain.apply(stocks) → filtered_stocks`（config.yaml で有効/無効制御）
+- [ ] `src/screening/indicators.py` 作成
+  - 各テクニカル指標を独立関数として実装（`ta` ライブラリ活用）
+  - `calc_rsi()`, `calc_macd()`, `calc_bollinger()`, `calc_adx()`, `calc_52w_high()`
+- [ ] `src/screening/scorer.py` 作成
+  - 重み付きスコアリング（config.yaml の `weights` セクション参照）
+  - 上位 N 銘柄選出
 
-**影響範囲:**
-- `src/screener.py`: `compute_indicators`, `score_stock`
-- `config.yaml`: weights セクション
+**検証**: 現行 `screener.py` と同一入力で同一出力が得られること（回帰テスト）
 
----
+#### Step 5: 予測モデルのプラグイン化
 
-## 2. config.yaml 最終イメージ（変更箇所のみ）
+- [ ] `src/prediction/base.py` 作成（`PredictionModel` ABC）
+  - 共通インターフェース: `train()`, `predict()`, `confidence_interval()`
+- [ ] `src/prediction/prophet_model.py` 移植
+  - ±30% クリップ維持、±20% 警告フラグ
+- [ ] `src/prediction/lightgbm_model.py` 新規作成
+  - 特徴量: テクニカル指標 + ファンダメンタルズ（screener 出力を再利用）
+  - ターゲット: 5営業日後リターン
+  - TimeSeriesSplit によるクロスバリデーション
+- [ ] `src/prediction/ensemble.py` 作成
+  - Prophet + LightGBM の加重平均（デフォルト: 0.4 / 0.6）
+  - 設定で単一モデル使用も可能
+- [ ] `src/prediction/calibrator.py` 作成
+  - Platt Scaling による `prob_up` のキャリブレーション
+  - `prob_up_calibrated` フィールドの実装（現行は常に `null`）
 
-```yaml
-screening:
-  lookback_days: 252           # 30 → 252（SMA200 計算のため）
-  use_golden_cross_filter: true
-  weights:
-    price_change_1m: 0.20
-    volume_trend:    0.15
-    rsi_score:       0.15
-    macd_signal:     0.15
-    fifty2w_score:   0.15
-    bb_position:     0.10
-    adx_score:       0.10
+**検証**: `PredictionModel` を差し替え可能であること。Prophet 単体の結果が現行と一致すること
 
-notifications:
-  slack_chart: true
-  chart_lookback_days: 60    # 表示日数。取得は max(60, 252) = 252 日分
-  slack_channel_id: ""       # upload 先チャンネル ID（空なら slack.channel 名から自動解決）
-```
+#### Step 6: エンリッチメントモジュール分割
 
----
+- [ ] `src/enrichment/base.py` 作成（`Enricher` ABC）
+  - `enrich(stock: Stock, prediction: Prediction) → Enrichment`
+- [ ] `src/enrichment/risk_enricher.py` 作成
+  - `vol_20d_ann`, `vol_60d_ann`, `beta`, `max_drawdown_1y`
+- [ ] `src/enrichment/event_enricher.py` 作成
+  - 決算日、配当落ち日検出（J-Quants 決算カレンダー含む）
+  - 決算禁則期間警告（Phase 24 相当）
+- [ ] `src/enrichment/evidence_enricher.py` 作成
+  - `momentum_z`, `value_z`, `quality_z`, `low_risk_z`, `composite`
+- [ ] `src/enrichment/sentiment_enricher.py` 作成
+  - Finnhub ニュースセンチメント + Perplexity AI要約の統合
+- [ ] `src/enrichment/sizing_enricher.py` 作成
+  - ボラティリティベースのポジションサイジング + 損切り水準
 
-## 3. 実装順序
+**検証**: `enricher.py`（920行）と同等のデータを出力すること
 
-```
-Phase A-1 (Golden Cross フィルター + lookback_days 変更)
-  → Phase A-2 (Bollinger Band スコア)
-    → Phase C (ADX スコア)
-      → Phase B (チャート画像生成・送信)
-```
+#### Step 7: 評価・追跡モジュール
 
-A → C は screener.py の修正のみで完結。B は新規モジュールを含むため後回し。
+- [ ] `src/evaluation/tracker.py` 移植
+  - DB（SQLite）から予測レコード取得 → 実績価格取得 → 的中判定 → DB更新
+- [ ] `src/evaluation/backtest.py` 移植（現行 `baseline.py` を統合）
+  - AI vs モメンタム vs SPY 3戦略比較
+  - CAGR, 最大ドローダウン, Sharpe 比算出
+- [ ] `src/evaluation/walkforward.py` 移植
+  - train_weeks / test_weeks 分割評価
+- [ ] `src/evaluation/alpha_survey.py` 移植
+  - アノマリー統計検証（現行の `insufficient_data` プレースホルダーを実装に置換）
+  - `dashboard/data/alpha_survey.json` 出力
+- [ ] `src/evaluation/calibration_metrics.py` 作成
+  - Brier Score, Log-loss, ECE を実計算（プレースホルダー置換）
 
----
+**検証**: 既存の `comparison.json`, `walkforward.json` と同等のデータが出力されること
 
-## 4. Verification Plan
+#### Step 8: 通知・エクスポートモジュール
 
-### Phase A + C（screener 強化）
+- [ ] `src/notification/chart_builder.py` 移植（matplotlib チャート画像生成）
+- [ ] `src/notification/slack_notifier.py` 移植
+  - Webhook テキスト送信 + Bot Token チャート画像 upload（`chart_builder.py` を利用）
+- [ ] `src/notification/line_notifier.py` 移植
+- [ ] `src/export/json_exporter.py` 移植
+  - **移行期間（Phase A〜C）**: `dashboard/data/` に出力（現行互換を維持）
+  - **Phase C 完了後（Svelte 本番稼働後）**: `dashboard/data/` への出力を停止し `dashboard/public/data/` のみに切り替え
+  - JSON atomic write（`.tmp` → `rename`）を維持
+- [ ] `src/export/sheets_exporter.py` 移植（後方互換オプション）
 
-```powershell
-python -m pytest tests/test_screener.py -v
-```
+**検証**: Slack 通知の mock テスト通過、JSON出力が現行スキーマと互換であること
 
-確認ポイント:
-- `compute_indicators()` の戻り値に `golden_cross`（None/1.0/0.0）, `bb_pos`, `adx_score` キーが追加されている
-- Golden Cross フィルターが `use_golden_cross_filter: true` で機能する
-- `golden_cross is None`（データ不足）の場合にハードフィルターが**適用されない**こと
-- `golden_cross == 0.0`（デス・クロス）の場合にスコアが 0 になること
-- `use_golden_cross_filter: false` の場合、デス・クロス銘柄でも**スコアが 0 にならない**こと（フィルター無効化の確認）
+#### Step 9: オーケストレーター
 
-### Phase B（チャート生成 + notifier 分岐）
+- [ ] `src/orchestrator.py` 作成
+  - パイプライン定義: Screen → Predict → Track → Enrich → Export → Notify
+  - 各ステップの成功/失敗を独立管理（1ステップの失敗で全体が止まらない）
+  - JP株パイプラインの独立実行（US失敗時もJPは続行、逆も同様）
+  - 実行メタデータ記録（git hash, config hash, タイムスタンプ）
+  - structlog による構造化ログ出力
 
-```powershell
-python -m pytest tests/test_chart_builder.py tests/test_notifier.py -v
-```
+**検証**: `python -m src.cli run` で全パイプラインが実行され、`dashboard/data/` に JSON が出力されること（移行期間中は現行パスを使用）
 
-確認ポイント:
-- `build_stock_chart()` が PNG バイト列を返す
-- データ不足時（< 20 日）でもエラーにならない
-- `tickers_for_chart=None` → 既存動作と同一（upload 未呼び出し）
-- `slack_chart=false` → upload 未呼び出し
-- `SLACK_BOT_TOKEN` 未設定 → スキップ（例外なし）
-- `predictions_df` が空の場合 → `tickers=None` となり notify() が安全に終了する
+#### Step 10: フロントエンド近代化（Svelte + Vite）
 
-### 統合確認
+- [ ] `dashboard/` を Svelte + Vite + TypeScript で再構築
+  - SvelteKit（SSG モード）で Cloudflare Pages デプロイ互換
+- [ ] コンポーネント設計:
+  - `MarketSelector` - US/JP 市場選択
+  - `PredictionTable` - 予測一覧テーブル（ソート・フィルタ付き）
+  - `AccuracyChart` - 的中率推移グラフ（Chart.js）
+  - `StockDetail` - 銘柄詳細（リスク指標・エビデンス・サイジング）
+  - `StrategyComparison` - 3戦略比較チャート
+  - `MacroBanner` - マクロ指標バナー
+  - `InvestmentSimulator` - 投資シミュレータ
+- [ ] レスポンシブデザイン（Tailwind CSS）
+- [ ] ダークモード対応
+- [ ] `dashboard/public/data/*.json` を静的にロード（API不要）
+  - Svelte ビルド時に `dashboard/data/` から `dashboard/public/data/` へコピーするビルドスクリプトを用意
+  - Phase C 完了後は `json_exporter.py` の出力先を `dashboard/public/data/` に切り替え、コピー不要にする
+- [ ] コンポーネントテスト（Vitest + Testing Library）
+  - 各コンポーネントの描画テスト
+  - JSON データロード・表示の正常系テスト
+- [ ] Cloudflare Pages デプロイ設定の更新
+  - 現行: Framework preset なし（Static HTML）、Build output directory = `dashboard`、ビルドコマンドなし
+  - 新設計: Framework preset = SvelteKit、Build output directory = `dashboard/build`（SvelteKit SSG 出力先）、ビルドコマンド = `cd dashboard && npm run build`
+  - `dashboard/_headers` を Svelte の `static/_headers` に移植（Cloudflare Pages のキャッシュ制御を維持）
+  - `/legacy/` パスに現行 HTML/JS ダッシュボードを配置（リスク3 の対策）
 
-```powershell
-python -m pytest tests/ -q
-```
+**検証**: `npm run build` が成功し、`dashboard/build/` が Cloudflare Pages 互換の静的ファイルであること。`npm run test` が全PASS。デプロイ後に `/data/predictions.json` の `Cache-Control: no-store` ヘッダーが維持されていること
 
-全テスト通過後、`workflow_dispatch` で手動実行して CI グリーンを確認。
+#### Step 11: テスト基盤強化
+
+- [ ] `tests/unit/` に各モジュールのユニットテスト移植・追加
+  - データプロバイダー: 各6テスト以上（正常系、APIキー未設定、HTTPエラー、タイムアウト、キャッシュ、JSONパース失敗）
+  - スクリーニング: フィルタ・指標・スコアリング各テスト
+  - 予測: Prophet/LightGBM/アンサンブル各テスト
+  - エンリッチメント: 各エンリッチャーのテスト
+- [ ] `tests/integration/` 作成
+  - パイプライン統合テスト（モック外部API、実DB）
+  - DB永続化の往復テスト
+- [ ] `tests/conftest.py` 作成（共通フィクスチャ: モックプロバイダー、テストDB）
+- [ ] `tests/e2e/` 作成
+  - CLI からの全パイプライン実行テスト（モック外部API、実DB）
+  - `python -m src.cli run --config config/test.yaml` の正常完了を確認
+- [ ] カバレッジ設定（`pytest-cov`, 80%以上の閾値）
+- [ ] 回帰テスト用スナップショット基盤
+  - 現行 `main.py` の出力 JSON を `tests/snapshots/` に保存
+  - 新 `orchestrator.py` の出力と diff 比較するスクリプト: `scripts/regression_diff.py`
+- [ ] Alembic マイグレーション往復テスト
+  - `alembic upgrade head` → `alembic downgrade base` → `alembic upgrade head` の正常完了
+
+**検証**: `pytest tests/ -v --cov=src --cov-fail-under=80` が全 PASS
+
+#### Step 12: CI/CD 改善
+
+- [ ] `.github/workflows/test.yml` 作成
+  - PR 時: lint（ruff）+ type check（mypy）+ pytest
+- [ ] `.github/workflows/weekly_run_v2.yml` 新規作成（旧 `weekly_run.yml` は Phase C 完了まで維持）
+  - `uv run python -m src.cli run` に変更（`pip` フォールバック付き）
+  - テスト → 本体実行 → ダッシュボードビルド → デプロイ
+  - JSON 出力先: 移行期間中は `dashboard/data/` を commit 対象（現行互換）。Phase C 完了後に `dashboard/public/data/` へ切り替え
+- [ ] `.github/workflows/deploy_dashboard.yml` 作成
+  - Svelte ビルド → Cloudflare Pages デプロイ（`wrangler pages deploy` または Cloudflare Pages の Git 連携を継続利用）
+  - 現行は Cloudflare Pages が `main` push で自動デプロイ（GUI 設定のみ、`wrangler.toml` なし）。Svelte 移行後も同方式を維持するか、`wrangler.toml` + GitHub Actions からの明示的デプロイに切り替えるか選択
+- [ ] pre-commit hooks 設定（ruff, mypy, black, isort）
+
+**検証**: GitHub Actions でテスト・ビルド・デプロイが通ること
+
+### 例外・エラーハンドリング方針
+
+- **データプロバイダー障害**: 各プロバイダーは `is_available()` で可用性を事前チェック。障害時は `DataProviderError` を raise せず `None` / `{}` を返す degraded mode を維持。ログに `structlog.warning` で記録
+- **予測モデル障害**: 個別銘柄の予測失敗はスキップし、他銘柄の処理を継続。アンサンブルの1モデルが失敗した場合は残モデルのみで予測
+- **DB障害**: SQLite はローカルファイルのため障害リスクは低い。書き込み失敗時は `PersistenceError` を raise し、パイプライン続行（Google Sheets フォールバック）
+- **パイプラインステップ障害**: 各ステップは独立実行。Screen 失敗時は前週の予測を使って Track/Export は実行可能
+- **外部API レート制限**: `tenacity` による指数バックオフリトライ（最大3回、初回2秒、最大30秒）
+- **設定エラー**: 起動時に Pydantic で全設定をバリデーション。不正値は即エラー（サイレント無視しない）
+
+### テスト/検証方針
+
+- 自動テスト: `pytest tests/ -v --cov=src --cov-fail-under=80`
+- 型チェック: `mypy src/ --strict`
+- リント: `ruff check src/ tests/`
+- フロントエンドビルド: `cd dashboard && npm run build`
+- 手動確認観点:
+  - [ ] 全 API キー未設定でアプリが正常起動し degraded mode で動作すること
+  - [ ] `config/default.yaml` のデフォルト設定のみで最小実行が完了すること
+  - [ ] US株・JP株それぞれ独立でパイプライン実行できること
+  - [ ] 予測モデルの差し替え（Prophet 単体 ↔ アンサンブル）が config 変更のみで可能なこと
+  - [ ] ダッシュボードが Cloudflare Pages で正常表示されること
+  - [ ] 既存の Google Sheets データと新 DB の整合性が取れること
+  - [ ] 移行期間中は `dashboard/data/*.json` に出力され、現行ダッシュボードで表示可能であること
+  - [ ] Phase C 完了後は `dashboard/public/data/*.json` に出力が切り替わり、Svelte ダッシュボードで表示可能であること
+
+### リスクと対策
+
+1. リスク: 再設計の規模が大きく、全体完了までに長期間を要する → 対策: Step 1-4（基盤+スクリーニング）を Phase A、Step 5-8（予測+エンリッチ+通知）を Phase B、Step 9-12（オーケストレーター+フロントエンド+CI）を Phase C として段階リリース。各フェーズ終了時に既存システムと並行稼働で検証する
+
+2. リスク: LightGBM モデルの訓練データが不足（現行は数十週分の予測実績のみ）→ 対策: 初期は Prophet 単体をデフォルトとし、LightGBM は十分な実績データ（52週以上）が蓄積された後にアンサンブルへ移行。`config.yaml` の `prediction.model` で切り替え可能に設計
+
+3. リスク: フロントエンド Svelte 移行で既存ダッシュボードが一時的に利用不能になる → 対策: JSON スキーマの後方互換を維持し、Svelte 版完成まで現行 HTML/JS ダッシュボードを併存。`/legacy/` パスで旧版にアクセス可能に設定
+
+4. リスク: Google Sheets → SQLite 移行で過去データが失われる → 対策: Google Sheets からの一括エクスポートスクリプト（`scripts/migrate_sheets_to_db.py`）を用意。移行後も `sheets_exporter.py` で Google Sheets への一方向同期を維持
+
+5. リスク: Perplexity Sonar API の有料コストが想定以上に膨らむ → 対策: `max_tickers` 制限（デフォルト5）と `enabled: false` デフォルトを維持。API レスポンスのセッション内キャッシュで重複呼び出し防止。コスト監視を structlog で記録
+
+6. リスク: 920行の `enricher.py` 分割時にロジック欠落や挙動変更が発生する → 対策: 分割前に現行出力のスナップショットを取得し、分割後の出力と diff で完全一致を確認する回帰テストを実装
+
+7. リスク: 現行テスト（16ファイル）が `from src.xxx import ...` のインポートパスに依存しており、ディレクトリ再構成で全テストが壊れる → 対策: Step 1 で `src/__init__.py` にインポート互換レイヤー（re-export）を一時的に用意し、段階的に新パスへ移行。CI で既存テストの PASS を各ステップで確認
+
+8. リスク: CI/CD の移行ギャップ。現行 `weekly_run.yml` が `python -m src.main` を実行しており、移行中にCIが壊れる → 対策: 新CIワークフローは `weekly_run_v2.yml` として並行作成し、旧ワークフローは Phase C 完了まで維持。最終切り替え時に旧ワークフロー削除
+
+9. リスク: `uv` は比較的新しいツールであり、GitHub Actions や Windows での互換性問題がある可能性 → 対策: `pyproject.toml` は PEP 621 準拠で記述し `pip install .` でもインストール可能。CI では `uv` 失敗時に `pip` フォールバック手順を用意
+
+10. リスク: SQLite のファイルベースDB制限により並列ワーカーからの同時書き込みでロックが発生する可能性 → 対策: Write-Ahead Logging (WAL) モードを有効化（`PRAGMA journal_mode=WAL`）。現行は単一プロセス実行のため実害は低いが、長期的な PostgreSQL 移行パスを維持
+
+### 完了条件
+
+- [ ] `pyproject.toml` でプロジェクトが管理され、`uv run python -m src.cli run` で全パイプラインが実行される
+- [ ] データプロバイダーがプラグイン型（`DataProvider` ABC）で統一され、新規ソース追加が1ファイルで完結する
+- [ ] SQLite による永続化が動作し、Google Sheets 依存が解消されている（後方互換エクスポートは維持）
+- [ ] 予測モデルが `config.yaml` の設定変更のみで差し替え可能（Prophet / LightGBM / アンサンブル）
+- [ ] `prob_up_calibrated` が Platt Scaling で実計算される（`null` でない）
+- [ ] `enricher.py` が5つ以下のモジュールに分割され、各ファイルが400行以下
+- [ ] フロントエンドが Svelte + Vite で構築され、Cloudflare Pages にデプロイ可能
+- [ ] `pytest tests/ -v --cov=src --cov-fail-under=80` が全 PASS
+- [ ] `mypy src/ --strict` がエラー0
+- [ ] CI/CD で PR テスト・週次実行・ダッシュボードデプロイが自動化されている
+- [ ] 現行ダッシュボードの JSON スキーマと後方互換が維持されている

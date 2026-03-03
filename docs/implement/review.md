@@ -1,34 +1,38 @@
-﻿# plan.md レビュー（2026-02-26 / research6 反映版・再レビュー3）
-
-> 対象: `docs/implement/plan.md`（Antigravity × TradingView 記事 — 活用・差分実装計画）
-> 参照: `docs/gpt_reseach/research6.md`, 現行コード (`src/`, `config.yaml`, `tests/`, `.github/workflows/weekly_run.yml`)
-
----
-
-## Findings
-
-High / Medium / Low いずれも新規指摘はありません。
+﻿# レビュー対象
+- 対象: `docs/implement/plan.md`
+- レビュー日: 2026-03-03
+- レビュアー: Codex (GPT-5)
 
 ---
 
-## Resolved From Previous Review
-
-- `fetch_stock_data()` のカレンダー日補正（`×1.5`）が明記され、`252d` による SMA200 不足リスクへの対策が追加された（`docs/implement/plan.md:66-81`）。
-- 短期指標の意味崩れに対し、`price_change_1m`/`volume_trend` の固定窓化方針が追加された（`docs/implement/plan.md:85-117`）。
-- `score_stock` シグネチャ変更に伴う既存テスト更新対象が明記された（`docs/implement/plan.md:174-184`）。
-- `SLACK_BOT_TOKEN` の workflow 注入位置（job-level env）が明記された（`docs/implement/plan.md:378-388`）。
-- Slack チャンネル ID 設計（`notifications.slack_channel_id`）と名前→ID解決ロジックが追記された（`docs/implement/plan.md:400-427`, `docs/implement/plan.md:523`）。
-- `.env.example` への `SLACK_BOT_TOKEN` 追記が影響範囲に追加された（`docs/implement/plan.md:369`）。
-- 前回残課題だった `chart_builder` 側の営業日200本確保仕様が、カレンダー日補正を含めて明文化された（`docs/implement/plan.md:287-301`）。
+# まず結論
+- 判定: **APPROVED**
+- 要約: 前回までの主要論点（config移行表の実キー整合、JSON出力先移行戦略、行数記載、CSV移設タスク）は反映済みで、実装着手可能な計画品質に到達している。
 
 ---
 
-## Residual Risk / Testing Gap
+# Findings（優先度順）
 
-- 本レビューは計画書レビューのため、実装反映後の実測結果（pytest / workflow 実行結果）は未確認。
+## Non-blocking
+1. `beginner_mode` の所属ドメインがやや曖昧
+- 参照: `docs/implement/plan.md:205,252`
+- 内容: 現行 `display.beginner_mode` を `notification.beginner_mode` に移す設計になっている一方、用途説明は「用語辞書連動」で通知以外にも拡張可能な性質がある。
+- 提案: `ui.beginner_mode` か `report.beginner_mode` のような中立ドメインに置くか、`notification.beginner_mode` に固定する理由を1行追記すると実装時の迷いが減る。
+
+2. `/legacy/` 併存方針の実装ステップが明示されていない
+- 参照: `docs/implement/plan.md:486`
+- 内容: リスク対策で「`/legacy/` パスで旧版アクセス」とあるが、Step 10/12 のチェックリストに作業項目がない。
+- 提案: Step 10 か Step 12 に「legacy ルーティング/配置手順」を1項目追加する。
 
 ---
 
-## Summary
+# 確認済み（主な改善点）
+- `config.yaml` 実キーに整合した移行表へ更新済み（`docs/implement/plan.md:181-237`）。
+- 行数記載が実測に整合（`docs/implement/plan.md:135-138,351`）。
+- `data/universes` へのCSV移設が Step 4 に明記済み（`docs/implement/plan.md:297-300`）。
+- JSON 出力先の移行期間方針が定義済み（`docs/implement/plan.md:377-379,393,410-411,448`）。
 
-現時点の `docs/implement/plan.md` は、これまでの指摘事項が解消されており、実装着手可能な内容です。
+---
+
+# 総評
+- Blocking 指摘はなし。現時点で Phase A 実装を開始して問題ない。

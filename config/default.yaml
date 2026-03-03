@@ -1,0 +1,95 @@
+# Trader v2 - Default Configuration
+
+screening:
+  markets:
+    - "sp500"
+    - "nasdaq100"
+    - "nikkei225"
+  top_n: 10
+  lookback_days: 252
+  filters:
+    market_cap:
+      min: 10_000_000_000
+    liquidity:
+      min_dollar_volume_us: 1_000_000
+      min_dollar_volume_jp: 500_000_000
+    golden_cross:
+      enabled: true
+    earnings_exclusion:
+      days: 5
+  scoring:
+    weights:
+      price_change_1m: 0.20
+      volume_trend: 0.15
+      rsi_score: 0.15
+      macd_signal: 0.15
+      fifty2w_score: 0.15
+      bb_position: 0.10
+      adx_score: 0.10
+
+prediction:
+  model: "prophet"
+  history_days: 90
+  forecast_days: 5
+  prophet:
+    interval_width: 0.95
+    changepoint_prior_scale: 0.05
+    uncertainty_samples: 1000
+  guardrail:
+    clip_pct: 30.0
+    warn_pct: 20.0
+  ensemble:
+    weights:
+      prophet: 0.4
+      lightgbm: 0.6
+
+providers:
+  jquants:
+    enabled: true
+  finnhub:
+    enabled: true
+  fmp:
+    enabled: true
+  fred:
+    enabled: false
+  perplexity:
+    enabled: false
+    model: "sonar"
+    max_tickers: 5
+
+export:
+  google_sheets:
+    spreadsheet_name: "trade"
+    worksheet_name: "predictions"
+
+notification:
+  slack:
+    enabled: true
+    channel: "#stock-alerts"
+    chart_enabled: true
+    channel_id: ""
+  line:
+    enabled: false
+  beginner_mode: true
+  chart:
+    lookback_days: 60
+
+enrichment:
+  sizing:
+    vol_target_ann: 0.10
+    max_weight_cap: 0.20
+    stop_loss_multiplier: 1.0
+
+evaluation:
+  backtest:
+    num_rules_tested: 1
+    num_parameters_tuned: 4
+    oos_start: "2025-01-01"
+    min_rules_for_pbo: 2
+  walkforward:
+    train_weeks: 52
+    test_weeks: 13
+    min_train_weeks: 26
+
+data:
+  price_column: "Close"

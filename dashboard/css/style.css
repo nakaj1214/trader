@@ -1,38 +1,89 @@
-/* AI Stock Predictions Dashboard - Mobile-first responsive CSS */
+/* AI Stock Predictions Dashboard — Midnight Terminal
+   Dark premium financial dashboard theme
+   Typography: Sora / DM Sans / JetBrains Mono */
 
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ── Design tokens ──────────────────────────────────── */
 :root {
-  --color-bg: #f5f7fa;
-  --color-surface: #ffffff;
-  --color-primary: #2563eb;
-  --color-success: #16a34a;
-  --color-danger: #dc2626;
-  --color-warning: #d97706;
-  --color-text: #1e293b;
-  --color-text-muted: #64748b;
-  --color-border: #e2e8f0;
-  --radius: 8px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --color-bg: #0B0F19;
+  --color-surface: #141B2D;
+  --color-surface-alt: #1A2238;
+  --color-primary: #00D4AA;
+  --color-primary-dim: rgba(0, 212, 170, 0.12);
+  --color-primary-strong: #00FFCC;
+  --color-success: #34D399;
+  --color-danger: #FB7185;
+  --color-warning: #FBBF24;
+  --color-text: #E2E8F0;
+  --color-text-muted: #64748B;
+  --color-border: #1E293B;
+  --color-border-highlight: rgba(0, 212, 170, 0.25);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --glow: 0 0 20px rgba(0, 212, 170, 0.12);
+  --font-display: 'Sora', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
+/* ── Reset ──────────────────────────────────────────── */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--color-bg);
-  color: var(--color-text);
-  line-height: 1.6;
+::selection {
+  background: rgba(0, 212, 170, 0.3);
+  color: #fff;
 }
 
-/* Header - 2 column layout */
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ── Body — subtle grid texture + top glow ──────────── */
+body {
+  font-family: var(--font-body);
+  background:
+    linear-gradient(rgba(0, 212, 170, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 170, 0.02) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 0%, rgba(0, 212, 170, 0.07) 0%, transparent 50%),
+    var(--color-bg);
+  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
+  color: var(--color-text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── Header — frosted glass ─────────────────────────── */
 header {
-  background: var(--color-surface);
+  background: rgba(20, 27, 45, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--color-border);
   padding: 1rem;
-  box-shadow: var(--shadow);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .header-inner {
@@ -45,19 +96,24 @@ header {
 }
 
 .header-left h1 {
+  font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
 }
 
 .header-left .subtitle {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   color: var(--color-text-muted);
 }
 
 .header-ticker {
+  font-family: var(--font-mono);
   font-size: 1rem;
   font-weight: 600;
   color: var(--color-primary);
+  letter-spacing: 0.03em;
 }
 
 .header-right {
@@ -71,99 +127,115 @@ header {
 }
 
 .header-stat-value {
+  font-family: var(--font-mono);
   font-size: 1.75rem;
   font-weight: 700;
   color: var(--color-primary);
   line-height: 1.2;
+  text-shadow: 0 0 16px rgba(0, 212, 170, 0.3);
 }
 
 .header-stat-label {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
-/* Navigation (inside header) */
+/* ── Navigation ─────────────────────────────────────── */
 header nav {
   display: flex;
-  gap: 0.375rem;
+  gap: 0.25rem;
 }
 
 header nav a {
-  color: var(--color-primary);
+  color: var(--color-text-muted);
   text-decoration: none;
-  padding: 0.25rem 0.75rem;
-  border-radius: var(--radius);
-  font-size: 0.875rem;
-  transition: background 0.2s;
+  padding: 0.375rem 0.875rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
   white-space: nowrap;
+  border: 1px solid transparent;
 }
 
 header nav a:hover {
-  background: #eff6ff;
+  color: var(--color-text);
+  background: var(--color-surface-alt);
+  border-color: var(--color-border);
 }
 
 header nav a.active {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-primary-dim);
+  color: var(--color-primary);
+  border-color: var(--color-border-highlight);
 }
 
-/* Main content */
+/* ── Main content ───────────────────────────────────── */
 main {
-  padding: 1rem;
+  padding: 1.25rem;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-/* Alert banner */
+/* ── Alert banner ───────────────────────────────────── */
 .alert {
   padding: 0.75rem 1rem;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   margin-bottom: 1rem;
   font-size: 0.875rem;
 }
 
 .alert-warning {
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--color-warning);
+  border: 1px solid rgba(251, 191, 36, 0.25);
 }
 
-/* Section */
+/* ── Sections ───────────────────────────────────────── */
 section {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.75rem;
 }
 
 section h2 {
-  font-size: 1.125rem;
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
   font-weight: 600;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.875rem;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
-/* Card grid */
+/* ── Card grid ──────────────────────────────────────── */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
+  gap: 0.875rem;
 }
 
-/* Card */
+/* ── Card ────────────────────────────────────────────── */
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.125rem;
   box-shadow: var(--shadow);
-  transition: box-shadow 0.2s;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--color-border-highlight);
+  box-shadow: var(--shadow), var(--glow);
 }
 
 .card .ticker {
-  font-size: 1.125rem;
+  font-family: var(--font-mono);
+  font-size: 1.0625rem;
   font-weight: 700;
   color: var(--color-primary);
+  letter-spacing: 0.02em;
 }
 
 .card .price-row {
@@ -174,10 +246,13 @@ section h2 {
 }
 
 .card .price {
+  font-family: var(--font-mono);
   font-size: 0.9375rem;
+  color: var(--color-text);
 }
 
 .card .change {
+  font-family: var(--font-mono);
   font-weight: 600;
   font-size: 0.9375rem;
 }
@@ -190,31 +265,36 @@ section h2 {
   color: var(--color-danger);
 }
 
-/* Badge */
+/* ── Badge ───────────────────────────────────────────── */
 .badge {
   display: inline-block;
-  padding: 0.125rem 0.5rem;
+  padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .badge-hit {
-  background: #dcfce7;
-  color: #166534;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--color-success);
+  border: 1px solid rgba(52, 211, 153, 0.3);
 }
 
 .badge-miss {
-  background: #fee2e2;
-  color: #991b1b;
+  background: rgba(251, 113, 133, 0.15);
+  color: var(--color-danger);
+  border: 1px solid rgba(251, 113, 133, 0.3);
 }
 
 .badge-pending {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: rgba(0, 212, 170, 0.1);
+  color: var(--color-primary);
+  border: 1px solid rgba(0, 212, 170, 0.25);
 }
 
-/* Chart container */
+/* ── Chart container ─────────────────────────────────── */
 .chart-container {
   position: relative;
   width: 100%;
@@ -223,10 +303,10 @@ section h2 {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.25rem;
 }
 
-/* Table */
+/* ── Table ───────────────────────────────────────────── */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -234,11 +314,11 @@ table {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   overflow: hidden;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 thead {
-  background: #f8fafc;
+  background: var(--color-surface-alt);
 }
 
 th, td {
@@ -248,58 +328,77 @@ th, td {
 }
 
 th {
+  font-family: var(--font-display);
   font-weight: 600;
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.6875rem;
   text-transform: uppercase;
-  letter-spacing: 0.025em;
+  letter-spacing: 0.06em;
 }
 
-/* Responsive table wrapper */
+td {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text);
+}
+
+tbody tr {
+  transition: background 0.15s ease;
+}
+
+tbody tr:hover {
+  background: var(--color-surface-alt);
+}
+
+/* ── Responsive table wrapper ────────────────────────── */
 .table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Last updated */
+/* ── Last updated ────────────────────────────────────── */
 #last-updated {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
+  font-family: var(--font-mono);
 }
 
-/* Loading state */
+/* ── Loading state ───────────────────────────────────── */
 .loading {
   text-align: center;
-  padding: 2rem;
+  padding: 2.5rem;
   color: var(--color-text-muted);
+  font-size: 0.875rem;
 }
 
-/* Empty state */
+/* ── Empty state ─────────────────────────────────────── */
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;
   color: var(--color-text-muted);
 }
 
-/* Cumulative stat card */
+/* ── Cumulative stat card ────────────────────────────── */
 .stat-card {
   text-align: center;
-  padding: 1.5rem;
+  padding: 1.75rem;
 }
 
 .stat-card .stat-value {
-  font-size: 2rem;
+  font-family: var(--font-mono);
+  font-size: 2.25rem;
   font-weight: 700;
   color: var(--color-primary);
+  text-shadow: 0 0 24px rgba(0, 212, 170, 0.25);
 }
 
 .stat-card .stat-label {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   color: var(--color-text-muted);
-  margin-top: 0.25rem;
+  margin-top: 0.375rem;
 }
 
-/* Simulator */
+/* ── Simulator ───────────────────────────────────────── */
 .sim-input-section {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -318,39 +417,45 @@ th {
 
 .sim-input-row label {
   font-weight: 600;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   white-space: nowrap;
+  color: var(--color-text);
 }
 
 .sim-input-row input[type="number"] {
   width: 180px;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   font-size: 1rem;
-  font-family: inherit;
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .sim-input-row input[type="number"]:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px var(--color-primary-dim);
 }
 
 .sim-input-row button {
-  padding: 0.5rem 1.25rem;
+  padding: 0.5rem 1.5rem;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-bg);
   border: none;
-  border-radius: var(--radius);
-  font-size: 0.9375rem;
-  font-family: inherit;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-family: var(--font-display);
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
 }
 
 .sim-input-row button:hover {
-  background: #1d4ed8;
+  background: var(--color-primary-strong);
+  box-shadow: 0 0 16px rgba(0, 212, 170, 0.3);
 }
 
 .sim-validation-error {
@@ -363,7 +468,7 @@ th {
 .sim-results {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  gap: 0.875rem;
   margin-bottom: 1.5rem;
 }
 
@@ -377,6 +482,7 @@ th {
 }
 
 .sim-result-card .sim-result-value {
+  font-family: var(--font-mono);
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.2;
@@ -391,52 +497,56 @@ th {
 }
 
 .sim-result-card .sim-result-label {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
-  margin-top: 0.25rem;
+  margin-top: 0.375rem;
 }
 
-/* Info panel (shared: risk, evidence, explanations) */
+/* ── Info panel (shared: risk, evidence, explanations) ── */
 .info-panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.125rem;
   margin-bottom: 1rem;
   box-shadow: var(--shadow);
 }
 
 .info-panel h3 {
-  font-size: 1rem;
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
   font-weight: 600;
   margin-bottom: 0.75rem;
+  color: var(--color-text);
 }
 
 .panel-note {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 400;
   color: var(--color-text-muted);
 }
 
-/* Phase 1: Risk row (card inline) */
+/* ── Risk row (card inline) ──────────────────────────── */
 .risk-row {
-  background: #f8fafc;
-  border-radius: 4px;
-  padding: 0.25rem 0.5rem;
+  background: var(--color-surface-alt);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
   margin-top: 0.5rem;
-  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
   color: var(--color-text-muted);
 }
 
-/* Phase 1: Risk metrics (detail panel) */
+/* ── Risk metrics (detail panel) ─────────────────────── */
 .risk-metrics {
   display: flex;
   gap: 1.5rem;
   flex-wrap: wrap;
-  font-size: 0.9375rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
 }
 
-/* Phase 1: Event badges */
+/* ── Event badges ────────────────────────────────────── */
 .event-badges {
   display: flex;
   gap: 0.5rem;
@@ -446,16 +556,16 @@ th {
 
 .event-badge {
   display: inline-block;
-  padding: 0.125rem 0.625rem;
+  padding: 0.15rem 0.625rem;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
-  background: #fff7ed;
-  color: #9a3412;
-  border: 1px solid #fed7aa;
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--color-warning);
+  border: 1px solid rgba(251, 191, 36, 0.25);
 }
 
-/* Phase 2: Evidence panel */
+/* ── Evidence panel ──────────────────────────────────── */
 .evidence-panel h3 {
   margin-bottom: 0.5rem;
 }
@@ -464,86 +574,93 @@ th {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.25rem 0;
-  font-size: 0.875rem;
+  padding: 0.3rem 0;
+  font-size: 0.8125rem;
 }
 
 .evidence-label {
   min-width: 5rem;
   font-weight: 500;
+  color: var(--color-text-muted);
 }
 
 .evidence-bar-track {
   flex: 1;
-  height: 8px;
+  height: 6px;
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
   max-width: 200px;
 }
 
 .evidence-bar {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s;
+  border-radius: 3px;
+  transition: width 0.4s ease;
 }
 
 .evidence-bar.evidence-support {
-  background: var(--color-success);
+  background: linear-gradient(90deg, var(--color-success), #6EE7B7);
 }
 
 .evidence-bar.evidence-oppose {
-  background: var(--color-danger);
+  background: linear-gradient(90deg, var(--color-danger), #FCA5A5);
 }
 
 .evidence-z {
   min-width: 3rem;
   text-align: right;
-  font-family: monospace;
-  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-text);
 }
 
 .evidence-support {
   color: var(--color-success);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
 }
 
 .evidence-oppose {
   color: var(--color-danger);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
 }
 
 .evidence-na {
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-style: italic;
 }
 
 .evidence-composite {
-  margin-top: 0.5rem;
-  font-weight: 600;
+  margin-top: 0.625rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
   font-size: 0.9375rem;
+  color: var(--color-primary);
 }
 
-/* Phase 5: Sanity badges */
+/* ── Sanity badges ───────────────────────────────────── */
 .sanity-warn {
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--color-warning);
+  border: 1px solid rgba(251, 191, 36, 0.3);
   font-size: 0.6875rem;
   padding: 0.1rem 0.375rem;
+  border-radius: 4px;
 }
 
 .sanity-clipped {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fca5a5;
+  background: rgba(251, 113, 133, 0.12);
+  color: var(--color-danger);
+  border: 1px solid rgba(251, 113, 133, 0.3);
   font-size: 0.6875rem;
   padding: 0.1rem 0.375rem;
+  border-radius: 4px;
 }
 
 .sanity-original {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
   font-weight: 400;
   margin-left: 0.25rem;
@@ -554,45 +671,46 @@ th {
   line-height: 1.5;
 }
 
-/* Phase 3: Explanations panel */
+/* ── Explanations panel ──────────────────────────────── */
 .explanations-panel h3 {
   margin-bottom: 0.25rem;
 }
 
 .explanation-intro {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   color: var(--color-text-muted);
   margin-bottom: 0.5rem;
 }
 
 .explanation-item {
   padding: 0.25rem 0;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
 }
 
 .explanation-note {
   margin-top: 0.5rem;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
   font-style: italic;
 }
 
-/* Phase 6: Comparison section */
+/* ── Comparison section ──────────────────────────────── */
 .comparison-note {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   font-style: italic;
   margin-bottom: 0.75rem;
 }
 
-/* Help button */
+/* ── Help button ─────────────────────────────────────── */
 .help-btn {
   background: none;
   border: 1.5px solid var(--color-border);
   border-radius: 50%;
   width: 2rem;
   height: 2rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 700;
   cursor: pointer;
   color: var(--color-text-muted);
@@ -601,18 +719,21 @@ th {
   justify-content: center;
   flex-shrink: 0;
   line-height: 1;
+  transition: all 0.2s ease;
 }
 
 .help-btn:hover {
-  background: var(--color-border);
-  color: var(--color-text);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: 0 0 12px var(--color-primary-dim);
 }
 
-/* Help Modal */
+/* ── Help Modal ──────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -622,13 +743,14 @@ th {
 
 .modal-content {
   background: var(--color-surface);
-  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
   max-width: 680px;
   width: 100%;
   max-height: 82vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
@@ -642,7 +764,9 @@ th {
 
 .modal-header h2 {
   margin: 0;
-  font-size: 1.0625rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .modal-close {
@@ -654,10 +778,11 @@ th {
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   line-height: 1;
+  transition: all 0.15s;
 }
 
 .modal-close:hover {
-  background: var(--color-border);
+  background: var(--color-surface-alt);
   color: var(--color-text);
 }
 
@@ -668,7 +793,8 @@ th {
 }
 
 .modal-body h3 {
-  font-size: 0.9375rem;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
   margin: 1.25rem 0 0.5rem;
   color: var(--color-primary);
   border-bottom: 1px solid var(--color-border);
@@ -680,9 +806,10 @@ th {
 }
 
 .modal-body p {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1.65;
   margin: 0.25rem 0;
+  color: var(--color-text);
 }
 
 .modal-body ul {
@@ -691,13 +818,14 @@ th {
 }
 
 .modal-body li {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1.65;
   margin-bottom: 0.2rem;
+  color: var(--color-text);
 }
 
 .modal-body .help-note {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   font-style: italic;
   margin-top: 0.25rem;
@@ -713,23 +841,27 @@ th {
 
 .modal-footer-btn {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-bg);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0.5rem 1.5rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  font-family: var(--font-display);
+  font-weight: 600;
   cursor: pointer;
+  transition: all 0.2s;
 }
 
 .modal-footer-btn:hover {
-  opacity: 0.88;
+  background: var(--color-primary-strong);
+  box-shadow: 0 0 12px rgba(0, 212, 170, 0.3);
 }
 
-/* Phase 7: 校正ダッシュボード */
+/* ── Calibration dashboard ───────────────────────────── */
 .calibration-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  gap: 0.875rem;
   margin-bottom: 1rem;
 }
 
@@ -742,18 +874,19 @@ th {
 }
 
 .calibration-stat-group h3 {
-  font-size: 0.875rem;
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
   font-weight: 600;
   color: var(--color-text-muted);
   margin-bottom: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.025em;
+  letter-spacing: 0.06em;
 }
 
 .calibration-stat-row {
   display: flex;
   justify-content: space-between;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   margin-bottom: 0.25rem;
 }
 
@@ -762,29 +895,31 @@ th {
 }
 
 .calibration-stat-value {
+  font-family: var(--font-mono);
   font-weight: 600;
+  color: var(--color-text);
 }
 
 .calibration-note {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   margin-top: 0.75rem;
   text-align: center;
 }
 
-/* Phase 10: マクロ環境バナー */
+/* ── Macro environment banner ────────────────────────── */
 .macro-banner {
-  background: #f0f9ff;
-  border: 1px solid #bae6fd;
+  background: rgba(0, 212, 170, 0.06);
+  border: 1px solid var(--color-border-highlight);
   border-radius: var(--radius);
   padding: 0.625rem 1rem;
   margin-bottom: 1rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .macro-banner.risk-off {
-  background: #fff7ed;
-  border-color: #fed7aa;
+  background: rgba(251, 113, 133, 0.08);
+  border-color: rgba(251, 113, 133, 0.3);
 }
 
 .macro-banner-inner {
@@ -795,38 +930,41 @@ th {
 }
 
 .macro-banner-label {
+  font-family: var(--font-display);
   font-weight: 700;
-  color: #0369a1;
+  color: var(--color-primary);
   white-space: nowrap;
 }
 
 .macro-banner.risk-off .macro-banner-label {
-  color: #c2410c;
+  color: var(--color-danger);
 }
 
 .macro-banner-series {
-  font-family: monospace;
+  font-family: var(--font-mono);
   color: var(--color-text);
+  font-size: 0.8125rem;
 }
 
 .macro-banner-note {
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-style: italic;
 }
 
 .macro-banner-asof {
+  font-family: var(--font-mono);
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   margin-left: auto;
 }
 
-/* Phase 9: バックテスト品質開示パネル */
+/* ── Backtest hygiene panel ──────────────────────────── */
 .hygiene-panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.125rem;
   box-shadow: var(--shadow);
 }
 
@@ -834,24 +972,25 @@ th {
   display: inline-block;
   padding: 0.25rem 0.75rem;
   border-radius: 999px;
-  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
   font-weight: 600;
   margin-bottom: 0.75rem;
 }
 
 .hygiene-status-insufficient_trials {
-  background: #fef3c7;
-  color: #92400e;
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--color-warning);
 }
 
 .hygiene-status-computed {
-  background: #dcfce7;
-  color: #166534;
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--color-success);
 }
 
 .hygiene-status-partial {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: rgba(0, 212, 170, 0.1);
+  color: var(--color-primary);
 }
 
 .hygiene-rows {
@@ -864,8 +1003,8 @@ th {
 .hygiene-row {
   display: flex;
   justify-content: space-between;
-  font-size: 0.875rem;
-  padding: 0.2rem 0;
+  font-size: 0.8125rem;
+  padding: 0.25rem 0;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -874,30 +1013,32 @@ th {
 }
 
 .hygiene-value {
+  font-family: var(--font-mono);
   font-weight: 600;
+  color: var(--color-text);
 }
 
 .hygiene-notes {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   line-height: 1.6;
   margin-top: 0.5rem;
 }
 
 .hygiene-note-detail {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--color-warning);
   margin-top: 0.25rem;
   font-style: italic;
 }
 
-/* Phase 8: ポジションサイジングパネル */
+/* ── Position sizing panel ───────────────────────────── */
 .sizing-panel .sizing-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.875rem;
-  padding: 0.25rem 0;
+  font-size: 0.8125rem;
+  padding: 0.3rem 0;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -910,7 +1051,9 @@ th {
 }
 
 .sizing-value {
+  font-family: var(--font-mono);
   font-weight: 600;
+  color: var(--color-text);
 }
 
 .sizing-value.sizing-stop {
@@ -918,13 +1061,13 @@ th {
 }
 
 .sizing-note {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
   margin-top: 0.5rem;
   font-style: italic;
 }
 
-/* Mobile adjustments */
+/* ── Mobile adjustments ──────────────────────────────── */
 @media (max-width: 600px) {
   .header-inner {
     flex-direction: column;
@@ -963,11 +1106,11 @@ th {
   }
 }
 
-/* Phase 11/12: 補助情報パネル共通 */
+/* ── Info rows (shared panels) ───────────────────────── */
 .info-rows {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.375rem;
   margin: 0.75rem 0;
 }
 
@@ -981,55 +1124,56 @@ th {
 
 .info-label {
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .info-value {
+  font-family: var(--font-mono);
   font-weight: 500;
+  color: var(--color-text);
 }
 
-.panel-note {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  margin-top: 0.5rem;
-}
-
-/* Phase 13: アルファサーベイ */
+/* ── Alpha survey badges ─────────────────────────────── */
 .badge-success {
-  background: var(--color-success);
-  color: #fff;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--color-success);
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
 .badge-neutral {
-  background: var(--color-text-muted);
-  color: #fff;
+  background: rgba(100, 116, 139, 0.2);
+  color: var(--color-text-muted);
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
 .text-muted {
   color: var(--color-text-muted);
 }
 
-/* 買い時・売り時ガイド */
+/* ── Timing guide ────────────────────────────────────── */
 .timing-guide {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: rgba(0, 212, 170, 0.05);
+  border: 1px solid var(--color-border-highlight);
   border-radius: var(--radius);
-  padding: 0.75rem 1rem;
+  padding: 0.875rem 1rem;
   margin-bottom: 1rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .timing-guide-title {
+  font-family: var(--font-display);
   font-weight: 600;
   color: var(--color-primary);
   margin-bottom: 0.5rem;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
 }
 
 .timing-guide-cols {
@@ -1039,23 +1183,24 @@ th {
 }
 
 .timing-col-buy {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 6px;
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: var(--radius-sm);
   padding: 0.5rem 0.75rem;
 }
 
 .timing-col-sell {
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  border-radius: 6px;
+  background: rgba(251, 113, 133, 0.08);
+  border: 1px solid rgba(251, 113, 133, 0.2);
+  border-radius: var(--radius-sm);
   padding: 0.5rem 0.75rem;
 }
 
 .timing-col-title {
+  font-family: var(--font-display);
   font-weight: 700;
   margin-bottom: 0.35rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .timing-col-title.buy-title {
@@ -1071,90 +1216,99 @@ th {
   padding-left: 1.1rem;
   color: var(--color-text);
   line-height: 1.7;
+  font-size: 0.8125rem;
 }
 
-/* 予測カードのアクション行 */
+/* ── Action row (prediction cards) ───────────────────── */
 .action-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
-  margin-top: 0.4rem;
-  border-radius: 6px;
-  font-size: 0.8125rem;
+  padding: 0.4rem 0.6rem;
+  margin-top: 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
 }
 
 .action-row.action-buy {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.2);
   color: var(--color-success);
   font-weight: 600;
 }
 
 .action-row.action-neutral {
-  background: #f8fafc;
+  background: var(--color-surface-alt);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
 }
 
 .action-stop {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
   color: var(--color-danger);
   margin-top: 0.2rem;
-  padding: 0 0.5rem;
+  padding: 0 0.6rem;
 }
 
-/* 損切り価格強調（sizing パネル） */
+/* ── Stop-loss highlight (sizing panel) ──────────────── */
 .stop-loss-highlight {
-  background: #fff1f2;
-  border: 2px solid var(--color-danger);
-  border-radius: 8px;
-  padding: 0.6rem 0.75rem;
+  background: rgba(251, 113, 133, 0.08);
+  border: 2px solid rgba(251, 113, 133, 0.4);
+  border-radius: var(--radius);
+  padding: 0.75rem;
   margin-top: 0.75rem;
 }
 
 .stop-loss-highlight .stop-label {
-  font-size: 0.75rem;
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
   color: var(--color-danger);
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
 .stop-loss-highlight .stop-price {
+  font-family: var(--font-mono);
   font-size: 1.5rem;
   font-weight: 700;
   color: var(--color-danger);
   line-height: 1.2;
+  text-shadow: 0 0 16px rgba(251, 113, 133, 0.25);
 }
 
 .stop-loss-highlight .stop-desc {
-  font-size: 0.75rem;
-  color: #9f1239;
+  font-size: 0.6875rem;
+  color: var(--color-danger);
   margin-top: 0.15rem;
+  opacity: 0.8;
 }
 
 .target-price-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 8px;
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: var(--radius);
   padding: 0.5rem 0.75rem;
   margin-top: 0.5rem;
 }
 
 .target-price-label {
-  font-size: 0.8125rem;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
   color: var(--color-success);
   font-weight: 600;
 }
 
 .target-price-value {
+  font-family: var(--font-mono);
   font-size: 1.125rem;
   font-weight: 700;
   color: var(--color-success);
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.2);
 }
 
 @media (max-width: 600px) {
@@ -1163,18 +1317,21 @@ th {
   }
 }
 
-/* -----------------------------------------------------------------------
-   Phase 16: 市場選択ランディングページ
------------------------------------------------------------------------ */
+/* ─────────────────────────────────────────────────────
+   Market selection landing page
+   ───────────────────────────────────────────────────── */
 
 .market-select-section {
   text-align: center;
-  padding: 2rem 1rem;
+  padding: 3rem 1rem;
 }
 
 .market-select-section h2 {
-  margin-bottom: 2rem;
+  margin-bottom: 2.5rem;
   color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 .market-select {
@@ -1189,42 +1346,64 @@ th {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 220px;
-  padding: 2rem 1.5rem;
+  width: 240px;
+  padding: 2.5rem 1.5rem;
   background: var(--color-surface);
-  border: 2px solid var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   text-decoration: none;
   color: var(--color-text);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.market-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  background: radial-gradient(circle at 50% 30%, var(--color-primary-dim) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
 
 .market-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+  border-color: var(--color-border-highlight);
+  box-shadow: var(--shadow-lg), var(--glow);
+  transform: translateY(-2px);
+}
+
+.market-card:hover::before {
+  opacity: 1;
 }
 
 .market-flag {
-  font-size: 3rem;
+  font-size: 3.5rem;
   line-height: 1;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  position: relative;
 }
 
 .market-name {
+  font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 700;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.375rem;
+  position: relative;
 }
 
 .market-desc {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   color: var(--color-text-muted);
+  position: relative;
 }
 
-/* Phase 16: ヘッダーの市場ラベル */
+/* ── Header market label ─────────────────────────────── */
 .market-label {
-  font-size: 0.875rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
   font-weight: 500;
   color: var(--color-text-muted);
   margin-left: 0.5rem;

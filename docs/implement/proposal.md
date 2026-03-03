@@ -1,5 +1,6 @@
-https://note.com/xauxbt/n/n3b0a52b835ae
+いまプロジェクトをゼロから自由に再設計できるとしたら、どういう設計にしますか？
 
-この記事を読んでこのプロジェクトに足りないもの、活かせるもの調査して、実装してほしいので
+<!-- https://www.perplexity.ai/finance
+ここからデータを取得したりできる？取得出来たらこのプロジェクトに活用したい -->
 
-docs\implement\plan.md に実装計画を立てて
+<!-- J-Quants・TradingView・yfinance・Gemini/Antigravityで構築中とのこと、技術スタックがかなり近いですね！銘柄選定ロジックの部分はまさにStockPro AIが一番力を入れたところなので、実際に触ってもらえれば何かヒントになるかもしれません。 -->

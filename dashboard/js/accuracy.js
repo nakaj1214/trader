@@ -27,6 +27,29 @@
       renderComparison(comparison);
       renderTickerRanking(filterPredictions(predictions));
       renderAlphaSurvey(alphaSurvey);
+
+      // Make advanced sections collapsible (default: collapsed)
+      ['calibration-section', 'backtest-hygiene-section', 'alpha-survey-section'].forEach(function(id) {
+        var section = document.getElementById(id);
+        if (!section || section.style.display === 'none') return;
+        var h2 = section.querySelector('h2');
+        if (!h2) return;
+        h2.classList.add('collapsible-header');
+        var content = [];
+        var el = h2.nextElementSibling;
+        while (el) {
+          content.push(el);
+          el = el.nextElementSibling;
+        }
+        var wrapper = document.createElement('div');
+        wrapper.className = 'collapsible-content';
+        content.forEach(function(c) { wrapper.appendChild(c); });
+        h2.parentNode.appendChild(wrapper);
+        h2.addEventListener('click', function() {
+          h2.classList.toggle('open');
+          wrapper.classList.toggle('open');
+        });
+      });
     } catch (e) {
       document.getElementById("accuracy-content").innerHTML =
         '<div class="empty-state">データを読み込めませんでした。</div>';
@@ -45,7 +68,7 @@
         accuracy.cumulative.hits +
         "/" +
         accuracy.cumulative.total +
-        " 的中";
+        " 当たり";
     }
   }
 
@@ -76,7 +99,7 @@
         datasets: [
           {
             type: "bar",
-            label: "週次的中率 (%)",
+            label: "週の的中率 (%)",
             data: hitRates,
             backgroundColor: "rgba(37, 99, 235, 0.6)",
             borderColor: "rgba(37, 99, 235, 1)",
@@ -85,7 +108,7 @@
           },
           {
             type: "line",
-            label: "累計的中率 (%)",
+            label: "全体の的中率 (%)",
             data: cumRates,
             borderColor: "rgba(220, 38, 38, 1)",
             backgroundColor: "transparent",
@@ -152,14 +175,14 @@
         labels: labels,
         datasets: [
           {
-            label: "予測平均 (%)",
+            label: "AIの予測 (%)",
             data: predicted,
             backgroundColor: "rgba(37, 99, 235, 0.6)",
             borderColor: "rgba(37, 99, 235, 1)",
             borderWidth: 1,
           },
           {
-            label: "実績平均 (%)",
+            label: "実際の結果 (%)",
             data: actual,
             backgroundColor: "rgba(22, 163, 74, 0.6)",
             borderColor: "rgba(22, 163, 74, 1)",
@@ -172,7 +195,7 @@
         plugins: {
           title: {
             display: true,
-            text: "予測上昇率 vs 実際変動率",
+            text: "AIの予測 vs 実際の結果",
           },
         },
         scales: {
@@ -198,10 +221,10 @@
     var html =
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
-      "<th>予測帯</th>" +
-      "<th>予測平均</th>" +
-      "<th>実績平均</th>" +
-      "<th>的中率</th>" +
+      "<th>予測の範囲</th>" +
+      "<th>AIの予測</th>" +
+      "<th>実際の結果</th>" +
+      "<th>当たった割合</th>" +
       "<th>件数</th>" +
       "</tr></thead><tbody>";
 
@@ -253,9 +276,9 @@
       return (
         '<div class="calibration-stat-group">' +
         "<h3>" + title + "</h3>" +
-        statRow("Brier スコア", s.brier_score != null ? s.brier_score.toFixed(4) : null) +
-        statRow("Log-Loss", s.log_loss != null ? s.log_loss.toFixed(4) : null) +
-        statRow("ECE", s.ece != null ? s.ece.toFixed(4) : null) +
+        statRow("予測の正確さ（低いほど良い）", s.brier_score != null ? s.brier_score.toFixed(4) : null) +
+        statRow("確率予測の精度（低いほど良い）", s.log_loss != null ? s.log_loss.toFixed(4) : null) +
+        statRow("確率のズレ（0に近いほど良い）", s.ece != null ? s.ece.toFixed(4) : null) +
         statRow("件数", s.n_calibrated) +
         "</div>"
       );
@@ -286,7 +309,7 @@
         datasets: [
           {
             type: "bar",
-            label: "実測率（実際の上昇割合）",
+            label: "実際に上がった割合",
             data: empiricals,
             backgroundColor: "rgba(37, 99, 235, 0.6)",
             borderColor: "rgba(37, 99, 235, 1)",
@@ -295,7 +318,7 @@
           },
           {
             type: "line",
-            label: "予測確率（平均）",
+            label: "AIの予測確率",
             data: meanPreds,
             borderColor: "rgba(220, 38, 38, 1)",
             backgroundColor: "transparent",
@@ -310,7 +333,7 @@
         plugins: {
           title: {
             display: true,
-            text: "信頼性ダイアグラム（予測確率 vs 実測率）",
+            text: "予測の信頼度チェック",
           },
           tooltip: {
             callbacks: {
@@ -346,9 +369,9 @@
     section.style.display = "";
 
     var statusLabel = {
-      insufficient_trials: "試行数不足",
-      computed: "算出済み",
-      partial: "一部算出済み",
+      insufficient_trials: "データ収集中",
+      computed: "検証済み",
+      partial: "一部検証済み",
     };
 
     function fmt(v) {
@@ -361,13 +384,13 @@
       "ステータス: " + (statusLabel[hygiene.hygiene_status] || hygiene.hygiene_status) +
       "</div>" +
       '<div class="hygiene-rows">' +
-      '<div class="hygiene-row"><span class="hygiene-label">検証したルール数</span><span class="hygiene-value">' + fmt(hygiene.num_rules_tested) + "</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">チューニングパラメータ数</span><span class="hygiene-value">' + fmt(hygiene.num_parameters_tuned) + "</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">OOS 開始日</span><span class="hygiene-value">' + fmt(hygiene.oos_start) + "</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">評価週数</span><span class="hygiene-value">' + fmt(hygiene.data_coverage_weeks) + " 週</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">Reality Check p 値</span><span class="hygiene-value">' + fmt(hygiene.reality_check_pvalue) + "</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">PBO</span><span class="hygiene-value">' + fmt(hygiene.pbo) + "</span></div>" +
-      '<div class="hygiene-row"><span class="hygiene-label">Deflated Sharpe</span><span class="hygiene-value">' + fmt(hygiene.deflated_sharpe) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">テストした予測ルール数</span><span class="hygiene-value">' + fmt(hygiene.num_rules_tested) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">調整した設定数</span><span class="hygiene-value">' + fmt(hygiene.num_parameters_tuned) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">テスト開始日</span><span class="hygiene-value">' + fmt(hygiene.oos_start) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">検証した週数</span><span class="hygiene-value">' + fmt(hygiene.data_coverage_weeks) + " 週</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">統計的な信頼度</span><span class="hygiene-value">' + fmt(hygiene.reality_check_pvalue) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">過学習リスク</span><span class="hygiene-value">' + fmt(hygiene.pbo) + "</span></div>" +
+      '<div class="hygiene-row"><span class="hygiene-label">調整済み効率</span><span class="hygiene-value">' + fmt(hygiene.deflated_sharpe) + "</span></div>" +
       "</div>" +
       '<p class="hygiene-notes">' + hygiene.transaction_cost_note + "<br>" + hygiene.survivorship_bias_note + "</p>" +
       (hygiene.hygiene_note ? '<p class="hygiene-note-detail">' + hygiene.hygiene_note + "</p>" : "") +
@@ -432,7 +455,7 @@
       options: {
         responsive: true,
         plugins: {
-          title: { display: true, text: "累積リターン比較 (初期値=1.0)" },
+          title: { display: true, text: "投資成果の比較（1万円が何円になったか）" },
           legend: { position: "top" },
         },
         scales: {
@@ -453,10 +476,10 @@
     var html =
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
-      "<th>戦略</th>" +
-      "<th>年率 (CAGR)</th>" +
-      "<th>最大DD</th>" +
-      "<th>Sharpe</th>" +
+      "<th>投資手法</th>" +
+      "<th>年間リターン</th>" +
+      "<th>最大下落</th>" +
+      "<th>効率</th>" +
       "</tr></thead><tbody>";
 
     Object.keys(strategies).forEach(function (key) {
@@ -490,7 +513,7 @@
 
     if (confirmed.length === 0) {
       container.innerHTML =
-        '<div class="empty-state">確定済みデータがありません。</div>';
+        '<div class="empty-state">まだ結果が確定した予測がありません。</div>';
       return;
     }
 
@@ -523,9 +546,9 @@
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
       "<th>#</th>" +
-      "<th>ティッカー</th>" +
-      "<th>的中率</th>" +
-      "<th>的中/全体</th>" +
+      "<th>銘柄</th>" +
+      "<th>当たった割合</th>" +
+      "<th>当たり/全体</th>" +
       "</tr></thead><tbody>";
 
     ranking.forEach(function (r, i) {
@@ -571,21 +594,21 @@
     var html =
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
-      "<th>アノマリー</th>" +
-      "<th>観測数</th>" +
-      "<th>t 統計量</th>" +
-      "<th>p 値</th>" +
-      "<th>Sharpe</th>" +
-      "<th>ステータス</th>" +
-      "<th>スコア反映</th>" +
+      "<th>市場パターン</th>" +
+      "<th>データ数</th>" +
+      "<th>信頼度</th>" +
+      "<th>確からしさ</th>" +
+      "<th>効率</th>" +
+      "<th>状態</th>" +
+      "<th>予測に使用</th>" +
       "</tr></thead><tbody>";
 
     survey.anomalies.forEach(function (a) {
       var isInsufficient = a.status === "insufficient_data" || a.n_observations < 52;
-      var statusLabel = isInsufficient ? "データ蓄積中" : a.status;
+      var statusLabel = isInsufficient ? "データ収集中" : a.status;
       var scoreLabel = a.score_included
-        ? '<span class="badge badge-success">反映</span>'
-        : '<span class="badge badge-neutral">対象外</span>';
+        ? '<span class="badge badge-success">使用中</span>'
+        : '<span class="badge badge-neutral">未使用</span>';
 
       html +=
         "<tr>" +

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>的中率 - AI Stock Predictions</title>
+  <title>成績 - AI Stock Predictions</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -16,11 +16,11 @@
       <div class="header-right">
         <div class="header-stat">
           <div class="header-stat-value" id="header-accuracy-value">-</div>
-          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+          <div class="header-stat-label" id="header-accuracy-detail">予測の当たった割合</div>
         </div>
         <nav>
           <a href="index.html">サマリー</a>
-          <a href="accuracy.html" class="active">的中率</a>
+          <a href="accuracy.html" class="active">成績</a>
           <a href="simulator.html">シミュレータ</a>
         </nav>
         <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
@@ -31,7 +31,7 @@
     <div id="stale-alert" class="alert alert-warning" style="display:none"></div>
 
     <section>
-      <h2>累計的中率</h2>
+      <h2>予測の当たった割合</h2>
       <div class="card stat-card">
         <div class="stat-value" id="cumulative-value">-</div>
         <div class="stat-label" id="cumulative-detail"></div>
@@ -39,7 +39,7 @@
     </section>
 
     <section>
-      <h2>週次的中率推移</h2>
+      <h2>週ごとの予測成績</h2>
       <div class="chart-container">
         <canvas id="weekly-chart"></canvas>
       </div>
@@ -47,10 +47,10 @@
 
     <!-- Phase 4: 予測誤差分析 -->
     <section id="error-analysis-section" style="display:none">
-      <h2>予測誤差分析</h2>
+      <h2>予測のズレ分析</h2>
       <div class="card stat-card" id="mae-card">
         <div class="stat-value" id="mae-value">-</div>
-        <div class="stat-label">平均予測誤差 (MAE)</div>
+        <div class="stat-label">予測のズレ（平均）</div>
       </div>
       <div class="chart-container">
         <canvas id="error-chart"></canvas>
@@ -62,24 +62,24 @@
 
     <!-- Phase 7: 校正ダッシュボード -->
     <section id="calibration-section" style="display:none">
-      <h2>確率校正ダッシュボード</h2>
+      <h2>予測精度の詳細 <span class="panel-note">（上級者向け — クリックで開閉）</span></h2>
       <div class="calibration-stats" id="calibration-stats"></div>
       <div class="chart-container">
         <canvas id="calibration-chart"></canvas>
       </div>
-      <p class="calibration-note">※ データが30件以上蓄積されると表示されます。Brier スコアは低いほど良好、ECE は0に近いほど校正精度が高い。</p>
+      <p class="calibration-note">※ データが30件以上蓄積されると表示されます。数値が低いほど予測が正確です。</p>
     </section>
 
     <!-- Phase 9: バックテスト品質開示 -->
     <section id="backtest-hygiene-section" style="display:none">
-      <h2>バックテスト品質開示</h2>
+      <h2>検証の信頼性 <span class="panel-note">（上級者向け — クリックで開閉）</span></h2>
       <div id="backtest-hygiene-panel"></div>
     </section>
 
     <!-- Phase 6: 戦略比較 -->
     <section id="comparison-section" style="display:none">
-      <h2>戦略別パフォーマンス比較</h2>
-      <p class="comparison-note">※ 取引コスト・スリッページは考慮していません。過去の成績は将来を保証しません。</p>
+      <h2>投資手法の比較</h2>
+      <p class="comparison-note">※ 手数料などは含まれていません。過去の成績は将来を保証しません。</p>
       <div class="chart-container">
         <canvas id="comparison-chart"></canvas>
       </div>
@@ -89,7 +89,7 @@
     </section>
 
     <section>
-      <h2>銘柄別的中率ランキング</h2>
+      <h2>銘柄ごとの成績ランキング</h2>
       <div id="ticker-ranking">
         <div class="loading">読み込み中...</div>
       </div>
@@ -97,8 +97,8 @@
 
     <!-- Phase 13: アルファサーベイ -->
     <section id="alpha-survey-section" style="display:none">
-      <h2>アノマリー統計検証</h2>
-      <p class="panel-note">※ 参考情報です。スコアリングには反映されていません。</p>
+      <h2>市場パターンの検証 <span class="panel-note">（上級者向け — クリックで開閉）</span></h2>
+      <p class="panel-note">※ 参考情報です。予測の判定には使っていません。</p>
       <div id="alpha-survey-table">
         <div class="loading">読み込み中...</div>
       </div>

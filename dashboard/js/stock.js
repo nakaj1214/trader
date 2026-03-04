@@ -109,15 +109,15 @@
     if (isClipped) {
       container.className = "alert alert-warning sanity-banner";
       container.innerHTML =
-        "<strong>⚠ 予測が不安定（外れ値の可能性）</strong><br>" +
-        "モデルの予測上昇率が異常に大きいため表示値をクリップしています。" +
+        "<strong>⚠ この予測は不安定です</strong><br>" +
+        "AIの予測が極端すぎるため、表示値を調整しています。" +
         "表示値: " + formatPct(displayPct) +
         "（元の予測値: " + formatPct(prediction.predicted_change_pct) + "）";
     } else {
       container.className = "alert alert-warning sanity-banner";
       container.innerHTML =
-        "<strong>⚠ 予測上昇率が高水準</strong><br>" +
-        "予測上昇率が警告しきい値を超えています（" + formatPct(prediction.predicted_change_pct) + "）。参考程度にご確認ください。";
+        "<strong>⚠ 予測の変動が大きめです</strong><br>" +
+        "予測の変動が通常より大きくなっています（" + formatPct(prediction.predicted_change_pct) + "）。参考程度にご確認ください。";
     }
     container.style.display = "";
   }
@@ -135,9 +135,8 @@
     var r = prediction.risk;
     var html =
       '<div class="risk-metrics">' +
-      "<span>ボラ(20日): " + (r.vol_20d_ann * 100).toFixed(0) + "%年率</span>" +
-      "<span>β: " + r.beta.toFixed(2) + "</span>" +
-      "<span>最大DD: " + (r.max_drawdown_1y * 100).toFixed(0) + "%</span>" +
+      "<span>値動きの大きさ: " + (r.vol_20d_ann * 100).toFixed(0) + "%（年率）</span>" +
+      "<span>最大下落: " + (r.max_drawdown_1y * 100).toFixed(0) + "%</span>" +
       "</div>";
 
     // イベントバッジ
@@ -146,8 +145,8 @@
       prediction.events.forEach(function (ev) {
         var label =
           ev.type === "earnings"
-            ? "決算まで" + ev.days_to + "日"
-            : "配当落ちまで" + ev.days_to + "日";
+            ? "決算発表まで " + ev.days_to + " 日"
+            : "配当日まで " + ev.days_to + " 日";
         html += '<span class="event-badge">' + label + "</span>";
       });
       html += "</div>";
@@ -179,7 +178,7 @@
       var stopPrice = prediction.current_price * (1 + s.stop_loss_pct);
       stopPriceHtml =
         '<div class="stop-loss-highlight">' +
-        '<div class="stop-label">損切り価格（この価格を下回ったら売り）</div>' +
+        '<div class="stop-label">この価格を下回ったら売りを検討</div>' +
         '<div class="stop-price">' + formatPrice(stopPrice) + '</div>' +
         '<div class="stop-desc">現在価格 ' + formatPrice(prediction.current_price) + ' から ' + sl + ' 下落した水準</div>' +
         '</div>';
@@ -189,20 +188,20 @@
     if (prediction.predicted_price) {
       targetPriceHtml =
         '<div class="target-price-row">' +
-        '<span class="target-price-label">目標価格（予測）</span>' +
+        '<span class="target-price-label">AIの予測価格</span>' +
         '<span class="target-price-value">' + formatPrice(prediction.predicted_price) + '</span>' +
         '</div>';
     }
 
     container.innerHTML =
-      '<h3>ポジションサイジング・売買ガイド</h3>' +
+      '<h3>売買ガイド</h3>' +
       '<div class="sizing-panel">' +
       '<div class="sizing-row">' +
-      '<span class="sizing-label">最大保有比率</span>' +
+      '<span class="sizing-label">おすすめ投資比率</span>' +
       '<span class="sizing-value">' + maxW + "</span>" +
       "</div>" +
       '<div class="sizing-row">' +
-      '<span class="sizing-label">損切り水準</span>' +
+      '<span class="sizing-label">損切りライン</span>' +
       '<span class="sizing-value sizing-stop">' + sl + "</span>" +
       "</div>" +
       "</div>" +
@@ -224,13 +223,13 @@
 
     var ev = prediction.evidence;
     var factors = [
-      { label: "モメンタム", key: "momentum_z" },
-      { label: "バリュー", key: "value_z" },
-      { label: "収益性", key: "quality_z" },
-      { label: "低リスク", key: "low_risk_z" },
+      { label: "上昇の勢い", key: "momentum_z" },
+      { label: "割安度", key: "value_z" },
+      { label: "企業の稼ぐ力", key: "quality_z" },
+      { label: "安定度", key: "low_risk_z" },
     ];
 
-    var html = '<h3>エビデンス指標 <span class="panel-note">選出銘柄内の相対位置</span></h3>';
+    var html = '<h3>予測の根拠 <span class="panel-note">なぜこの銘柄が選ばれたか</span></h3>';
 
     factors.forEach(function (f) {
       var z = ev[f.key];
@@ -244,7 +243,7 @@
       }
       var pct = Math.min(Math.abs(z) / 3 * 100, 100);
       var cls = z >= 0 ? "evidence-support" : "evidence-oppose";
-      var icon = z >= 0 ? "▲ 支持" : "▼ 反対";
+      var icon = z >= 0 ? "▲ プラス要因" : "▼ マイナス要因";
       html +=
         '<div class="evidence-row">' +
         '<span class="evidence-label">' + f.label + "</span>" +
@@ -257,7 +256,7 @@
     });
 
     if (ev.composite != null) {
-      html += '<div class="evidence-composite">合成スコア: ' + ev.composite + " / 100</div>";
+      html += '<div class="evidence-composite">総合スコア: ' + ev.composite + " / 100</div>";
     }
 
     container.innerHTML = html;
@@ -275,8 +274,8 @@
     }
 
     var expl = prediction.explanations;
-    var html = "<h3>選出理由</h3>";
-    html += '<p class="explanation-intro">この銘柄がトップ10に入った主因:</p>';
+    var html = "<h3>この銘柄が選ばれた理由</h3>";
+    html += '<p class="explanation-intro">AIがこの銘柄を推薦した理由:</p>';
 
     var nums = ["①", "②", "③"];
     expl.factors.forEach(function (f, i) {
@@ -308,9 +307,9 @@
     var signalLabel = signalMap[si.signal] || si.signal;
 
     container.innerHTML =
-      "<h3>空売り状況 <span class=\"panel-note\">参考情報</span></h3>" +
+      "<h3>空売りの状況 <span class=\"panel-note\">参考情報</span></h3>" +
       "<div class=\"info-rows\">" +
-      "<div class=\"info-row\"><span class=\"info-label\">Short Ratio</span><span class=\"info-value\">" + ratioStr + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">空売り日数</span><span class=\"info-value\">" + ratioStr + "</span></div>" +
       "<div class=\"info-row\"><span class=\"info-label\">空売り比率</span><span class=\"info-value\">" + pctStr + "</span></div>" +
       "<div class=\"info-row\"><span class=\"info-label\">シグナル</span><span class=\"info-value\">" + signalLabel + "</span></div>" +
       "</div>" +
@@ -334,10 +333,10 @@
       : "-";
 
     container.innerHTML =
-      "<h3>主要機関保有者 <span class=\"panel-note\">参考情報</span></h3>" +
+      "<h3>大口投資家の保有状況 <span class=\"panel-note\">参考情報</span></h3>" +
       "<div class=\"info-rows\">" +
-      "<div class=\"info-row\"><span class=\"info-label\">機関保有率</span><span class=\"info-value\">" + pctStr + "</span></div>" +
-      "<div class=\"info-row\"><span class=\"info-label\">上位5機関</span><span class=\"info-value\">" + holders + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">大口投資家の保有率</span><span class=\"info-value\">" + pctStr + "</span></div>" +
+      "<div class=\"info-row\"><span class=\"info-label\">主な保有者</span><span class=\"info-value\">" + holders + "</span></div>" +
       "</div>" +
       "<p class=\"panel-note\">" + (inst.data_note || "") + "</p>";
     container.style.display = "";
@@ -365,7 +364,7 @@
         labels: labels,
         datasets: [
           {
-            label: "予測価格",
+            label: "AIの予測",
             data: predictedPrices,
             borderColor: "rgba(37, 99, 235, 1)",
             backgroundColor: "rgba(37, 99, 235, 0.1)",
@@ -374,7 +373,7 @@
             tension: 0.1,
           },
           {
-            label: "実績価格",
+            label: "実際の株価",
             data: actualPrices,
             borderColor: "rgba(22, 163, 74, 1)",
             backgroundColor: "rgba(22, 163, 74, 0.1)",
@@ -390,7 +389,7 @@
         plugins: {
           title: {
             display: true,
-            text: ticker + " 価格推移",
+            text: ticker + " 株価の動き",
           },
         },
         scales: {
@@ -426,9 +425,9 @@
       '<div class="table-wrapper"><table>' +
       "<thead><tr>" +
       "<th>日付</th>" +
-      "<th>予測価格</th>" +
-      "<th>実績価格</th>" +
-      "<th>予測上昇率</th>" +
+      "<th>AIの予測</th>" +
+      "<th>実際の価格</th>" +
+      "<th>予測変動</th>" +
       "<th>結果</th>" +
       "</tr></thead><tbody>";
 
@@ -442,9 +441,9 @@
         : p.predicted_change_pct;
       var pctCell = formatPct(displayPct);
       if (isClipped) {
-        pctCell += ' <span class="badge sanity-clipped">CLIPPED</span>';
+        pctCell += ' <span class="badge sanity-clipped">⚠ 不安定</span>';
       } else if (isWarn) {
-        pctCell += ' <span class="badge sanity-warn">WARN</span>';
+        pctCell += ' <span class="badge sanity-warn">⚠ 注意</span>';
       }
 
       html +=

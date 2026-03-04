@@ -78,8 +78,8 @@
         '">' +
         p.ticker +
         "</a>" +
-        (isClipped ? ' <span class="badge sanity-clipped">CLIPPED</span>' : "") +
-        (isWarn ? ' <span class="badge sanity-warn">WARN</span>' : "") +
+        (isClipped ? ' <span class="badge sanity-clipped">⚠ 不安定</span>' : "") +
+        (isWarn ? ' <span class="badge sanity-warn">⚠ 注意</span>' : "") +
         "  </div>" +
         '  <div class="price-row">' +
         '    <span class="price">' +
@@ -104,12 +104,11 @@
 
       // Phase 1: リスク情報行
       if (p.risk) {
-        var riskText = "ボラ" + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
-          " | β" + p.risk.beta.toFixed(2) +
-          " | DD" + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%";
+        var riskText = "値動き " + (p.risk.vol_20d_ann * 100).toFixed(0) + "%" +
+          " | 最大下落 " + (p.risk.max_drawdown_1y * 100).toFixed(0) + "%";
         // Phase 8: サイズ目安を追記
         if (p.sizing && p.sizing.max_position_weight != null) {
-          riskText += " | 最大" + (p.sizing.max_position_weight * 100).toFixed(0) + "%";
+          riskText += " | 推奨投資比率 " + (p.sizing.max_position_weight * 100).toFixed(0) + "%";
         }
         html += '  <div class="risk-row">' + riskText + "  </div>";
       }
@@ -120,8 +119,8 @@
         p.events.forEach(function (ev) {
           var label =
             ev.type === "earnings"
-              ? "決算" + ev.days_to + "日後"
-              : "配当落ち" + ev.days_to + "日後";
+              ? "決算発表 " + ev.days_to + "日後"
+              : "配当日 " + ev.days_to + "日後";
           html += '<span class="event-badge">' + label + "</span>";
         });
         html += "  </div>";
@@ -130,13 +129,13 @@
       // 買い時・売り時アクション行
       if (p.status === "予測済み") {
         if (displayPct > 0) {
-          html += '<div class="action-row action-buy">▲ 今週の推奨行動: 購入を検討（予測 ' + formatPct(displayPct) + '）</div>';
+          html += '<div class="action-row action-buy">▲ 買い候補（来週 ' + formatPct(displayPct) + '）</div>';
         } else {
-          html += '<div class="action-row action-neutral">– 今週は見送り推奨（予測 ' + formatPct(displayPct) + '）</div>';
+          html += '<div class="action-row action-neutral">– 様子見（来週 ' + formatPct(displayPct) + '）</div>';
         }
         if (p.sizing && p.sizing.stop_loss_pct != null && p.current_price) {
           var stopPrice = p.current_price * (1 + p.sizing.stop_loss_pct);
-          html += '<div class="action-stop">損切り目安: ' + formatPrice(stopPrice) + ' を下回ったら売り</div>';
+          html += '<div class="action-stop">売るべき価格: ' + formatPrice(stopPrice) + ' を下回ったら売ることを検討</div>';
         }
       }
 

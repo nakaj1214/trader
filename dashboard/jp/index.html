@@ -16,11 +16,11 @@
       <div class="header-right">
         <div class="header-stat">
           <div class="header-stat-value" id="header-accuracy-value">-</div>
-          <div class="header-stat-label" id="header-accuracy-detail">累計的中率</div>
+          <div class="header-stat-label" id="header-accuracy-detail">予測の当たった割合</div>
         </div>
         <nav>
           <a href="index.html" class="active">サマリー</a>
-          <a href="accuracy.html">的中率</a>
+          <a href="accuracy.html">成績</a>
           <a href="../index.html">← 市場選択</a>
         </nav>
         <button class="help-btn" id="help-btn" title="ヘルプを表示">?</button>
@@ -33,26 +33,25 @@
     <!-- 日本株向け注記 -->
     <div class="info-panel" style="display:block; margin-bottom:1rem;">
       <strong>日本株（日経225）</strong> &#x2014;
-      価格は円建て表示です。1単元=100株のため最低投資額に注意してください。
-      データは yfinance 経由（<code>.T</code> サフィックス）で取得しています。
+      価格は円で表示しています。日本株は100株単位で購入するため、投資額にご注意ください。
     </div>
 
     <!-- 買い時・売り時ガイド -->
     <div class="timing-guide">
-      <div class="timing-guide-title">買い時・売り時の目安</div>
+      <div class="timing-guide-title">いつ買う？ いつ売る？</div>
       <div class="timing-guide-cols">
         <div class="timing-col-buy">
-          <div class="timing-col-title buy-title">買い時のサイン</div>
+          <div class="timing-col-title buy-title">買いのヒント</div>
           <ul class="timing-col">
-            <li>予測上昇率がプラス（+）の銘柄</li>
-            <li>累計的中率が55%以上（的中率ページで確認）</li>
+            <li>来週「上がる」と予測された銘柄</li>
+            <li>成績ページの的中率が55%以上のとき</li>
           </ul>
         </div>
         <div class="timing-col-sell">
-          <div class="timing-col-title sell-title">売り時のサイン</div>
+          <div class="timing-col-title sell-title">売りのヒント</div>
           <ul class="timing-col">
-            <li>損切り価格を下回ったら即売り（銘柄詳細で確認）</li>
-            <li>1週間後に予測期間終了 → 実績を確認して判断</li>
+            <li>設定した最低価格を下回ったら売る（詳細ページで確認）</li>
+            <li>1週間後に結果を確認して判断</li>
           </ul>
         </div>
       </div>

@@ -2,10 +2,13 @@
 
 All models are frozen (immutable) and use strict type annotations.
 These represent the canonical data structures flowing through
-the screening -> prediction -> enrichment -> tracking pipeline.
+the screening -> prediction -> enrichment -> tracking pipeline,
+as well as the LLM-driven financial analysis pipeline.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -75,3 +78,27 @@ class RunMeta(BaseModel, frozen=True):
     git_hash: str | None = None
     config_hash: str
     python_version: str
+
+
+class AnalysisInput(BaseModel, frozen=True):
+    """Input data for LLM-driven financial analysis."""
+
+    ticker: str
+    company_name: str
+    industry: str | None = None
+    sector: str | None = None
+    market_cap: float | None = None
+    financials: dict[str, Any] = Field(default_factory=dict)
+    comparison_data: AnalysisInput | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisResult(BaseModel, frozen=True):
+    """Output from an LLM-driven financial analysis."""
+
+    ticker: str
+    analysis_type: str
+    content: str
+    timestamp: str
+    model_used: str
+    token_count: int = 0

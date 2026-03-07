@@ -132,3 +132,56 @@ def build_report(
             pass
 
     return "\n".join(lines)
+
+
+def build_analysis_report(results: list[Any]) -> str:
+    """Build Slack message for financial analysis results.
+
+    Args:
+        results: List of AnalysisResult objects.
+
+    Returns:
+        Formatted Slack message text.
+    """
+    if not results:
+        return "No financial analyses completed."
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines = [
+        f"*Financial Analysis Report ({today})*",
+        "",
+    ]
+
+    # Group by ticker
+    by_ticker: dict[str, list[str]] = {}
+    total_tokens = 0
+    for result in results:
+        ticker = getattr(result, "ticker", "unknown")
+        atype = getattr(result, "analysis_type", "unknown")
+        total_tokens += getattr(result, "token_count", 0)
+        by_ticker.setdefault(ticker, []).append(atype)
+
+    for ticker, types in by_ticker.items():
+        type_names = ", ".join(t.replace("_", " ").title() for t in types)
+        lines.append(f"  *{ticker}*: {type_names}")
+
+    lines.append("")
+    lines.append(
+        f"Total: {len(results)} analyses | {total_tokens:,} tokens used"
+    )
+
+    return "\n".join(lines)
+
+
+def send_analysis_summary(results: list[Any]) -> NotificationResult:
+    """Send analysis summary to Slack.
+
+    Args:
+        results: List of AnalysisResult objects.
+
+    Returns:
+        NotificationResult with send status.
+    """
+    notifier = SlackNotifier()
+    report = build_analysis_report(results)
+    return notifier.send(report)

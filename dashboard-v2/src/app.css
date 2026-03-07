@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Reset ── */
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+::selection {
+	background: rgba(0, 212, 170, 0.3);
+	color: #fff;
+}
+
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	background: #0b0f19;
+}
+::-webkit-scrollbar-thumb {
+	background: #1e293b;
+	border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: #64748b;
+}
+
+/* ── Body — subtle grid texture + top glow ── */
+body {
+	font-family: 'DM Sans', sans-serif;
+	background: linear-gradient(rgba(0, 212, 170, 0.02) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(0, 212, 170, 0.02) 1px, transparent 1px),
+		radial-gradient(ellipse at 50% 0%, rgba(0, 212, 170, 0.07) 0%, transparent 50%), #0b0f19;
+	background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
+	color: #e2e8f0;
+	line-height: 1.6;
+	min-height: 100vh;
+}
+
+/* ── Header — frosted glass ── */
+header {
+	background: rgba(20, 27, 45, 0.85);
+	backdrop-filter: blur(16px);
+	-webkit-backdrop-filter: blur(16px);
+	border-bottom: 1px solid #1e293b;
+	padding: 1rem;
+	position: sticky;
+	top: 0;
+	z-index: 100;
+}
+
+/* ── Animations ── */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* ── Chart.js dark theme ── */
+.chart-container {
+	position: relative;
+	width: 100%;
+	max-width: 800px;
+	margin: 0 auto;
+	background: #141b2d;
+	border: 1px solid #1e293b;
+	border-radius: 12px;
+	padding: 1.25rem;
+}

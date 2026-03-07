@@ -255,6 +255,70 @@ class DataConfig(BaseSettings):
         return v
 
 
+_VALID_LLM_PROVIDERS = {"claude", "openai"}
+_VALID_OUTPUT_FORMATS = {"json", "markdown"}
+_VALID_ANALYSIS_TYPES = {
+    "dcf", "comps", "financial_statement", "sensitivity",
+    "ma", "lbo", "precedent", "ipo", "credit", "sotp",
+    "operating_model", "ic_memo",
+    # Retail investor analyses
+    "stock_analysis", "stock_screener", "earnings_report",
+    "risk_assessment", "stock_comparison", "portfolio_builder",
+    "entry_timing",
+}
+
+
+class LLMConfig(BaseSettings):
+    model_config = {"frozen": True}
+    provider: str = Field(default="claude")
+    model: str = Field(default="claude-sonnet-4-6")
+    max_tokens: int = Field(default=4096, gt=0)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+
+    @field_validator("provider")
+    @classmethod
+    def provider_must_be_valid(cls, v: str) -> str:
+        if v not in _VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"llm.provider must be one of {sorted(_VALID_LLM_PROVIDERS)}, got '{v}'"
+            )
+        return v
+
+
+class AnalysisConfig(BaseSettings):
+    model_config = {"frozen": True}
+    enabled: bool = Field(default=False)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    max_tickers: int = Field(default=5, gt=0)
+    max_concurrent: int = Field(default=3, gt=0)
+    enabled_analyses: list[str] = Field(
+        default=["dcf", "comps", "financial_statement", "sensitivity"]
+    )
+    output_format: str = Field(default="json")
+    archive_days: int = Field(default=30, gt=0)
+
+    @field_validator("output_format")
+    @classmethod
+    def output_format_must_be_valid(cls, v: str) -> str:
+        if v not in _VALID_OUTPUT_FORMATS:
+            raise ValueError(
+                f"analysis.output_format must be one of "
+                f"{sorted(_VALID_OUTPUT_FORMATS)}, got '{v}'"
+            )
+        return v
+
+    @field_validator("enabled_analyses")
+    @classmethod
+    def analyses_must_be_valid(cls, v: list[str]) -> list[str]:
+        invalid = set(v) - _VALID_ANALYSIS_TYPES
+        if invalid:
+            raise ValueError(
+                f"analysis.enabled_analyses contains invalid types: {sorted(invalid)}. "
+                f"Valid types: {sorted(_VALID_ANALYSIS_TYPES)}"
+            )
+        return v
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -268,6 +332,7 @@ class AppConfig(BaseSettings):
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
 
 
 # ---------------------------------------------------------------------------

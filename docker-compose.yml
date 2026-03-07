@@ -20,4 +20,4 @@ services:
       export GOOGLE_CREDENTIALS_JSON=\"/app/$$cred_basename\";
       fi;
       fi &&
-      python -m src.exporter"
+      python -m src.cli export"

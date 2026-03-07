@@ -93,3 +93,20 @@ evaluation:
 
 data:
   price_column: "Close"
+
+analysis:
+  enabled: false
+  max_tickers: 5
+  max_concurrent: 3
+  enabled_analyses:
+    - dcf
+    - comps
+    - financial_statement
+    - sensitivity
+  output_format: json
+  archive_days: 30
+  llm:
+    provider: claude
+    model: claude-sonnet-4-6
+    max_tokens: 4096
+    temperature: 0.3

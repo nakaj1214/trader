@@ -1,0 +1,49 @@
+name: Deploy Dashboard v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard-v2/**'
+      - 'dashboard/data/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dashboard
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard-v2/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dashboard-v2
+        run: npm ci
+
+      - name: Copy data files
+        run: |
+          mkdir -p dashboard-v2/static/data
+          cp dashboard/data/*.json dashboard-v2/static/data/ 2>/dev/null || true
+
+      - name: Build
+        working-directory: dashboard-v2
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dashboard-v2/build --project-name=${{ vars.CF_PAGES_PROJECT_NAME || 'ai-stock-dashboard' }}

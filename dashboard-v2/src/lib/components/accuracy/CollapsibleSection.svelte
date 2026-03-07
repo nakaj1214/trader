@@ -1,6 +1,6 @@
 <script lang="ts">
-	let { title, defaultOpen = false }: { title: string; defaultOpen?: boolean } = $props();
-	let { children } = $props();
+	import type { Snippet } from 'svelte';
+	let { title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: Snippet } = $props();
 
 	let open = $state(defaultOpen);
 </script>

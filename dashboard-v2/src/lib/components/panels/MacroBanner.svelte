@@ -27,11 +27,7 @@
 
 {#if macro}
 	<div
-		class="mb-4 rounded-[12px] border px-4 py-2.5 text-[0.8125rem]"
-		class:border-border-highlight={!isRiskOff}
-		class:bg-primary/[0.06]={!isRiskOff}
-		class:border-danger/30={isRiskOff}
-		class:bg-danger/[0.08]={isRiskOff}
+		class="mb-4 rounded-[12px] border px-4 py-2.5 text-[0.8125rem] {isRiskOff ? 'border-danger/30 bg-danger/10' : 'border-border-highlight bg-primary/5'}"
 	>
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 			<span

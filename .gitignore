@@ -15,6 +15,7 @@ credentials.json
 .data/
 !dashboard/data/*.json
 !dashboard-v2/package.json
+!dashboard-v2/package-lock.json
 !dashboard-v2/tsconfig.json
 
 # IDE

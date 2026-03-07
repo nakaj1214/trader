@@ -1,725 +1,300 @@
 {
-  "as_of_utc": "2026-03-01T01:58:42Z",
-  "data_coverage_weeks": 0,
   "predictions": [
     {
-      "date": "2026-02-19",
-      "ticker": "E2E_TEST",
-      "current_price": 100.0,
-      "predicted_price": 105.0,
-      "predicted_change_pct": 5.0,
-      "ci_pct": 1.5,
+      "date": "2026-03-07",
+      "ticker": "FOXA",
+      "current_price": 59.78,
+      "predicted_price": 108.29,
+      "predicted_change_pct": 81.15,
+      "ci_pct": 3.16,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 5.0,
-      "sanity_flags": [
-        "OK"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "CBRE",
-      "current_price": 152.01,
-      "predicted_price": 425.23,
-      "predicted_change_pct": 179.74,
-      "ci_pct": 2.89,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
+      "status": "predicted",
+      "hit": null,
       "predicted_change_pct_clipped": 30.0,
       "sanity_flags": [
         "CLIPPED"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.445,
+        "vol_60d_ann": 0.3124,
+        "beta": 0.28,
+        "max_drawdown_1y": -0.2889
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.2,
+        "stop_loss_pct": -0.1285,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 7.33,
+        "short_pct_float": 0.1876,
+        "signal": "moderate_short",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7826,
+      "fifty2w_pct_from_high": -0.2174
     },
     {
-      "date": "2026-02-19",
-      "ticker": "CHRW",
-      "current_price": 185.86,
-      "predicted_price": 516.09,
-      "predicted_change_pct": 177.67,
-      "ci_pct": 2.2,
+      "date": "2026-03-07",
+      "ticker": "EXPE",
+      "current_price": 249.62,
+      "predicted_price": 443.36,
+      "predicted_change_pct": 77.62,
+      "ci_pct": 5.32,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
+      "status": "predicted",
+      "hit": null,
       "predicted_change_pct_clipped": 30.0,
       "sanity_flags": [
         "CLIPPED"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.7399,
+        "vol_60d_ann": 0.5939,
+        "beta": 1.65,
+        "max_drawdown_1y": -0.3744
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1352,
+        "stop_loss_pct": -0.2136,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 2.46,
+        "short_pct_float": 0.0689,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.8217,
+      "fifty2w_pct_from_high": -0.1783
     },
     {
-      "date": "2026-02-19",
-      "ticker": "WTW",
-      "current_price": 301.92,
-      "predicted_price": 786.9,
-      "predicted_change_pct": 160.63,
-      "ci_pct": 1.95,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
+      "date": "2026-03-07",
       "ticker": "WAT",
-      "current_price": 327.53,
-      "predicted_price": 668.72,
-      "predicted_change_pct": 104.17,
-      "ci_pct": 2.3,
+      "current_price": 302.54,
+      "predicted_price": 531.25,
+      "predicted_change_pct": 75.6,
+      "ci_pct": 4.46,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
+      "status": "predicted",
+      "hit": null,
       "predicted_change_pct_clipped": 30.0,
       "sanity_flags": [
         "CLIPPED"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.5653,
+        "vol_60d_ann": 0.3744,
+        "beta": 0.71,
+        "max_drawdown_1y": -0.2666
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1769,
+        "stop_loss_pct": -0.1632,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 2.29,
+        "short_pct_float": 0.0314,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7305,
+      "fifty2w_pct_from_high": -0.2695
     },
     {
-      "date": "2026-02-19",
-      "ticker": "TYL",
-      "current_price": 317.24,
-      "predicted_price": 447.99,
-      "predicted_change_pct": 41.21,
-      "ci_pct": 4.17,
+      "date": "2026-03-07",
+      "ticker": "FOX",
+      "current_price": 54.31,
+      "predicted_price": 94.28,
+      "predicted_change_pct": 73.59,
+      "ci_pct": 2.9,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
+      "status": "predicted",
+      "hit": null,
       "predicted_change_pct_clipped": 30.0,
       "sanity_flags": [
         "CLIPPED"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.4296,
+        "vol_60d_ann": 0.2957,
+        "beta": 0.23,
+        "max_drawdown_1y": -0.2677
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.2,
+        "stop_loss_pct": -0.124,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 6.78,
+        "short_pct_float": 0.0822,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7966,
+      "fifty2w_pct_from_high": -0.2034
     },
     {
-      "date": "2026-02-19",
-      "ticker": "MSCI",
-      "current_price": 545.25,
-      "predicted_price": 763.19,
-      "predicted_change_pct": 39.97,
-      "ci_pct": 1.87,
+      "date": "2026-03-07",
+      "ticker": "CTSH",
+      "current_price": 66.26,
+      "predicted_price": 81.53,
+      "predicted_change_pct": 23.05,
+      "ci_pct": 4.28,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "STE",
-      "current_price": 249.35,
-      "predicted_price": 253.24,
-      "predicted_change_pct": 1.56,
-      "ci_pct": 1.54,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 1.56,
-      "sanity_flags": [
-        "OK"
-      ],
-      "prob_up": 0.9765,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "CBRE",
-      "current_price": 152.01,
-      "predicted_price": 425.23,
-      "predicted_change_pct": 179.74,
-      "ci_pct": 3.01,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "CHRW",
-      "current_price": 185.86,
-      "predicted_price": 516.09,
-      "predicted_change_pct": 177.67,
-      "ci_pct": 2.12,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "WTW",
-      "current_price": 301.92,
-      "predicted_price": 786.9,
-      "predicted_change_pct": 160.63,
-      "ci_pct": 2.02,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "WAT",
-      "current_price": 327.53,
-      "predicted_price": 668.72,
-      "predicted_change_pct": 104.17,
-      "ci_pct": 2.27,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "TYL",
-      "current_price": 317.24,
-      "predicted_price": 447.99,
-      "predicted_change_pct": 41.21,
-      "ci_pct": 4.42,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "MSCI",
-      "current_price": 545.25,
-      "predicted_price": 763.19,
-      "predicted_change_pct": 39.97,
-      "ci_pct": 1.85,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-19",
-      "ticker": "STE",
-      "current_price": 249.35,
-      "predicted_price": 255.55,
-      "predicted_change_pct": 2.49,
-      "ci_pct": 1.56,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 2.49,
-      "sanity_flags": [
-        "OK"
-      ],
-      "prob_up": 0.9991,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-22",
-      "ticker": "ROL",
-      "current_price": 61.35,
-      "predicted_price": 120.96,
-      "predicted_change_pct": 97.16,
-      "ci_pct": 2.76,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-22",
-      "ticker": "CHRW",
-      "current_price": 190.06,
-      "predicted_price": 371.48,
-      "predicted_change_pct": 95.46,
-      "ci_pct": 3.33,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null
-    },
-    {
-      "date": "2026-02-22",
-      "ticker": "WAT",
-      "current_price": 333.33,
-      "predicted_price": 423.98,
-      "predicted_change_pct": 27.19,
-      "ci_pct": 3.46,
-      "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 27.19,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 23.05,
       "sanity_flags": [
         "WARN_HIGH"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.4837,
+        "vol_60d_ann": 0.3922,
+        "beta": 0.9,
+        "max_drawdown_1y": -0.2921
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.2,
+        "stop_loss_pct": -0.1396,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 4.28,
+        "short_pct_float": 0.0815,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7613,
+      "fifty2w_pct_from_high": -0.2387
     },
     {
-      "date": "2026-02-22",
-      "ticker": "EA",
-      "current_price": 200.4,
-      "predicted_price": 232.43,
-      "predicted_change_pct": 15.98,
-      "ci_pct": 0.76,
+      "date": "2026-03-07",
+      "ticker": "JKHY",
+      "current_price": 171.83,
+      "predicted_price": 202.79,
+      "predicted_change_pct": 18.02,
+      "ci_pct": 2.76,
       "actual_price": null,
-      "status": "確定済み",
-      "hit": "評価不能",
-      "predicted_change_pct_clipped": 15.98,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 18.02,
       "sanity_flags": [
         "OK"
       ],
       "prob_up": 1.0,
-      "prob_up_calibrated": null
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.3196,
+        "vol_60d_ann": 0.2971,
+        "beta": 0.1,
+        "max_drawdown_1y": -0.2084
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.2,
+        "stop_loss_pct": -0.0923,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 3.13,
+        "short_pct_float": 0.0529,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.8767,
+      "fifty2w_pct_from_high": -0.1233
     },
     {
-      "date": "2026-03-01",
-      "ticker": "IQV",
-      "current_price": 178.81,
-      "predicted_price": 418.04,
-      "predicted_change_pct": 133.79,
-      "ci_pct": 5.03,
+      "date": "2026-03-07",
+      "ticker": "CRL",
+      "current_price": 174.46,
+      "predicted_price": 204.2,
+      "predicted_change_pct": 17.05,
+      "ci_pct": 4.04,
       "actual_price": null,
-      "status": "予測済み",
+      "status": "predicted",
       "hit": null,
-      "predicted_change_pct_clipped": 30.0,
+      "predicted_change_pct_clipped": 17.05,
       "sanity_flags": [
-        "CLIPPED"
+        "OK"
       ],
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.7238,
-        "vol_60d_ann": 0.4612,
-        "beta": 1.44,
+        "vol_20d_ann": 0.5971,
+        "vol_60d_ann": 0.4319,
+        "beta": 1.61,
+        "max_drawdown_1y": -0.4263
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1675,
+        "stop_loss_pct": -0.1724,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 3.31,
+        "short_pct_float": 0.069,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7622,
+      "fifty2w_pct_from_high": -0.2378
+    },
+    {
+      "date": "2026-03-07",
+      "ticker": "IQV",
+      "current_price": 174.49,
+      "predicted_price": 198.85,
+      "predicted_change_pct": 13.96,
+      "ci_pct": 5.6,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 13.96,
+      "sanity_flags": [
+        "OK"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.6175,
+        "vol_60d_ann": 0.4658,
+        "beta": 1.46,
         "max_drawdown_1y": -0.3372
       },
-      "evidence": {
-        "momentum_z": -0.22,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": -1.01,
-        "composite": 41
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.2966,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.979877+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.1382,
-        "stop_loss_pct": -0.2089,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
+        "max_position_weight": 0.1619,
+        "stop_loss_pct": -0.1783,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
+        "short_ratio": 2.18,
+        "short_pct_float": 0.0349,
         "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
-    },
-    {
-      "date": "2026-03-01",
-      "ticker": "EXPE",
-      "current_price": 215.69,
-      "predicted_price": 418.08,
-      "predicted_change_pct": 93.83,
-      "ci_pct": 5.91,
-      "actual_price": null,
-      "status": "予測済み",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.8111,
-        "vol_60d_ann": 0.5396,
-        "beta": 1.9,
-        "max_drawdown_1y": -0.3744
+        "data_note": "Monthly data, reference only (yfinance)"
       },
-      "evidence": {
-        "momentum_z": 2.03,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": -1.3,
-        "composite": 62
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.2303,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.959656+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.1233,
-        "stop_loss_pct": -0.2341,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
-    },
-    {
-      "date": "2026-03-01",
-      "ticker": "NDAQ",
-      "current_price": 87.58,
-      "predicted_price": 158.45,
-      "predicted_change_pct": 80.92,
-      "ci_pct": 3.22,
-      "actual_price": null,
-      "status": "予測済み",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.5004,
-        "vol_60d_ann": 0.3267,
-        "beta": 0.98,
-        "max_drawdown_1y": -0.2176
-      },
-      "evidence": {
-        "momentum_z": 0.14,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": 0.19,
-        "composite": 53
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.1675,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.954629+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.1998,
-        "stop_loss_pct": -0.1445,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
-    },
-    {
-      "date": "2026-03-01",
-      "ticker": "MCO",
-      "current_price": 477.59,
-      "predicted_price": 708.33,
-      "predicted_change_pct": 48.31,
-      "ci_pct": 3.19,
-      "actual_price": null,
-      "status": "予測済み",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.5398,
-        "vol_60d_ann": 0.3591,
-        "beta": 0.84,
-        "max_drawdown_1y": -0.2361
-      },
-      "evidence": {
-        "momentum_z": -0.8,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": -0.09,
-        "composite": 41
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.2634,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.969727+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.1853,
-        "stop_loss_pct": -0.1558,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
-    },
-    {
-      "date": "2026-03-01",
-      "ticker": "STE",
-      "current_price": 252.35,
-      "predicted_price": 293.79,
-      "predicted_change_pct": 16.42,
-      "ci_pct": 2.46,
-      "actual_price": null,
-      "status": "予測済み",
-      "hit": null,
-      "predicted_change_pct_clipped": 16.42,
-      "sanity_flags": [
-        "OK"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.3578,
-        "vol_60d_ann": 0.2564,
-        "beta": 0.64,
-        "max_drawdown_1y": -0.122
-      },
-      "evidence": {
-        "momentum_z": -0.08,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": 1.74,
-        "composite": 61
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.1965,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.964686+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1033,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
-    },
-    {
-      "date": "2026-03-01",
-      "ticker": "MSCI",
-      "current_price": 571.83,
-      "predicted_price": 631.81,
-      "predicted_change_pct": 10.49,
-      "ci_pct": 3.21,
-      "actual_price": null,
-      "status": "予測済み",
-      "hit": null,
-      "predicted_change_pct_clipped": 10.49,
-      "sanity_flags": [
-        "OK"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.4671,
-        "vol_60d_ann": 0.3269,
-        "beta": 0.5,
-        "max_drawdown_1y": -0.1807
-      },
-      "evidence": {
-        "momentum_z": -1.07,
-        "value_z": null,
-        "quality_z": null,
-        "low_risk_z": 0.47,
-        "composite": 42
-      },
-      "explanations": {
-        "factors": [
-          {
-            "factor": "volume_trend",
-            "weight_key": "volume_trend",
-            "impact": 0.1574,
-            "text": "出来高が増加傾向"
-          },
-          {
-            "factor": "rsi",
-            "weight_key": "rsi_score",
-            "impact": 0.15,
-            "text": "RSIが安定圏にある"
-          },
-          {
-            "factor": "macd_bullish",
-            "weight_key": "macd_signal",
-            "impact": 0.15,
-            "text": "MACD買いシグナル"
-          }
-        ],
-        "recalculated_at": "2026-03-01T01:58:41.974795+00:00",
-        "note": "エクスポート時点の指標値に基づく再計算結果"
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1348,
-        "stop_loss_rationale": "20日ボラティリティに基づく月次リスク推定値"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "月次更新・参考値（yfinance）"
-      }
+      "fifty2w_score": 0.7063,
+      "fifty2w_pct_from_high": -0.2937
     }
   ]
 }

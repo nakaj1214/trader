@@ -1,27 +1,27 @@
 {
-  "as_of_utc": "2026-03-01T01:58:42.906422+00:00",
+  "as_of_utc": "2026-03-07T12:54:52.106859+00:00",
   "anomalies": [
     {
       "name": "short_interest_effect",
-      "label": "空売り残高効果",
+      "label": "Short Interest Effect",
       "n_observations": 0,
       "t_stat": null,
       "p_value": null,
       "sharpe": null,
       "status": "insufficient_data",
       "score_included": false,
-      "note": "equally-weighted前提。大型株（時価加重）では効果弱い可能性"
+      "note": "Assumes equal-weight. Effect may be weak for cap-weighted large caps."
     },
     {
       "name": "earnings_momentum",
-      "label": "決算モメンタム効果",
+      "label": "Earnings Momentum Effect",
       "n_observations": 0,
       "t_stat": null,
       "p_value": null,
       "sharpe": null,
       "status": "insufficient_data",
       "score_included": false,
-      "note": "SUE（標準化予期外利益）に基づく効果。検証中"
+      "note": "Based on SUE (Standardized Unexpected Earnings). Under evaluation."
     }
   ]
 }

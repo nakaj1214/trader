@@ -1,19 +1,18 @@
-name: Deploy Dashboard v2
+name: Build Dashboard v2
 
 on:
   push:
     branches: [main]
     paths:
       - 'dashboard-v2/**'
-      - 'dashboard/data/**'
   workflow_dispatch:
 
 concurrency:
-  group: deploy-dashboard
+  group: build-dashboard
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -38,10 +37,3 @@ jobs:
       - name: Build
         working-directory: dashboard-v2
         run: npm run build
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dashboard-v2/build --project-name=${{ vars.CF_PAGES_PROJECT_NAME || 'ai-stock-dashboard' }}

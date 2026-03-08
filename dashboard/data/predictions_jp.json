@@ -1,12 +1,12 @@
 {
   "predictions": [
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "ticker": "6702.T",
       "current_price": 3683.0,
       "predicted_price": 4726.0,
       "predicted_change_pct": 28.32,
-      "ci_pct": 4.93,
+      "ci_pct": 4.65,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -21,6 +21,13 @@
         "vol_60d_ann": 0.3925,
         "beta": 0.05,
         "max_drawdown_1y": -0.2854
+      },
+      "evidence": {
+        "momentum_z": -1.36,
+        "value_z": -1.06,
+        "quality_z": 1.13,
+        "low_risk_z": null,
+        "composite": 42
       },
       "sizing": {
         "vol_target_ann": 0.1,
@@ -38,12 +45,12 @@
       "fifty2w_pct_from_high": -0.211
     },
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "ticker": "4061.T",
       "current_price": 3540.0,
       "predicted_price": 4319.0,
       "predicted_change_pct": 22.01,
-      "ci_pct": 3.0,
+      "ci_pct": 2.92,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -58,6 +65,13 @@
         "vol_60d_ann": 0.3719,
         "beta": -0.09,
         "max_drawdown_1y": -0.1899
+      },
+      "evidence": {
+        "momentum_z": -0.42,
+        "value_z": 0.95,
+        "quality_z": -1.54,
+        "low_risk_z": null,
+        "composite": 44
       },
       "sizing": {
         "vol_target_ann": 0.1,
@@ -75,12 +89,12 @@
       "fifty2w_pct_from_high": -0.056
     },
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "ticker": "6841.T",
       "current_price": 5673.0,
       "predicted_price": 6876.48,
       "predicted_change_pct": 21.21,
-      "ci_pct": 2.87,
+      "ci_pct": 2.89,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -95,6 +109,13 @@
         "vol_60d_ann": 0.3251,
         "beta": 0.12,
         "max_drawdown_1y": -0.1592
+      },
+      "evidence": {
+        "momentum_z": 0.43,
+        "value_z": -0.94,
+        "quality_z": 0.57,
+        "low_risk_z": null,
+        "composite": 51
       },
       "sizing": {
         "vol_target_ann": 0.1,
@@ -112,12 +133,12 @@
       "fifty2w_pct_from_high": -0.1019
     },
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "ticker": "5214.T",
       "current_price": 6539.0,
       "predicted_price": 6674.26,
       "predicted_change_pct": 2.07,
-      "ci_pct": 4.22,
+      "ci_pct": 4.07,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -125,13 +146,20 @@
       "sanity_flags": [
         "OK"
       ],
-      "prob_up": 0.8318,
+      "prob_up": 0.8406,
       "prob_up_calibrated": null,
       "risk": {
         "vol_20d_ann": 0.702,
         "vol_60d_ann": 0.4868,
         "beta": -0.15,
         "max_drawdown_1y": -0.1866
+      },
+      "evidence": {
+        "momentum_z": 1.34,
+        "value_z": 1.04,
+        "quality_z": -0.16,
+        "low_risk_z": null,
+        "composite": 63
       },
       "sizing": {
         "vol_target_ann": 0.1,

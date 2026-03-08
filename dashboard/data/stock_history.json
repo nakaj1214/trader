@@ -1,73 +1,25 @@
 {
-  "FOXA": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 108.29
-    }
-  ],
-  "EXPE": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 443.36
-    }
-  ],
-  "WAT": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 531.25
-    }
-  ],
-  "FOX": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 94.28
-    }
-  ],
-  "CTSH": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 81.53
-    }
-  ],
-  "JKHY": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 202.79
-    }
-  ],
-  "CRL": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 204.2
-    }
-  ],
-  "IQV": [
-    {
-      "date": "2026-03-07",
-      "predicted_price": 198.85
-    }
-  ],
   "6702.T": [
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "predicted_price": 4726.0
     }
   ],
   "4061.T": [
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "predicted_price": 4319.0
     }
   ],
   "6841.T": [
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "predicted_price": 6876.48
     }
   ],
   "5214.T": [
     {
-      "date": "2026-03-07",
+      "date": "2026-03-08",
       "predicted_price": 6674.26
     }
   ]

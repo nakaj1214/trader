@@ -1,74 +1,50 @@
 {
-  "CF": [
+  "MRVL": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 253.12
+      "date": "2026-03-22",
+      "predicted_price": 131.63
     }
   ],
-  "MPC": [
+  "APA": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 414.04
+      "date": "2026-03-22",
+      "predicted_price": 51.19
     }
   ],
-  "VLO": [
+  "FANG": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 407.91
+      "date": "2026-03-22",
+      "predicted_price": 224.53
     }
   ],
-  "OXY": [
+  "LYB": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 80.19
+      "date": "2026-03-22",
+      "predicted_price": 76.26
     }
   ],
-  "LDOS": [
+  "9104.T": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 226.23
+      "date": "2026-03-22",
+      "predicted_price": 12716.58
     }
   ],
-  "CMA": [
+  "8031.T": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 90.92
-    }
-  ],
-  "4063.T": [
-    {
-      "date": "2026-03-15",
-      "predicted_price": 14306.63
+      "date": "2026-03-22",
+      "predicted_price": 8101.13
     }
   ],
   "1605.T": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 8194.38
+      "date": "2026-03-22",
+      "predicted_price": 5825.49
     }
   ],
-  "5101.T": [
+  "9101.T": [
     {
-      "date": "2026-03-15",
-      "predicted_price": 10927.65
-    }
-  ],
-  "4578.T": [
-    {
-      "date": "2026-03-15",
-      "predicted_price": 15214.65
-    }
-  ],
-  "6134.T": [
-    {
-      "date": "2026-03-15",
-      "predicted_price": 6461.76
-    }
-  ],
-  "9107.T": [
-    {
-      "date": "2026-03-15",
-      "predicted_price": 3178.28
+      "date": "2026-03-22",
+      "predicted_price": 7565.69
     }
   ]
 }

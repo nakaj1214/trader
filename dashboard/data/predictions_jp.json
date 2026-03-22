@@ -1,12 +1,12 @@
 {
   "predictions": [
     {
-      "date": "2026-03-15",
-      "ticker": "4063.T",
-      "current_price": 6531.0,
-      "predicted_price": 14306.63,
-      "predicted_change_pct": 119.06,
-      "ci_pct": 3.06,
+      "date": "2026-03-22",
+      "ticker": "9104.T",
+      "current_price": 6976.0,
+      "predicted_price": 12716.58,
+      "predicted_change_pct": 82.29,
+      "ci_pct": 2.36,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -17,15 +17,22 @@
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.461,
-        "vol_60d_ann": 0.4547,
-        "beta": -0.29,
-        "max_drawdown_1y": -0.2057
+        "vol_20d_ann": 0.5027,
+        "vol_60d_ann": 0.3448,
+        "beta": -0.33,
+        "max_drawdown_1y": -0.1604
+      },
+      "evidence": {
+        "momentum_z": -0.7,
+        "value_z": 1.41,
+        "quality_z": -0.09,
+        "low_risk_z": null,
+        "composite": 52
       },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1331,
+        "max_position_weight": 0.1989,
+        "stop_loss_pct": -0.1451,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
@@ -34,146 +41,86 @@
         "signal": "neutral",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9997,
-      "fifty2w_pct_from_high": -0.0003
+      "fifty2w_score": 0.9524,
+      "fifty2w_pct_from_high": -0.0476
     },
     {
-      "date": "2026-03-15",
+      "date": "2026-03-22",
+      "ticker": "8031.T",
+      "current_price": 6250.0,
+      "predicted_price": 8101.13,
+      "predicted_change_pct": 29.62,
+      "ci_pct": 3.43,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 29.62,
+      "sanity_flags": [
+        "WARN_HIGH"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.5761,
+        "vol_60d_ann": 0.3944,
+        "beta": -0.17,
+        "max_drawdown_1y": -0.1141
+      },
+      "evidence": {
+        "momentum_z": 1.53,
+        "value_z": -0.6,
+        "quality_z": 0.12,
+        "low_risk_z": null,
+        "composite": 57
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1736,
+        "stop_loss_pct": -0.1663,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": null,
+        "short_pct_float": null,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.9365,
+      "fifty2w_pct_from_high": -0.0635
+    },
+    {
+      "date": "2026-03-22",
       "ticker": "1605.T",
-      "current_price": 4383.0,
-      "predicted_price": 8194.38,
-      "predicted_change_pct": 86.96,
-      "ci_pct": 3.23,
+      "current_price": 4700.0,
+      "predicted_price": 5825.49,
+      "predicted_change_pct": 23.95,
+      "ci_pct": 3.16,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.6677,
-        "vol_60d_ann": 0.4468,
-        "beta": 0.2,
-        "max_drawdown_1y": -0.2196
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.1498,
-        "stop_loss_pct": -0.1927,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9883,
-      "fifty2w_pct_from_high": -0.0117
-    },
-    {
-      "date": "2026-03-15",
-      "ticker": "5101.T",
-      "current_price": 6135.0,
-      "predicted_price": 10927.65,
-      "predicted_change_pct": 78.12,
-      "ci_pct": 5.54,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.7819,
-        "vol_60d_ann": 0.5028,
-        "beta": 0.09,
-        "max_drawdown_1y": -0.2809
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.1279,
-        "stop_loss_pct": -0.2257,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.7609,
-      "fifty2w_pct_from_high": -0.2391
-    },
-    {
-      "date": "2026-03-15",
-      "ticker": "4578.T",
-      "current_price": 11005.0,
-      "predicted_price": 15214.65,
-      "predicted_change_pct": 38.25,
-      "ci_pct": 2.72,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.465,
-        "vol_60d_ann": 0.3238,
-        "beta": 0.16,
-        "max_drawdown_1y": -0.1892
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1342,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": null,
-        "short_pct_float": null,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9888,
-      "fifty2w_pct_from_high": -0.0112
-    },
-    {
-      "date": "2026-03-15",
-      "ticker": "6134.T",
-      "current_price": 5321.0,
-      "predicted_price": 6461.76,
-      "predicted_change_pct": 21.44,
-      "ci_pct": 5.24,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 21.44,
+      "predicted_change_pct_clipped": 23.95,
       "sanity_flags": [
         "WARN_HIGH"
       ],
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.7976,
-        "vol_60d_ann": 0.5046,
-        "beta": -0.12,
-        "max_drawdown_1y": -0.1913
+        "vol_20d_ann": 0.4365,
+        "vol_60d_ann": 0.4541,
+        "beta": -0.15,
+        "max_drawdown_1y": -0.1767
+      },
+      "evidence": {
+        "momentum_z": 1.48,
+        "value_z": 0.61,
+        "quality_z": -0.14,
+        "low_risk_z": null,
+        "composite": 62
       },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.1254,
-        "stop_loss_pct": -0.2302,
+        "max_position_weight": 0.2,
+        "stop_loss_pct": -0.126,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
@@ -182,35 +129,42 @@
         "signal": "neutral",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.8666,
-      "fifty2w_pct_from_high": -0.1334
+      "fifty2w_score": 0.979,
+      "fifty2w_pct_from_high": -0.021
     },
     {
-      "date": "2026-03-15",
-      "ticker": "9107.T",
-      "current_price": 2643.5,
-      "predicted_price": 3178.28,
-      "predicted_change_pct": 20.23,
-      "ci_pct": 2.07,
+      "date": "2026-03-22",
+      "ticker": "9101.T",
+      "current_price": 6140.0,
+      "predicted_price": 7565.69,
+      "predicted_change_pct": 23.22,
+      "ci_pct": 1.9,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
-      "predicted_change_pct_clipped": 20.23,
+      "predicted_change_pct_clipped": 23.22,
       "sanity_flags": [
         "WARN_HIGH"
       ],
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.3447,
-        "vol_60d_ann": 0.2623,
-        "beta": 0.05,
-        "max_drawdown_1y": -0.2401
+        "vol_20d_ann": 0.3295,
+        "vol_60d_ann": 0.2536,
+        "beta": -0.05,
+        "max_drawdown_1y": -0.1367
+      },
+      "evidence": {
+        "momentum_z": -0.66,
+        "value_z": 1.46,
+        "quality_z": -0.19,
+        "low_risk_z": null,
+        "composite": 53
       },
       "sizing": {
         "vol_target_ann": 0.1,
         "max_position_weight": 0.2,
-        "stop_loss_pct": -0.0995,
+        "stop_loss_pct": -0.0951,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
@@ -219,8 +173,8 @@
         "signal": "neutral",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9641,
-      "fifty2w_pct_from_high": -0.0359
+      "fifty2w_score": 0.9802,
+      "fifty2w_pct_from_high": -0.0198
     }
   ]
 }

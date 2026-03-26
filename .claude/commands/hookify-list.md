@@ -1,82 +1,82 @@
 ---
-description: List all configured hookify rules
+description: 設定済みの hookify ルールを一覧表示する
 allowed-tools: ["Glob", "Read", "Skill"]
 ---
 
-# List Hookify Rules
+# Hookify ルール一覧
 
-**Load hookify:writing-rules skill first** to understand rule format.
+**まず hookify:writing-rules スキルをロード**してルール形式を理解してください。
 
-Show all configured hookify rules in the project.
+プロジェクトに設定されているすべての hookify ルールを表示します。
 
-## Steps
+## 手順
 
-1. Use Glob tool to find all hookify rule files:
+1. Glob ツールを使って全ての hookify ルールファイルを検索:
    ```
    pattern: ".claude/hookify.*.local.md"
    ```
 
-2. For each file found:
-   - Use Read tool to read the file
-   - Extract frontmatter fields: name, enabled, event, pattern
-   - Extract message preview (first 100 chars)
+2. 見つかった各ファイルに対して:
+   - Read ツールでファイルを読み込む
+   - フロントマターのフィールドを抽出: name, enabled, event, pattern
+   - メッセージのプレビューを抽出（先頭100文字）
 
-3. Present results in a table:
+3. 結果をテーブルで表示:
 
 ```
-## Configured Hookify Rules
+## 設定済み Hookify ルール
 
-| Name | Enabled | Event | Pattern | File |
-|------|---------|-------|---------|------|
-| warn-dangerous-rm | ✅ Yes | bash | rm\s+-rf | hookify.dangerous-rm.local.md |
-| warn-console-log | ✅ Yes | file | console\.log\( | hookify.console-log.local.md |
-| check-tests | ❌ No | stop | .* | hookify.require-tests.local.md |
+| 名前 | 有効 | イベント | パターン | ファイル |
+|------|------|----------|----------|----------|
+| warn-dangerous-rm | ✅ はい | bash | rm\s+-rf | hookify.dangerous-rm.local.md |
+| warn-console-log | ✅ はい | file | console\.log\( | hookify.console-log.local.md |
+| check-tests | ❌ いいえ | stop | .* | hookify.require-tests.local.md |
 
-**Total**: 3 rules (2 enabled, 1 disabled)
+**合計**: 3 ルール（2 有効、1 無効）
 ```
 
-4. For each rule, show a brief preview:
+4. 各ルールの概要を表示:
 ```
 ### warn-dangerous-rm
-**Event**: bash
-**Pattern**: `rm\s+-rf`
-**Message**: "⚠️ **Dangerous rm command detected!** This command could delete..."
+**イベント**: bash
+**パターン**: `rm\s+-rf`
+**メッセージ**: "⚠️ **危険な rm コマンドを検出しました！** このコマンドは削除する可能性があります..."
 
-**Status**: ✅ Active
-**File**: .claude/hookify.dangerous-rm.local.md
+**ステータス**: ✅ アクティブ
+**ファイル**: .claude/hookify.dangerous-rm.local.md
 ```
 
-5. Add helpful footer:
+5. フッターを追加:
 ```
 ---
 
-To modify a rule: Edit the .local.md file directly
-To disable a rule: Set `enabled: false` in frontmatter
-To enable a rule: Set `enabled: true` in frontmatter
-To delete a rule: Remove the .local.md file
-To create a rule: Use `/hookify` command
+ルールを変更するには: .local.md ファイルを直接編集してください
+ルールを無効にするには: フロントマターで `enabled: false` を設定
+ルールを有効にするには: フロントマターで `enabled: true` を設定
+ルールを削除するには: .local.md ファイルを削除
+ルールを作成するには: `/hookify` コマンドを使用
 
-**Remember**: Changes take effect immediately - no restart needed
+**注意**: 変更は即座に反映されます。再起動は不要です
 ```
 
-## If No Rules Found
+## ルールが見つからない場合
 
-If no hookify rules exist:
+hookify ルールが存在しない場合:
 
 ```
-## No Hookify Rules Configured
+## Hookify ルールが設定されていません
 
-You haven't created any hookify rules yet.
+まだ hookify ルールを作成していません。
 
-To get started:
-1. Use `/hookify` to analyze conversation and create rules
-2. Or manually create `.claude/hookify.my-rule.local.md` files
-3. See `/hookify:help` for documentation
+開始するには:
+1. `/hookify` を使って会話を分析してルールを作成
+2. または `.claude/hookify.my-rule.local.md` ファイルを手動で作成
+3. `/hookify:help` でドキュメントを確認
 
-Example:
+例:
 ```
-/hookify Warn me when I use console.log
+/hookify console.log を使ったときに警告して
 ```
 
-Check `${CLAUDE_PLUGIN_ROOT}/examples/` for example rule files.
+`${CLAUDE_PLUGIN_ROOT}/examples/` でルールファイルの例を確認できます。
 ```

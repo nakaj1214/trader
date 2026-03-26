@@ -1,38 +1,38 @@
 ---
-description: Enable or disable hookify rules interactively
+description: hookify ルールをインタラクティブに有効化/無効化する
 allowed-tools: ["Glob", "Read", "Edit", "AskUserQuestion", "Skill"]
 ---
 
-# Configure Hookify Rules
+# Hookify ルールの設定
 
-**Load hookify:writing-rules skill first** to understand rule format.
+**まず hookify:writing-rules スキルをロードして**ルールの形式を理解する。
 
-Enable or disable existing hookify rules using an interactive interface.
+インタラクティブなインターフェースを使って既存の hookify ルールを有効化/無効化する。
 
-## Steps
+## ステップ
 
-### 1. Find Existing Rules
+### 1. 既存ルールの検索
 
-Use Glob tool to find all hookify rule files:
+Glob ツールを使ってすべての hookify ルールファイルを検索する:
 ```
 pattern: ".claude/hookify.*.local.md"
 ```
 
-If no rules found, inform user:
+ルールが見つからない場合、ユーザーに通知する:
 ```
-No hookify rules configured yet. Use `/hookify` to create your first rule.
+hookify ルールはまだ設定されていません。`/hookify` を使って最初のルールを作成してください。
 ```
 
-### 2. Read Current State
+### 2. 現在の状態を読み取る
 
-For each rule file:
-- Read the file
-- Extract `name` and `enabled` fields from frontmatter
-- Build list of rules with current state
+各ルールファイルに対して:
+- ファイルを読み取る
+- フロントマターから `name` と `enabled` フィールドを抽出する
+- 現在の状態付きのルールリストを構築する
 
-### 3. Ask User Which Rules to Toggle
+### 3. 切り替えるルールをユーザーに選択してもらう
 
-Use AskUserQuestion to let user select rules:
+AskUserQuestion を使ってユーザーにルールを選択させる:
 
 ```json
 {
@@ -60,69 +60,69 @@ Use AskUserQuestion to let user select rules:
 }
 ```
 
-**Option format:**
-- Label: `{rule-name} (currently {enabled|disabled})`
-- Description: Brief description from rule's message or pattern
+**オプションの形式:**
+- ラベル: `{rule-name} (currently {enabled|disabled})`
+- 説明: ルールの message または pattern からの簡潔な説明
 
-### 4. Parse User Selection
+### 4. ユーザー選択の解析
 
-For each selected rule:
-- Determine current state from label (enabled/disabled)
-- Toggle state: enabled → disabled, disabled → enabled
+選択された各ルールに対して:
+- ラベルから現在の状態を判定する（enabled/disabled）
+- 状態を切り替える: enabled → disabled、disabled → enabled
 
-### 5. Update Rule Files
+### 5. ルールファイルの更新
 
-For each rule to toggle:
-- Use Read tool to read current content
-- Use Edit tool to change `enabled: true` to `enabled: false` (or vice versa)
-- Handle both with and without quotes
+切り替える各ルールに対して:
+- Read ツールで現在の内容を読み取る
+- Edit ツールで `enabled: true` を `enabled: false` に変更する（またはその逆）
+- 引用符の有無両方に対応する
 
-**Edit pattern for enabling:**
+**有効化の編集パターン:**
 ```
 old_string: "enabled: false"
 new_string: "enabled: true"
 ```
 
-**Edit pattern for disabling:**
+**無効化の編集パターン:**
 ```
 old_string: "enabled: true"
 new_string: "enabled: false"
 ```
 
-### 6. Confirm Changes
+### 6. 変更の確認
 
-Show user what was changed:
+ユーザーに変更内容を表示する:
 
 ```
-## Hookify Rules Updated
+## Hookify ルール更新完了
 
-**Enabled:**
+**有効化:**
 - warn-console-log
 
-**Disabled:**
+**無効化:**
 - warn-dangerous-rm
 
-**Unchanged:**
+**変更なし:**
 - require-tests
 
-Changes apply immediately - no restart needed
+変更はすぐに適用されます - 再起動は不要
 ```
 
-## Important Notes
+## 重要な注意事項
 
-- Changes take effect immediately on next tool use
-- You can also manually edit .claude/hookify.*.local.md files
-- To permanently remove a rule, delete its .local.md file
-- Use `/hookify:list` to see all configured rules
+- 変更は次のツール使用時からすぐに有効になる
+- .claude/hookify.*.local.md ファイルを手動で編集することもできる
+- ルールを完全に削除するには、.local.md ファイルを削除する
+- 設定済みのすべてのルールを確認するには `/hookify:list` を使用する
 
-## Edge Cases
+## エッジケース
 
-**No rules to configure:**
-- Show message about using `/hookify` to create rules first
+**設定するルールがない場合:**
+- `/hookify` を使ってルールを作成するようメッセージを表示する
 
-**User selects no rules:**
-- Inform that no changes were made
+**ユーザーがルールを選択しなかった場合:**
+- 変更が行われなかったことを通知する
 
-**File read/write errors:**
-- Inform user of specific error
-- Suggest manual editing as fallback
+**ファイルの読み取り/書き込みエラー:**
+- 具体的なエラーをユーザーに通知する
+- フォールバックとして手動編集を提案する

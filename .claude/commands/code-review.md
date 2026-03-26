@@ -1,53 +1,53 @@
-Review uncommitted code changes across three severity tiers. Delegates to the code-reviewer agent.
+コミットされていないコード変更を3段階の重大度で レビューする。code-reviewer エージェントに委譲する。
 
-## Process
+## プロセス
 
-### 1. Identify Changes
+### 1. 変更の特定
 ```bash
 git diff HEAD
 git diff --staged
 git status
 ```
 
-### 2. Three-Tier Review
+### 2. 3段階レビュー
 
-**CRITICAL (Block)**
-- Hardcoded credentials, API keys, tokens
-- SQL injection vulnerabilities
-- XSS attack vectors
-- Authentication bypasses
-- Path traversal risks
-- "Never approve code with security vulnerabilities!"
+**CRITICAL（ブロック）**
+- ハードコードされた認証情報、API キー、トークン
+- SQL インジェクション脆弱性
+- XSS 攻撃ベクトル
+- 認証バイパス
+- パストラバーサルのリスク
+- 「セキュリティ脆弱性のあるコードは絶対に承認しない！」
 
-**HIGH (Fix Before Merge)**
-- Functions exceeding 50 lines
-- Files over 800 lines
-- Nesting depth beyond 4 levels
-- Missing error handling
-- Debug statements left in code (`console.log`, `print`, `debugger`)
-- Insufficient test coverage for new logic
+**HIGH（マージ前に修正）**
+- 50行を超える関数
+- 800行を超えるファイル
+- 4レベルを超えるネスト深度
+- エラーハンドリングの欠如
+- コードに残されたデバッグ文（`console.log`、`print`、`debugger`）
+- 新しいロジックに対するテストカバレッジの不足
 
-**MEDIUM (Recommended)**
-- Mutable shared state patterns
-- Missing accessibility attributes
-- Test coverage gaps
-- Inconsistent naming conventions
+**MEDIUM（推奨）**
+- ミュータブルな共有状態パターン
+- アクセシビリティ属性の欠如
+- テストカバレッジのギャップ
+- 一貫性のない命名規則
 
-### 3. Output Format
+### 3. 出力形式
 
 ```markdown
-## Code Review: [scope]
+## コードレビュー: [スコープ]
 
-### CRITICAL Issues
-- [file:line] Issue + remediation
+### CRITICAL な問題
+- [file:line] 問題 + 修正方法
 
-### HIGH Issues
-- [file:line] Issue + remediation
+### HIGH な問題
+- [file:line] 問題 + 修正方法
 
-### MEDIUM Issues
-- [file:line] Suggestion
+### MEDIUM な問題
+- [file:line] 提案
 
-### Verdict: [Approve / Warning / Block]
+### 判定: [承認 / 警告 / ブロック]
 ```
 
-**Rule:** Block commits on critical or high-priority issues. Provide remediation with every finding.
+**ルール:** CRITICAL または HIGH の問題がある場合はコミットをブロックする。すべての指摘に修正方法を添える。

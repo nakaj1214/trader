@@ -1,0 +1,6 @@
+.claude/settings.json
+.claude/settings.local.json
+.claude/logs/
+.claude/logs/approval_audit.jsonl
+old.claude/*
+settings.json

@@ -1,50 +1,50 @@
-Manage workflow snapshots to track progress at key milestones.
+主要なマイルストーンでの進捗を追跡するため、ワークフロースナップショットを管理する。
 
-## Usage
+## 使い方
 
 ```
-/checkpoint create <name>   - Save current state as named checkpoint
-/checkpoint verify <name>   - Compare current state vs saved checkpoint
-/checkpoint list            - Display all saved checkpoints
-/checkpoint clear           - Remove old checkpoints (keep last 5)
+/checkpoint create <name>   - 現在の状態を名前付きチェックポイントとして保存
+/checkpoint verify <name>   - 現在の状態と保存されたチェックポイントを比較
+/checkpoint list            - 保存済みの全チェックポイントを表示
+/checkpoint clear           - 古いチェックポイントを削除（最新5件を保持）
 ```
 
-## Create Mode
+## 作成モード
 
-1. Verify clean working state
-2. Create git stash or commit with checkpoint name
-3. Log to `.claude/checkpoints.log`:
+1. クリーンな作業状態を確認する
+2. チェックポイント名で git stash またはコミットを作成する
+3. `.claude/checkpoints.log` に記録する:
    ```
    [timestamp] [name] [sha]
    ```
 
-## Verify Mode
+## 検証モード
 
-Compare against saved checkpoint, reporting changes in:
-- Files modified since checkpoint
-- Test results (before vs after)
-- Code coverage metrics
-- Build status
+保存されたチェックポイントと比較し、以下の変更を報告する:
+- チェックポイント以降に変更されたファイル
+- テスト結果（前後の比較）
+- コードカバレッジメトリクス
+- ビルドステータス
 
-## List Mode
+## 一覧モード
 
-Display all checkpoints:
+全チェックポイントを表示する:
 ```
 CHECKPOINT          TIMESTAMP           SHA       STATUS
 feature-start       2026-02-27 10:00   abc123    behind
 auth-complete       2026-02-27 14:00   def456    current
 ```
 
-## Typical Checkpoint Flow
+## 典型的なチェックポイントフロー
 
 ```
 /checkpoint create feature-start
-# ... implement auth ...
+# ... 認証を実装 ...
 /checkpoint create auth-complete
-/checkpoint verify feature-start    # Shows what changed
-# ... implement UI ...
+/checkpoint verify feature-start    # 何が変わったかを表示
+# ... UI を実装 ...
 /checkpoint create ui-complete
-# Ready for PR
+# PR の準備完了
 ```
 
-Checkpoints integrate with git — each creates a recoverable state you can return to if the implementation direction changes.
+チェックポイントは git と統合されており、実装方針が変わった場合に戻ることができる回復可能な状態を作成する。

@@ -129,7 +129,7 @@ FastAPIでCRUD APIを作成して。use context7
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:/Users/nakashima/Desktop/claude"
+        "<YOUR_PROJECT_ROOT>"
       ]
     }
   }

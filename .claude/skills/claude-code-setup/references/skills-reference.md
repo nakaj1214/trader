@@ -1,112 +1,112 @@
-# Skills Recommendations
+# スキル推奨
 
-Skills are packaged expertise with workflows, reference materials, and best practices. Create them in `.claude/skills/<name>/SKILL.md`. Skills can be invoked by Claude automatically when relevant, or by users directly with `/skill-name`.
+スキルは、ワークフロー、リファレンス資料、ベストプラクティスをパッケージ化した専門知識です。`.claude/skills/<name>/SKILL.md` に作成します。スキルは関連する場面で Claude が自動的に呼び出すことも、ユーザーが `/skill-name` で直接呼び出すこともできます。
 
-Some pre-built skills are available through official plugins (install via `/plugin install`).
+一部のビルド済みスキルは公式プラグインを通じて利用可能です（`/plugin install` でインストール）。
 
-**Note**: These are common patterns. Use web search to find skill ideas specific to the codebase's tools and frameworks.
-
----
-
-## Available from Official Plugins
-
-### Plugin Development (plugin-dev)
-
-| Skill | Best For |
-|-------|----------|
-| **skill-development** | Creating new skills with proper structure |
-| **hook-development** | Building hooks for automation |
-| **command-development** | Creating slash commands |
-| **agent-development** | Building specialized subagents |
-| **mcp-integration** | Integrating MCP servers into plugins |
-| **plugin-structure** | Understanding plugin architecture |
-
-### Git Workflows (commit-commands)
-
-| Skill | Best For |
-|-------|----------|
-| **commit** | Creating git commits with proper messages |
-| **commit-push-pr** | Full commit, push, and PR workflow |
-
-### Frontend (frontend-design)
-
-| Skill | Best For |
-|-------|----------|
-| **frontend-design** | Creating polished UI components |
-
-**Value**: Creates distinctive, high-quality UI instead of generic AI aesthetics.
-
-### Automation Rules (hookify)
-
-| Skill | Best For |
-|-------|----------|
-| **writing-rules** | Creating hookify rules for automation |
-
-### Feature Development (feature-dev)
-
-| Skill | Best For |
-|-------|----------|
-| **feature-dev** | End-to-end feature development workflow |
+**注意**: これらは一般的なパターンです。コードベースのツールやフレームワークに特化したスキルのアイデアを見つけるには、Web 検索を使用してください。
 
 ---
 
-## Quick Reference: Official Plugin Skills
+## 公式プラグインから利用可能
 
-| Codebase Signal | Skill | Plugin |
+### プラグイン開発 (plugin-dev)
+
+| スキル | 最適な用途 |
+|-------|----------|
+| **skill-creator** | スキルの作成、テスト、改善 |
+| **hook-development** | 自動化用フックの構築 |
+| **command-development** | スラッシュコマンドの作成 |
+| **agent-development** | 専門サブエージェントの構築 |
+| **mcp-integration** | プラグインへの MCP サーバー統合 |
+| **plugin-structure** | プラグインアーキテクチャの理解 |
+
+### Git ワークフロー (commit-commands)
+
+| スキル | 最適な用途 |
+|-------|----------|
+| **commit** | 適切なメッセージ付き git コミットの作成 |
+| **commit-push-pr** | コミット、プッシュ、PR の完全なワークフロー |
+
+### フロントエンド (frontend-design)
+
+| スキル | 最適な用途 |
+|-------|----------|
+| **frontend-design** | 洗練された UI コンポーネントの作成 |
+
+**価値**: 汎用的な AI 的美学ではなく、独自性のある高品質な UI を作成します。
+
+### 自動化ルール (hookify)
+
+| スキル | 最適な用途 |
+|-------|----------|
+| **writing-rules** | 自動化用 hookify ルールの作成 |
+
+### 機能開発 (feature-dev)
+
+| スキル | 最適な用途 |
+|-------|----------|
+| **feature-dev** | エンドツーエンドの機能開発ワークフロー |
+
+---
+
+## クイックリファレンス: 公式プラグインスキル
+
+| コードベースのシグナル | スキル | プラグイン |
 |-----------------|-------|--------|
-| Building plugins | skill-development | plugin-dev |
-| Git commits | commit | commit-commands |
+| プラグインの構築 | skill-creator | - |
+| Git コミット | commit | commit-commands |
 | React/Vue/Angular | frontend-design | frontend-design |
-| Automation rules | writing-rules | hookify |
-| Feature planning | feature-dev | feature-dev |
+| 自動化ルール | writing-rules | hookify |
+| 機能計画 | feature-dev | feature-dev |
 
 ---
 
-## Custom Project Skills
+## カスタムプロジェクトスキル
 
-Create project-specific skills in `.claude/skills/<name>/SKILL.md`.
+プロジェクト固有のスキルは `.claude/skills/<name>/SKILL.md` に作成します。
 
-### Skill Structure
+### スキルの構造
 
 ```
 .claude/skills/
 └── my-skill/
-    ├── SKILL.md           # Main instructions (required)
-    ├── template.yaml      # Template to apply
+    ├── SKILL.md           # メインの手順書（必須）
+    ├── template.yaml      # 適用するテンプレート
     ├── scripts/
-    │   └── validate.sh    # Script to run
-    └── examples/          # Reference examples
+    │   └── validate.sh    # 実行するスクリプト
+    └── examples/          # リファレンス例
 ```
 
-### Frontmatter Reference
+### フロントマターリファレンス
 
 ```yaml
 ---
 name: skill-name
-description: What this skill does and when to use it
-disable-model-invocation: true  # Only user can invoke (for side effects)
-user-invocable: false           # Only Claude can invoke (for background knowledge)
-allowed-tools: Read, Grep, Glob # Restrict tool access
-context: fork                   # Run in isolated subagent
-agent: Explore                  # Which agent type when forked
+description: このスキルの機能と使用するタイミング
+disable-model-invocation: true  # ユーザーのみ呼び出し可能（副作用がある場合）
+user-invocable: false           # Claude のみ呼び出し可能（バックグラウンド知識用）
+allowed-tools: Read, Grep, Glob # ツールアクセスを制限
+context: fork                   # 分離されたサブエージェントで実行
+agent: Explore                  # フォーク時のエージェントタイプ
 ---
 ```
 
-### Invocation Control
+### 呼び出し制御
 
-| Setting | User | Claude | Use for |
+| 設定 | ユーザー | Claude | 用途 |
 |---------|------|--------|---------|
-| (default) | ✓ | ✓ | General-purpose skills |
-| `disable-model-invocation: true` | ✓ | ✗ | Side effects (deploy, send) |
-| `user-invocable: false` | ✗ | ✓ | Background knowledge |
+| （デフォルト） | ✓ | ✓ | 汎用スキル |
+| `disable-model-invocation: true` | ✓ | ✗ | 副作用あり（デプロイ、送信） |
+| `user-invocable: false` | ✗ | ✓ | バックグラウンド知識 |
 
 ---
 
-## Custom Skill Examples
+## カスタムスキルの例
 
-### API Documentation with OpenAPI Template
+### OpenAPI テンプレートによる API ドキュメント
 
-Apply a YAML template to generate consistent API docs:
+YAML テンプレートを適用して一貫した API ドキュメントを生成:
 
 ```
 .claude/skills/api-doc/
@@ -153,9 +153,9 @@ paths:
 
 ---
 
-### Database Migration Generator with Script
+### スクリプト付きデータベースマイグレーションジェネレーター
 
-Generate and validate migrations using a bundled script:
+バンドルされたスクリプトを使ってマイグレーションを生成・検証:
 
 ```
 .claude/skills/create-migration/
@@ -190,9 +190,9 @@ npx prisma validate 2>&1 || echo "Validation failed"
 
 ---
 
-### Test Generator with Examples
+### サンプル付きテストジェネレーター
 
-Generate tests following project patterns:
+プロジェクトのパターンに従ってテストを生成:
 
 ```
 .claude/skills/gen-test/
@@ -224,9 +224,9 @@ Reference these examples for the expected patterns:
 
 ---
 
-### Component Generator with Template
+### テンプレート付きコンポーネントジェネレーター
 
-Scaffold new components from a template:
+テンプレートから新しいコンポーネントをスキャフォールド:
 
 ```
 .claude/skills/new-component/
@@ -258,9 +258,9 @@ Replace {{component-name}} with the kebab-case name.
 
 ---
 
-### PR Review with Checklist
+### チェックリスト付き PR レビュー
 
-Review PRs against a project-specific checklist:
+プロジェクト固有のチェックリストに対して PR をレビュー:
 
 ```
 .claude/skills/pr-check/
@@ -288,20 +288,20 @@ For each item, mark ✅ or ❌ with explanation.
 
 **checklist.md:**
 ```markdown
-## PR Checklist
+## PR チェックリスト
 
-- [ ] Tests added for new functionality
-- [ ] No console.log statements
-- [ ] Error handling includes user-facing messages
-- [ ] API changes are backwards compatible
-- [ ] Database migrations are reversible
+- [ ] 新機能にテストが追加されている
+- [ ] console.log ステートメントがない
+- [ ] エラーハンドリングにユーザー向けメッセージが含まれている
+- [ ] API の変更が後方互換性を保っている
+- [ ] データベースマイグレーションが元に戻せる
 ```
 
 ---
 
-### Release Notes Generator
+### リリースノートジェネレーター
 
-Generate release notes from git history:
+git 履歴からリリースノートを生成:
 
 **SKILL.md:**
 ```yaml
@@ -324,9 +324,9 @@ Generate release notes:
 
 ---
 
-### Project Conventions (Claude-only)
+### プロジェクト規約（Claude 専用）
 
-Background knowledge Claude applies automatically:
+Claude が自動的に適用するバックグラウンド知識:
 
 **SKILL.md:**
 ```yaml
@@ -355,9 +355,9 @@ user-invocable: false
 
 ---
 
-### Environment Setup
+### 環境セットアップ
 
-Onboard new developers with setup script:
+セットアップスクリプトで新しい開発者をオンボーディング:
 
 ```
 .claude/skills/setup-dev/
@@ -387,17 +387,17 @@ Report any issues encountered.
 
 ---
 
-## Argument Patterns
+## 引数パターン
 
-| Pattern | Meaning | Example |
+| パターン | 意味 | 例 |
 |---------|---------|---------|
-| `$ARGUMENTS` | All args as string | `/deploy staging` → "staging" |
+| `$ARGUMENTS` | すべての引数を文字列として | `/deploy staging` → "staging" |
 
-Arguments are appended as `ARGUMENTS: <value>` if `$ARGUMENTS` isn't in the skill.
+スキル内に `$ARGUMENTS` がない場合、引数は `ARGUMENTS: <value>` として追加されます。
 
-## Dynamic Context Injection
+## 動的コンテキスト注入
 
-Use `!`command`` to inject live data before the skill runs:
+`!`command`` を使用してスキル実行前にライブデータを注入:
 
 ```yaml
 ## Current State
@@ -405,4 +405,4 @@ Use `!`command`` to inject live data before the skill runs:
 - Status: !`git status --short`
 ```
 
-The command output replaces the placeholder before Claude sees the skill content.
+コマンドの出力がプレースホルダーを置換してから、Claude がスキルの内容を参照します。

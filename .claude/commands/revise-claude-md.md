@@ -1,54 +1,54 @@
 ---
-description: Update CLAUDE.md with learnings from this session
+description: このセッションからの学びで CLAUDE.md を更新する
 allowed-tools: Read, Edit, Glob
 ---
 
-Review this session for learnings about working with Claude Code in this codebase. Update CLAUDE.md with context that would help future Claude sessions be more effective.
+このセッションで、このコードベースでの Claude Code の効果的な使い方について学んだことをレビューします。将来の Claude セッションがより効果的に動作するためのコンテキストで CLAUDE.md を更新します。
 
-## Step 1: Reflect
+## ステップ 1: 振り返り
 
-What context was missing that would have helped Claude work more effectively?
-- Bash commands that were used or discovered
-- Code style patterns followed
-- Testing approaches that worked
-- Environment/configuration quirks
-- Warnings or gotchas encountered
+Claude がより効果的に動作するために不足していたコンテキストは何か？
+- 使用または発見した Bash コマンド
+- 遵守したコードスタイルパターン
+- 効果的だったテストアプローチ
+- 環境/設定の癖
+- 遭遇した警告やハマりポイント
 
-## Step 2: Find CLAUDE.md Files
+## ステップ 2: CLAUDE.md ファイルの検索
 
 ```bash
 find . -name "CLAUDE.md" -o -name ".claude.local.md" 2>/dev/null | head -20
 ```
 
-Decide where each addition belongs:
-- `CLAUDE.md` - Team-shared (checked into git)
-- `.claude.local.md` - Personal/local only (gitignored)
+各追加内容がどこに属するか判断:
+- `CLAUDE.md` - チーム共有（git にコミット）
+- `.claude.local.md` - 個人/ローカル専用（gitignore 対象）
 
-## Step 3: Draft Additions
+## ステップ 3: 追加内容の下書き
 
-**Keep it concise** - one line per concept. CLAUDE.md is part of the prompt, so brevity matters.
+**簡潔に** - 1つの概念につき1行。CLAUDE.md はプロンプトの一部なので、簡潔さが重要です。
 
-Format: `<command or pattern>` - `<brief description>`
+形式: `<コマンドまたはパターン>` - `<簡潔な説明>`
 
-Avoid:
-- Verbose explanations
-- Obvious information
-- One-off fixes unlikely to recur
+避けること:
+- 冗長な説明
+- 明白な情報
+- 再発しにくい一回限りの修正
 
-## Step 4: Show Proposed Changes
+## ステップ 4: 提案された変更の表示
 
-For each addition:
+各追加内容について:
 
 ```
-### Update: ./CLAUDE.md
+### 更新: ./CLAUDE.md
 
-**Why:** [one-line reason]
+**理由:** [1行の理由]
 
 \`\`\`diff
-+ [the addition - keep it brief]
++ [追加内容 - 簡潔に]
 \`\`\`
 ```
 
-## Step 5: Apply with Approval
+## ステップ 5: 承認を得て適用
 
-Ask if the user wants to apply the changes. Only edit files they approve.
+ユーザーに変更を適用するか確認します。承認されたファイルのみ編集します。

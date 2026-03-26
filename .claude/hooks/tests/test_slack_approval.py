@@ -21,13 +21,13 @@ from unittest.mock import MagicMock, patch
 import importlib.util
 
 # Add hooks directory to path
-HOOKS_DIR = Path(__file__).parent.parent
-sys.path.insert(0, str(HOOKS_DIR))
+HOOKS_DIR = Path(__file__).parent.parent  # .claude/hooks/
+sys.path.insert(0, str(HOOKS_DIR / "slack"))
 import slack_approval
 
 # notify-slack.py has a hyphen, so use importlib
 _spec = importlib.util.spec_from_file_location(
-    "notify_slack", HOOKS_DIR / "notify-slack.py"
+    "notify_slack", HOOKS_DIR / "slack" / "notify-slack.py"
 )
 notify_slack = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(notify_slack)
@@ -37,7 +37,7 @@ sys.modules["notify_slack"] = notify_slack  # required for patch("notify_slack.x
 # Helpers
 # ---------------------------------------------------------------------------
 
-PATTERNS_PATH = Path(__file__).parent.parent / "approval_skip_patterns.txt"
+PATTERNS_PATH = HOOKS_DIR / "slack" / "approval_skip_patterns.txt"
 
 
 def make_hook_input(command: str, tool_name: str = "Bash") -> str:
@@ -457,32 +457,41 @@ class TestSlackApprovalIntegration(unittest.TestCase):
 class TestNotifySlackHook(unittest.TestCase):
     """Tests for notify-slack.py handle_hook with AskUserQuestion."""
 
-    def _run_hook(self, tool_input: dict) -> bool:
-        """Run handle_hook() and return whether send_slack was called."""
+    def _run_hook(self, tool_input: dict):
+        """Run handle_hook() and return (called, notification_text).
+
+        Patches run_approval_flow to capture the notification text
+        without making actual Slack API calls.
+        """
         hook_data = json.dumps({
             "tool_name": "AskUserQuestion",
             "tool_input": tool_input,
         })
-        with patch("notify_slack.send_slack") as mock_send, \
+        with patch("notify_slack.run_approval_flow") as mock_flow, \
+             patch("notify_slack.BOT_TOKEN", "xoxb-test"), \
+             patch("notify_slack.CHANNEL_ID", "C0TEST"), \
+             patch("notify_slack.APPROVER_USER_ID", "U0TEST"), \
              patch("sys.stdin", StringIO(hook_data)):
             try:
                 notify_slack.handle_hook()
             except SystemExit:
                 pass
-            return mock_send.called, mock_send.call_args
+            if mock_flow.called:
+                text = mock_flow.call_args[0][0]  # first positional arg
+                return True, text
+            return False, ""
 
     def test_single_question_no_options(self):
         """Simple question without options."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [{"question": "続行しますか？", "header": "確認", "options": []}]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         self.assertIn("続行しますか？", message)
 
     def test_question_with_options_shows_choices(self):
         """Question with options should include choices in the message."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [{
                 "question": "どちらを使用しますか？",
                 "header": "選択",
@@ -493,14 +502,13 @@ class TestNotifySlackHook(unittest.TestCase):
             }]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         self.assertIn("どちらを使用しますか？", message)
         self.assertIn("Option A", message)
         self.assertIn("Option B", message)
 
     def test_multiple_questions_all_shown(self):
         """Multiple questions should all appear in the message."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [
                 {"question": "質問1", "header": "Q1", "options": []},
                 {"question": "質問2", "header": "Q2", "options": [
@@ -510,34 +518,33 @@ class TestNotifySlackHook(unittest.TestCase):
             ]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         self.assertIn("質問1", message)
         self.assertIn("質問2", message)
         self.assertIn("はい", message)
         self.assertIn("いいえ", message)
 
     def test_empty_questions_skips_send(self):
-        """No questions → send_slack should not be called."""
+        """No questions → approval flow should not be triggered."""
         called, _ = self._run_hook({"questions": []})
         self.assertFalse(called)
 
     def test_non_askuserquestion_tool_skips(self):
-        """Non-AskUserQuestion tool → send_slack should not be called."""
+        """Non-AskUserQuestion tool → approval flow should not be triggered."""
         hook_data = json.dumps({
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
         })
-        with patch("notify_slack.send_slack") as mock_send, \
+        with patch("notify_slack.run_approval_flow") as mock_flow, \
              patch("sys.stdin", StringIO(hook_data)):
             try:
                 notify_slack.handle_hook()
             except SystemExit:
                 pass
-            self.assertFalse(mock_send.called)
+            self.assertFalse(mock_flow.called)
 
     def test_other_option_auto_appended(self):
         """When options exist but none is 'Other', it should be appended."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [{
                 "question": "どちらにしますか？",
                 "header": "選択",
@@ -548,12 +555,11 @@ class TestNotifySlackHook(unittest.TestCase):
             }]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         self.assertIn("Other", message)
 
     def test_other_option_not_duplicated(self):
         """When 'Other' already exists in options, it should not be added again."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [{
                 "question": "選んでください",
                 "header": "選択",
@@ -564,17 +570,15 @@ class TestNotifySlackHook(unittest.TestCase):
             }]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         # "Other" should appear exactly once
         self.assertEqual(message.count("Other"), 1)
 
     def test_no_options_no_other_appended(self):
         """When question has no options, 'Other' should not be appended."""
-        called, call_args = self._run_hook({
+        called, message = self._run_hook({
             "questions": [{"question": "続行しますか？", "header": "確認", "options": []}]
         })
         self.assertTrue(called)
-        message = call_args.kwargs.get("message", call_args[1].get("message", ""))
         self.assertNotIn("Other", message)
 
 
@@ -594,13 +598,19 @@ class TestIPCMode(unittest.TestCase):
             with patch.object(slack_approval, "DAEMON_PID_FILE", pid_path):
                 self.assertFalse(slack_approval.is_daemon_running())
 
-    def test_stale_pid_returns_false(self):
+    def test_pid_file_exists_returns_true(self):
+        """is_daemon_running checks file existence only (not PID validity).
+
+        This is intentional: the daemon may run in a Docker container where
+        PID namespaces differ. A stale PID file causes a 5-min IPC timeout
+        (fail-closed), which is acceptable.
+        """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pid", delete=False) as f:
-            f.write("999999999")  # almost certainly no such PID
+            f.write("999999999")  # stale PID — still returns True (file exists)
             pid_path = Path(f.name)
         try:
             with patch.object(slack_approval, "DAEMON_PID_FILE", pid_path):
-                self.assertFalse(slack_approval.is_daemon_running())
+                self.assertTrue(slack_approval.is_daemon_running())
         finally:
             pid_path.unlink(missing_ok=True)
 
@@ -614,13 +624,14 @@ class TestIPCMode(unittest.TestCase):
         finally:
             pid_path.unlink(missing_ok=True)
 
-    def test_invalid_pid_content_returns_false(self):
+    def test_invalid_pid_content_still_returns_true(self):
+        """File with invalid content still returns True (existence-based check)."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pid", delete=False) as f:
             f.write("not-a-number")
             pid_path = Path(f.name)
         try:
             with patch.object(slack_approval, "DAEMON_PID_FILE", pid_path):
-                self.assertFalse(slack_approval.is_daemon_running())
+                self.assertTrue(slack_approval.is_daemon_running())
         finally:
             pid_path.unlink(missing_ok=True)
 

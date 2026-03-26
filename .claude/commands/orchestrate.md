@@ -1,89 +1,89 @@
-Run sequential multi-agent workflows where each agent hands off structured context to the next.
+各エージェントが構造化されたコンテキストを次のエージェントに引き継ぐ、順序付きマルチエージェントワークフローを実行します。
 
-## Usage
+## 使い方
 
 ```
-/orchestrate feature     - Full feature implementation
-/orchestrate bugfix      - Bug investigation and fix
-/orchestrate refactor    - Safe refactoring sequence
-/orchestrate security    - Security-focused audit
-/orchestrate custom <agents>  - Custom agent sequence (comma-separated)
+/orchestrate feature     - 完全な機能実装
+/orchestrate bugfix      - バグ調査と修正
+/orchestrate refactor    - 安全なリファクタリング手順
+/orchestrate security    - セキュリティ重視の監査
+/orchestrate custom <agents>  - カスタムエージェント順序（カンマ区切り）
 ```
 
-## Built-in Workflows
+## 組み込みワークフロー
 
-### Feature Implementation
+### 機能実装
 ```
 planner → tdd-guide → code-reviewer → security-reviewer
 ```
-Full cycle: plan → test-first → implement → review
+フルサイクル: 計画 → テストファースト → 実装 → レビュー
 
-### Bug Fix
+### バグ修正
 ```
 planner → tdd-guide → code-reviewer
 ```
-Investigate → add regression test → fix → review
+調査 → 回帰テスト追加 → 修正 → レビュー
 
-### Refactor
+### リファクタリング
 ```
 architect → code-reviewer → tdd-guide
 ```
-Design → review current code → ensure test coverage → refactor
+設計 → 現在のコードをレビュー → テストカバレッジを確保 → リファクタリング
 
-### Security Audit
+### セキュリティ監査
 ```
 security-reviewer → code-reviewer
 ```
-Security scan → full quality review
+セキュリティスキャン → 完全な品質レビュー
 
-## Handoff Document (Between Agents)
+## ハンドオフドキュメント（エージェント間）
 
-Each agent produces a structured handoff:
-
-```markdown
-## Handoff: [Agent Name] → [Next Agent]
-
-### Summary
-What was accomplished in this phase.
-
-### Key Findings
-- [Important discovery 1]
-- [Important discovery 2]
-
-### Files Modified
-- [path/to/file.ts] — [what changed]
-
-### Unresolved Items
-- [What needs attention next]
-
-### Recommended Next Steps
-[Specific instructions for next agent]
-```
-
-## Final Report
+各エージェントは構造化されたハンドオフを生成:
 
 ```markdown
-## Orchestration Complete
+## ハンドオフ: [エージェント名] → [次のエージェント]
 
-### Agents Run
-1. [agent] — [summary]
-2. [agent] — [summary]
+### 概要
+このフェーズで達成されたこと。
 
-### Files Modified
-- [file list]
+### 主な発見事項
+- [重要な発見 1]
+- [重要な発見 2]
 
-### Test Results
-[Pass/fail counts]
+### 変更されたファイル
+- [path/to/file.ts] — [変更内容]
 
-### Recommendation
-**SHIP** / **NEEDS WORK** / **BLOCKED**
-[Reasoning]
+### 未解決項目
+- [次に対応が必要なこと]
+
+### 推奨される次のステップ
+[次のエージェントへの具体的な指示]
 ```
 
-## Custom Workflows
+## 最終レポート
+
+```markdown
+## オーケストレーション完了
+
+### 実行されたエージェント
+1. [エージェント] — [概要]
+2. [エージェント] — [概要]
+
+### 変更されたファイル
+- [ファイル一覧]
+
+### テスト結果
+[成功/失敗の件数]
+
+### 推奨事項
+**リリース可** / **修正が必要** / **ブロック中**
+[理由]
+```
+
+## カスタムワークフロー
 
 ```
 /orchestrate custom architect,code-reviewer,tdd-guide,security-reviewer
 ```
 
-Agents run in the specified order with structured handoffs between each.
+指定された順序でエージェントが実行され、各エージェント間で構造化されたハンドオフが行われます。

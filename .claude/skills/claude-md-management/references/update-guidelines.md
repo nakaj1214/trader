@@ -1,12 +1,12 @@
-# CLAUDE.md Update Guidelines
+# CLAUDE.md 更新ガイドライン
 
-## Core Principle
+## 基本原則
 
-Only add information that will genuinely help future Claude sessions. The context window is precious - every line must earn its place.
+将来の Claude セッションに本当に役立つ情報のみを追加すること。コンテキストウィンドウは貴重であり、すべての行がその場所を正当化する必要があります。
 
-## What TO Add
+## 追加すべきもの
 
-### 1. Commands/Workflows Discovered
+### 1. 発見したコマンド/ワークフロー
 
 ```markdown
 ## Build
@@ -15,9 +15,9 @@ Only add information that will genuinely help future Claude sessions. The contex
 `npm run build:dev` - Fast dev build (no minification)
 ```
 
-Why: Saves future sessions from discovering these again.
+理由: 将来のセッションがこれらを再発見する手間を省けます。
 
-### 2. Gotchas and Non-Obvious Patterns
+### 2. 落とし穴と非自明なパターン
 
 ```markdown
 ## Gotchas
@@ -26,9 +26,9 @@ Why: Saves future sessions from discovering these again.
 - `yarn.lock` is authoritative; delete `node_modules` if deps mismatch
 ```
 
-Why: Prevents repeating debugging sessions.
+理由: デバッグセッションの繰り返しを防止します。
 
-### 3. Package Relationships
+### 3. パッケージの依存関係
 
 ```markdown
 ## Dependencies
@@ -37,9 +37,9 @@ The `auth` module depends on `crypto` being initialized first.
 Import order matters in `src/bootstrap.ts`.
 ```
 
-Why: Architecture knowledge that isn't obvious from code.
+理由: コードからは明らかでないアーキテクチャの知識です。
 
-### 4. Testing Approaches That Worked
+### 4. 効果があったテストアプローチ
 
 ```markdown
 ## Testing
@@ -48,9 +48,9 @@ For API endpoints: Use `supertest` with the test helper in `tests/setup.ts`
 Mocking: Factory functions in `tests/factories/` (not inline mocks)
 ```
 
-Why: Establishes patterns that work.
+理由: 効果のあるパターンを確立します。
 
-### 5. Configuration Quirks
+### 5. 設定の特殊事項
 
 ```markdown
 ## Config
@@ -59,41 +59,41 @@ Why: Establishes patterns that work.
 - Redis connection requires `?family=0` suffix for IPv6
 ```
 
-Why: Environment-specific knowledge.
+理由: 環境固有の知識です。
 
-## What NOT to Add
+## 追加すべきでないもの
 
-### 1. Obvious Code Info
+### 1. 自明なコード情報
 
-Bad:
+悪い例:
 ```markdown
 The `UserService` class handles user operations.
 ```
 
-The class name already tells us this.
+クラス名から既にそれは分かります。
 
-### 2. Generic Best Practices
+### 2. 汎用的なベストプラクティス
 
-Bad:
+悪い例:
 ```markdown
 Always write tests for new features.
 Use meaningful variable names.
 ```
 
-This is universal advice, not project-specific.
+これはプロジェクト固有ではなく、普遍的なアドバイスです。
 
-### 3. One-Off Fixes
+### 3. 一回限りの修正
 
-Bad:
+悪い例:
 ```markdown
 We fixed a bug in commit abc123 where the login button didn't work.
 ```
 
-Won't recur; clutters the file.
+再発しないため、ファイルを散らかすだけです。
 
-### 4. Verbose Explanations
+### 4. 冗長な説明
 
-Bad:
+悪い例:
 ```markdown
 The authentication system uses JWT tokens. JWT (JSON Web Tokens) are
 an open standard (RFC 7519) that defines a compact and self-contained
@@ -101,23 +101,23 @@ way for securely transmitting information between parties as a JSON
 object. In our implementation, we use the HS256 algorithm which...
 ```
 
-Good:
+良い例:
 ```markdown
 Auth: JWT with HS256, tokens in `Authorization: Bearer <token>` header.
 ```
 
-## Diff Format for Updates
+## 更新のための差分フォーマット
 
-For each suggested change:
+提案する各変更について:
 
-### 1. Identify the File
+### 1. ファイルの特定
 
 ```
 File: ./CLAUDE.md
 Section: Commands (new section after ## Architecture)
 ```
 
-### 2. Show the Change
+### 2. 変更内容の表示
 
 ```diff
  ## Architecture
@@ -132,19 +132,19 @@ Section: Commands (new section after ## Architecture)
 +| `npm test` | Run test suite |
 ```
 
-### 3. Explain Why
+### 3. 理由の説明
 
-> **Why this helps:** The build commands weren't documented, causing
-> confusion about how to run the project. This saves future sessions
-> from needing to inspect `package.json`.
+> **これが役立つ理由:** ビルドコマンドがドキュメント化されておらず、
+> プロジェクトの実行方法について混乱を招いていました。これにより
+> 将来のセッションが `package.json` を調べる必要がなくなります。
 
-## Validation Checklist
+## 検証チェックリスト
 
-Before finalizing an update, verify:
+更新を確定する前に確認:
 
-- [ ] Each addition is project-specific
-- [ ] No generic advice or obvious info
-- [ ] Commands are tested and work
-- [ ] File paths are accurate
-- [ ] Would a new Claude session find this helpful?
-- [ ] Is this the most concise way to express the info?
+- [ ] 各追加がプロジェクト固有である
+- [ ] 汎用的なアドバイスや自明な情報がない
+- [ ] コマンドがテスト済みで動作する
+- [ ] ファイルパスが正確
+- [ ] 新しい Claude セッションがこれを役立つと感じるか？
+- [ ] 情報を表現する最も簡潔な方法か？

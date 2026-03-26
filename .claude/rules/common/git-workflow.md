@@ -1,6 +1,12 @@
-# Git Workflow Rules
+---
+paths:
+  - "**/.git*"
+  - "**/*.md"
+---
 
-## Commit Message Format
+# Git ワークフロールール
+
+## コミットメッセージの形式
 
 ```
 <type>: <description>
@@ -8,20 +14,20 @@
 [optional body]
 ```
 
-### Allowed Types
+### 許可されるタイプ
 
-| Type | When to Use |
+| タイプ | 使用場面 |
 |------|-------------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `refactor` | Code change with no behavior change |
-| `docs` | Documentation only |
-| `test` | Adding or updating tests |
-| `chore` | Tooling, deps, build scripts |
-| `perf` | Performance improvement |
-| `ci` | CI/CD configuration |
+| `feat` | 新機能 |
+| `fix` | バグ修正 |
+| `refactor` | 動作変更を伴わないコード変更 |
+| `docs` | ドキュメントのみ |
+| `test` | テストの追加・更新 |
+| `chore` | ツール、依存関係、ビルドスクリプト |
+| `perf` | パフォーマンス改善 |
+| `ci` | CI/CD 設定 |
 
-### Examples
+### 例
 
 ```
 feat: add user authentication with JWT
@@ -31,17 +37,17 @@ docs: update API endpoint documentation
 test: add integration tests for auth flow
 ```
 
-## Pull Request Process
+## プルリクエストのプロセス
 
-1. Review the **complete commit history** (not just individual commits)
-2. Run `git diff [base-branch]...HEAD` to see all changes
-3. Write a detailed PR description covering:
-   - What changed and why
-   - Testing strategy with checklist
-   - Breaking changes (if any)
-4. Use `-u` flag when pushing new branches: `git push -u origin branch-name`
+1. **完全なコミット履歴** をレビューする（個別のコミットだけでなく）
+2. `git diff [base-branch]...HEAD` を実行してすべての変更を確認する
+3. 以下をカバーする詳細な PR 説明を書く:
+   - 何を変更したか、なぜ変更したか
+   - チェックリスト付きのテスト戦略
+   - 破壊的変更（あれば）
+4. 新しいブランチをプッシュするときは `-u` フラグを使用する: `git push -u origin branch-name`
 
-## Branch Naming
+## ブランチ命名
 
 ```
 feat/short-description

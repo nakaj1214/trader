@@ -1,21 +1,21 @@
-# CLAUDE.md Templates
+# CLAUDE.md テンプレート
 
-## Key Principles
+## 主要原則
 
-- **Concise**: Dense, human-readable content; one line per concept when possible
-- **Actionable**: Commands should be copy-paste ready
-- **Project-specific**: Document patterns unique to this project, not generic advice
-- **Current**: All info should reflect actual codebase state
+- **簡潔**: 密度が高く人間が読みやすい内容、可能な限り1行1コンセプト
+- **実行可能**: コマンドはコピー＆ペーストで使えること
+- **プロジェクト固有**: 汎用的なアドバイスではなく、このプロジェクト固有のパターンをドキュメント化
+- **最新**: すべての情報が実際のコードベースの状態を反映していること
 
 ---
 
-## Recommended Sections
+## 推奨セクション
 
-Use only the sections relevant to the project. Not all sections are needed.
+プロジェクトに関連するセクションのみ使用してください。すべてのセクションが必要なわけではありません。
 
-### Commands
+### コマンド
 
-Document the essential commands for working with the project.
+プロジェクトでの作業に必要な重要なコマンドをドキュメント化します。
 
 ```markdown
 ## Commands
@@ -29,9 +29,9 @@ Document the essential commands for working with the project.
 | `<lint command>` | Lint/format code |
 ```
 
-### Architecture
+### アーキテクチャ
 
-Describe the project structure so Claude understands where things live.
+Claude がファイルの場所を理解できるよう、プロジェクト構造を記述します。
 
 ```markdown
 ## Architecture
@@ -44,9 +44,9 @@ Describe the project structure so Claude understands where things live.
 ```
 ```
 
-### Key Files
+### 重要なファイル
 
-List important files that Claude should know about.
+Claude が知っておくべき重要なファイルを一覧にします。
 
 ```markdown
 ## Key Files
@@ -55,9 +55,9 @@ List important files that Claude should know about.
 - `<path>` - <purpose>
 ```
 
-### Code Style
+### コードスタイル
 
-Document project-specific coding conventions.
+プロジェクト固有のコーディング規約をドキュメント化します。
 
 ```markdown
 ## Code Style
@@ -67,9 +67,9 @@ Document project-specific coding conventions.
 - <preference over alternative>
 ```
 
-### Environment
+### 環境
 
-Document required environment variables and setup.
+必要な環境変数とセットアップをドキュメント化します。
 
 ```markdown
 ## Environment
@@ -82,9 +82,9 @@ Setup:
 - <setup step>
 ```
 
-### Testing
+### テスト
 
-Document testing approach and commands.
+テストのアプローチとコマンドをドキュメント化します。
 
 ```markdown
 ## Testing
@@ -93,9 +93,9 @@ Document testing approach and commands.
 - <testing convention or pattern>
 ```
 
-### Gotchas
+### 落とし穴
 
-Document non-obvious patterns, quirks, and warnings.
+非自明なパターン、特殊な動作、注意事項をドキュメント化します。
 
 ```markdown
 ## Gotchas
@@ -105,9 +105,9 @@ Document non-obvious patterns, quirks, and warnings.
 - <common mistake to avoid>
 ```
 
-### Workflow
+### ワークフロー
 
-Document development workflow patterns.
+開発ワークフローのパターンをドキュメント化します。
 
 ```markdown
 ## Workflow
@@ -118,7 +118,7 @@ Document development workflow patterns.
 
 ---
 
-## Template: Project Root (Minimal)
+## テンプレート: プロジェクトルート（最小構成）
 
 ```markdown
 # <Project Name>
@@ -144,7 +144,7 @@ Document development workflow patterns.
 
 ---
 
-## Template: Project Root (Comprehensive)
+## テンプレート: プロジェクトルート（包括的）
 
 ```markdown
 # <Project Name>
@@ -186,9 +186,9 @@ Document development workflow patterns.
 
 ---
 
-## Template: Package/Module
+## テンプレート: パッケージ/モジュール
 
-For packages within a monorepo or distinct modules.
+モノレポ内のパッケージや独立したモジュール用。
 
 ```markdown
 # <Package Name>
@@ -216,7 +216,7 @@ For packages within a monorepo or distinct modules.
 
 ---
 
-## Template: Monorepo Root
+## テンプレート: モノレポルート
 
 ```markdown
 # <Monorepo Name>
@@ -243,11 +243,11 @@ For packages within a monorepo or distinct modules.
 
 ---
 
-## Update Principles
+## 更新の原則
 
-When updating any CLAUDE.md:
+CLAUDE.md を更新する際:
 
-1. **Be specific**: Use actual file paths, real commands from this project
-2. **Be current**: Verify info against the actual codebase
-3. **Be brief**: One line per concept when possible
-4. **Be useful**: Would this help a new Claude session understand the project?
+1. **具体的に**: このプロジェクトの実際のファイルパス、実際のコマンドを使用する
+2. **最新に**: 実際のコードベースに対して情報を検証する
+3. **簡潔に**: 可能な限り1行1コンセプト
+4. **有用に**: 新しい Claude セッションがプロジェクトを理解するのに役立つか？

@@ -1,149 +1,149 @@
-# Claude Agent Usage Guide
+# Claude エージェント使用ガイド
 
-## Overview
-Claude Code provides specialized agents for different tasks. Using the right agent significantly improves performance and accuracy.
+## 概要
+Claude Code はタスクごとに特化したエージェントを提供しています。適切なエージェントを使用することで、パフォーマンスと精度が大幅に向上します。
 
-## Available Agents
+## 利用可能なエージェント
 
-### 1. Explore Agent
-**Use for:** Codebase exploration and understanding
+### 1. Explore エージェント
+**用途:** コードベースの探索と理解
 
-**When to use:**
-- "Where are errors handled?"
-- "How does authentication work?"
-- "What is the codebase structure?"
-- "Find all components that use hooks"
-- Any exploration that requires multiple searches
+**使用するタイミング:**
+- 「エラー処理はどこで行われている？」
+- 「認証はどのように動作する？」
+- 「コードベースの構造は？」
+- 「フックを使用しているすべてのコンポーネントを見つけて」
+- 複数の検索が必要な探索全般
 
-**Example:**
+**例:**
 ```
-User: Where are errors from the client handled?
-Assistant: [Uses Task tool with subagent_type=Explore]
+User: クライアントからのエラーはどこで処理されている？
+Assistant: [Task ツールを subagent_type=Explore で使用]
 ```
 
-**Thoroughness levels:**
-- `quick`: Basic searches
-- `medium`: Moderate exploration (default)
-- `very thorough`: Comprehensive analysis
+**徹底度レベル:**
+- `quick`: 基本的な検索
+- `medium`: 適度な探索（デフォルト）
+- `very thorough`: 包括的な分析
 
-### 2. Plan Agent
-**Use for:** Designing implementation strategies
+### 2. Plan エージェント
+**用途:** 実装戦略の設計
 
-**When to use:**
-- Complex feature implementation
-- Multiple valid approaches exist
-- Architectural decisions needed
-- Multi-file changes required
+**使用するタイミング:**
+- 複雑な機能の実装
+- 複数の有効なアプローチが存在する場合
+- アーキテクチャの判断が必要な場合
+- 複数ファイルにまたがる変更が必要な場合
 
-**What it does:**
-- Explores codebase thoroughly
-- Identifies critical files
-- Considers trade-offs
-- Creates step-by-step plan
+**動作内容:**
+- コードベースを徹底的に探索する
+- 重要なファイルを特定する
+- トレードオフを検討する
+- ステップバイステップの計画を作成する
 
-### 3. Bash Agent
-**Use for:** Command-line operations
+### 3. Bash エージェント
+**用途:** コマンドライン操作
 
-**When to use:**
-- Git operations
-- Package management (npm, pip, etc.)
-- Docker commands
-- Build processes
-- Any terminal operations
+**使用するタイミング:**
+- Git 操作
+- パッケージ管理（npm, pip など）
+- Docker コマンド
+- ビルドプロセス
+- ターミナル操作全般
 
-**NOT for:**
-- File reading (use Read tool)
-- File editing (use Edit tool)
-- File searching (use Glob/Grep tools)
+**使用しない場合:**
+- ファイル読み込み（Read ツールを使用）
+- ファイル編集（Edit ツールを使用）
+- ファイル検索（Glob/Grep ツールを使用）
 
-### 4. General-Purpose Agent
-**Use for:** Complex multi-step tasks
+### 4. 汎用エージェント
+**用途:** 複雑なマルチステップタスク
 
-**When to use:**
-- Research requiring multiple steps
-- Tasks combining several operations
-- Open-ended searches
-- Complex data gathering
+**使用するタイミング:**
+- 複数のステップが必要なリサーチ
+- いくつかの操作を組み合わせるタスク
+- 自由度の高い検索
+- 複雑なデータ収集
 
-## Agent Best Practices
+## エージェントのベストプラクティス
 
-### Parallel Execution
-Launch multiple agents concurrently when possible:
+### 並列実行
+可能な場合は複数のエージェントを同時に起動する:
 ```javascript
-// Good: Single message with multiple agents
+// Good: 単一メッセージで複数エージェント
 Task(agent1), Task(agent2), Task(agent3)
 
-// Bad: Sequential agent launches
+// Bad: 逐次的なエージェント起動
 Task(agent1) -> wait -> Task(agent2) -> wait -> Task(agent3)
 ```
 
-### Background Execution
-For long-running tasks:
+### バックグラウンド実行
+長時間実行タスクの場合:
 ```javascript
 Task(subagent_type="Bash",
      prompt="Run comprehensive test suite",
      run_in_background=true)
 ```
 
-### Model Selection
-Choose appropriate model for task complexity:
+### モデル選択
+タスクの複雑さに応じて適切なモデルを選択する:
 ```javascript
-// Quick task - use Haiku
+// 簡単なタスク - Haiku を使用
 Task(model="haiku", prompt="List all .ts files")
 
-// Complex reasoning - use Opus
+// 複雑な推論 - Opus を使用
 Task(model="opus", prompt="Design authentication architecture")
 
-// Default - Sonnet for balanced performance
+// デフォルト - バランスの取れた Sonnet
 Task(prompt="Implement feature X")
 ```
 
-### Agent Resumption
-Resume previous agents to continue work:
+### エージェントの再開
+以前のエージェントを再開して作業を続行する:
 ```javascript
-// First call
+// 最初の呼び出し
 agent_id = Task(subagent_type="Explore", prompt="Find auth code")
 
-// Later, resume with same context
+// 後で、同じコンテキストで再開
 Task(resume=agent_id, prompt="Now check error handling")
 ```
 
-## Common Patterns
+## よくあるパターン
 
-### Pattern 1: Explore Then Implement
+### パターン 1: 探索してから実装
 ```
-1. Task(Explore): "Find authentication implementation"
-2. Review findings
-3. EnterPlanMode: Design changes
-4. Implement changes
-```
-
-### Pattern 2: Parallel Research
-```
-Task(Explore, "How is routing handled?")
-Task(Explore, "How is state managed?")
-Task(Explore, "How are API calls made?")
-// All run in parallel
+1. Task(Explore): "認証の実装を見つける"
+2. 発見内容をレビュー
+3. EnterPlanMode: 変更を設計
+4. 変更を実装
 ```
 
-### Pattern 3: Build and Test
+### パターン 2: 並列リサーチ
 ```
-1. Make code changes
+Task(Explore, "ルーティングはどう処理されている？")
+Task(Explore, "状態管理はどうなっている？")
+Task(Explore, "API コールはどう行われている？")
+// すべて並列で実行
+```
+
+### パターン 3: ビルドとテスト
+```
+1. コード変更を行う
 2. Task(Bash): "npm run build"
 3. Task(Bash): "npm test"
-4. Fix any issues found
+4. 発見された問題を修正
 ```
 
-### Pattern 4: Comprehensive Analysis
+### パターン 4: 包括的な分析
 ```
 Task(subagent_type="Explore",
      thoroughness="very thorough",
      prompt="Analyze entire authentication flow including error handling, session management, and security measures")
 ```
 
-## Anti-Patterns
+## アンチパターン
 
-❌ **Using Bash for file operations**
+**ファイル操作に Bash を使用する**
 ```
 // Bad
 Task(Bash, "cat src/index.ts")
@@ -151,23 +151,23 @@ Task(Bash, "cat src/index.ts")
 Read("src/index.ts")
 ```
 
-❌ **Not using Explore for codebase questions**
+**コードベースの質問に Explore を使わない**
 ```
 // Bad
-Grep + Glob + Read manually
+Grep + Glob + Read を手動で組み合わせ
 // Good
 Task(Explore, "Where is feature X implemented?")
 ```
 
-❌ **Sequential agents when parallel is possible**
+**並列実行可能なのに逐次実行する**
 ```
 // Bad
 agent1 -> wait -> agent2 -> wait
 // Good
-agent1, agent2 in same message
+agent1, agent2 を同じメッセージで
 ```
 
-❌ **Wrong model for task complexity**
+**タスクの複雑さに合わないモデルを使用する**
 ```
 // Bad
 Task(model="opus", "List files")
@@ -175,40 +175,40 @@ Task(model="opus", "List files")
 Task(model="haiku", "List files")
 ```
 
-## Decision Tree
+## 判断フロー
 
 ```
-Is it codebase exploration? → Explore Agent
-  ├─ Simple keyword search → quick
-  ├─ Moderate investigation → medium
-  └─ Comprehensive analysis → very thorough
+コードベースの探索？ → Explore エージェント
+  ├─ 簡単なキーワード検索 → quick
+  ├─ 中程度の調査 → medium
+  └─ 包括的な分析 → very thorough
 
-Is it implementation planning? → Plan Agent
+実装の計画？ → Plan エージェント
 
-Is it terminal command? → Bash Agent
-  └─ But NOT for file operations
+ターミナルコマンド？ → Bash エージェント
+  └─ ただしファイル操作には使わない
 
-Is it multi-step research? → General-Purpose Agent
+マルチステップのリサーチ？ → 汎用エージェント
 
-Is it file operation?
-  ├─ Reading → Read tool (NOT agent)
-  ├─ Editing → Edit tool (NOT agent)
-  └─ Searching → Glob/Grep tools (NOT agent)
+ファイル操作？
+  ├─ 読み込み → Read ツール（エージェントではない）
+  ├─ 編集 → Edit ツール（エージェントではない）
+  └─ 検索 → Glob/Grep ツール（エージェントではない）
 ```
 
-## Performance Tips
+## パフォーマンスのコツ
 
-1. **Use Task tool for expensive operations** to reduce context usage
-2. **Launch agents in parallel** when tasks are independent
-3. **Use background execution** for long-running operations
-4. **Choose right model**: Haiku for simple, Opus for complex
-5. **Resume agents** instead of starting fresh when continuing work
-6. **Be specific in prompts** to help agents work efficiently
+1. **高コストな操作には Task ツールを使用する** ことでコンテキスト使用量を削減
+2. **タスクが独立している場合はエージェントを並列起動する**
+3. **長時間実行操作にはバックグラウンド実行を使用する**
+4. **適切なモデルを選択する**: 簡単なタスクは Haiku、複雑なタスクは Opus
+5. **作業を継続する場合は新規開始ではなくエージェントを再開する**
+6. **エージェントが効率的に動けるよう、プロンプトは具体的にする**
 
-## When NOT to Use Agents
+## エージェントを使わない場合
 
-- Reading a specific known file → Use Read tool
-- Editing a specific line → Use Edit tool
-- Finding files by name pattern → Use Glob tool
-- Searching for specific text → Use Grep tool
-- Running single command → Use Bash tool directly
+- 特定の既知のファイルを読む → Read ツールを使用
+- 特定の行を編集する → Edit ツールを使用
+- 名前パターンでファイルを検索する → Glob ツールを使用
+- 特定のテキストを検索する → Grep ツールを使用
+- 単一コマンドを実行する → Bash ツールを直接使用

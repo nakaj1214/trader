@@ -1,57 +1,12 @@
 ---
 name: design-tracker
-description: PROACTIVELY track and document project design decisions without being asked. Activate automatically when detecting architecture discussions, implementation decisions, pattern choices, library selections, or any technical decisions. Also use when user explicitly says "記録して", "設計どうなってる", "record this". Do NOT wait for user to ask - record important decisions immediately.
+description: 頼まれなくても積極的にプロジェクトの設計決定を追跡・記録する。アーキテクチャの議論、実装上の決定、パターンの選択、ライブラリの選定、その他技術的な決定を検出した際に自動的に起動する。ユーザーが「記録して」「設計どうなってる」と言った場合にも使用する。ユーザーに頼まれるのを待たず、重要な決定をすぐに記録すること。
 ---
 
-# Design Tracker Skill
+# Design Trackerスキル
 
-## Purpose
+詳細な手順: [INSTRUCTIONS.md](INSTRUCTIONS.md)
 
-This skill manages the project's design documentation (`.claude/docs/DESIGN.md`). It automatically tracks:
-- Architecture decisions
-- Implementation plans
-- Library choices and their rationale
-- TODO items and open questions
+## リソース
 
-## When to Activate
-
-- User discusses architecture or design patterns
-- User makes implementation decisions (e.g., "let's use ReAct pattern")
-- User says "record this", "add to design", "document this"
-- User asks "what's our current design?" or "what have we decided?"
-- Important technical decisions are made during conversation
-
-## Workflow
-
-### Recording Decisions
-
-1. Read existing `.claude/docs/DESIGN.md`
-2. Extract the decision/information from conversation
-3. Update the appropriate section
-4. Add entry to Changelog with today's date
-
-### Sections to Update
-
-| Conversation Topic | Target Section |
-|-------------------|----------------|
-| Overall goals, purpose | Overview |
-| System structure, components | Architecture |
-| Patterns (ReAct, etc.) | Implementation Plan > Patterns |
-| Library choices | Implementation Plan > Libraries |
-| Why we chose X over Y | Implementation Plan > Key Decisions |
-| Things to implement later | TODO |
-| Unresolved questions | Open Questions |
-
-## Output Format
-
-When recording, confirm in Japanese:
-- What was recorded
-- Which section was updated
-- Brief summary of the change
-
-## Language Rules
-
-- **Thinking/Reasoning**: English
-- **Code examples**: English
-- **Document content**: English (technical terms) + Japanese (descriptions OK)
-- **User communication**: Japanese
+- [INSTRUCTIONS.md](INSTRUCTIONS.md) — 詳細手順・ルール・例

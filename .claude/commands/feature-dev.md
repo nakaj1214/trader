@@ -1,125 +1,125 @@
 ---
-description: Guided feature development with codebase understanding and architecture focus
-argument-hint: Optional feature description
+description: コードベース理解とアーキテクチャに焦点を当てたガイド付き機能開発
+argument-hint: オプションの機能説明
 ---
 
-# Feature Development
+# 機能開発
 
-You are helping a developer implement a new feature. Follow a systematic approach: understand the codebase deeply, identify and ask about all underspecified details, design elegant architectures, then implement.
+開発者の新機能実装を支援する。体系的なアプローチに従う: コードベースを深く理解し、すべての未指定の詳細を特定して質問し、エレガントなアーキテクチャを設計し、実装する。
 
-## Core Principles
+## コア原則
 
-- **Ask clarifying questions**: Identify all ambiguities, edge cases, and underspecified behaviors. Ask specific, concrete questions rather than making assumptions. Wait for user answers before proceeding with implementation. Ask questions early (after understanding the codebase, before designing architecture).
-- **Understand before acting**: Read and comprehend existing code patterns first
-- **Read files identified by agents**: When launching agents, ask them to return lists of the most important files to read. After agents complete, read those files to build detailed context before proceeding.
-- **Simple and elegant**: Prioritize readable, maintainable, architecturally sound code
-- **Use TodoWrite**: Track all progress throughout
-
----
-
-## Phase 1: Discovery
-
-**Goal**: Understand what needs to be built
-
-Initial request: $ARGUMENTS
-
-**Actions**:
-1. Create todo list with all phases
-2. If feature unclear, ask user for:
-   - What problem are they solving?
-   - What should the feature do?
-   - Any constraints or requirements?
-3. Summarize understanding and confirm with user
+- **明確化の質問をする**: すべての曖昧さ、エッジケース、未指定の動作を特定する。前提を置くのではなく、具体的で明確な質問をする。実装に進む前にユーザーの回答を待つ。質問は早い段階で行う（コードベースを理解した後、アーキテクチャ設計の前）。
+- **行動する前に理解する**: まず既存のコードパターンを読んで理解する
+- **エージェントが特定したファイルを読む**: エージェントを起動する際、読むべき最も重要なファイルのリストを返すよう依頼する。エージェント完了後、それらのファイルを読んで詳細なコンテキストを構築してから進める。
+- **シンプルでエレガントに**: 可読性が高く、保守しやすく、アーキテクチャ的に健全なコードを優先する
+- **TodoWrite を使用する**: 全体を通じて進捗を追跡する
 
 ---
 
-## Phase 2: Codebase Exploration
+## フェーズ 1: 調査
 
-**Goal**: Understand relevant existing code and patterns at both high and low levels
+**目標**: 何を構築する必要があるかを理解する
 
-**Actions**:
-1. Launch 2-3 code-explorer agents in parallel. Each agent should:
-   - Trace through the code comprehensively and focus on getting a comprehensive understanding of abstractions, architecture and flow of control
-   - Target a different aspect of the codebase (eg. similar features, high level understanding, architectural understanding, user experience, etc)
-   - Include a list of 5-10 key files to read
+初期リクエスト: $ARGUMENTS
 
-   **Example agent prompts**:
-   - "Find features similar to [feature] and trace through their implementation comprehensively"
-   - "Map the architecture and abstractions for [feature area], tracing through the code comprehensively"
-   - "Analyze the current implementation of [existing feature/area], tracing through the code comprehensively"
-   - "Identify UI patterns, testing approaches, or extension points relevant to [feature]"
-
-2. Once the agents return, please read all files identified by agents to build deep understanding
-3. Present comprehensive summary of findings and patterns discovered
+**アクション**:
+1. 全フェーズの todo リストを作成する
+2. 機能が不明確な場合、ユーザーに質問する:
+   - どのような問題を解決するか？
+   - 機能は何をすべきか？
+   - 制約や要件はあるか？
+3. 理解内容を要約し、ユーザーに確認する
 
 ---
 
-## Phase 3: Clarifying Questions
+## フェーズ 2: コードベース探索
 
-**Goal**: Fill in gaps and resolve all ambiguities before designing
+**目標**: 関連する既存コードとパターンを高レベルと低レベルの両方で理解する
 
-**CRITICAL**: This is one of the most important phases. DO NOT SKIP.
+**アクション**:
+1. 2〜3 の code-explorer エージェントを並行して起動する。各エージェントは:
+   - コードを包括的にトレースし、抽象化、アーキテクチャ、制御フローの包括的な理解に焦点を当てる
+   - コードベースの異なる側面をターゲットにする（例: 類似機能、高レベルの理解、アーキテクチャの理解、ユーザーエクスペリエンスなど）
+   - 読むべき 5〜10 の主要ファイルのリストを含める
 
-**Actions**:
-1. Review the codebase findings and original feature request
-2. Identify underspecified aspects: edge cases, error handling, integration points, scope boundaries, design preferences, backward compatibility, performance needs
-3. **Present all questions to the user in a clear, organized list**
-4. **Wait for answers before proceeding to architecture design**
+   **エージェントプロンプトの例**:
+   - 「[機能] に類似した機能を見つけ、その実装を包括的にトレースする」
+   - 「[機能領域] のアーキテクチャと抽象化をマッピングし、コードを包括的にトレースする」
+   - 「[既存の機能/領域] の現在の実装を分析し、コードを包括的にトレースする」
+   - 「[機能] に関連する UI パターン、テストアプローチ、拡張ポイントを特定する」
 
-If the user says "whatever you think is best", provide your recommendation and get explicit confirmation.
-
----
-
-## Phase 4: Architecture Design
-
-**Goal**: Design multiple implementation approaches with different trade-offs
-
-**Actions**:
-1. Launch 2-3 code-architect agents in parallel with different focuses: minimal changes (smallest change, maximum reuse), clean architecture (maintainability, elegant abstractions), or pragmatic balance (speed + quality)
-2. Review all approaches and form your opinion on which fits best for this specific task (consider: small fix vs large feature, urgency, complexity, team context)
-3. Present to user: brief summary of each approach, trade-offs comparison, **your recommendation with reasoning**, concrete implementation differences
-4. **Ask user which approach they prefer**
+2. エージェントが戻ったら、エージェントが特定したすべてのファイルを読んで深い理解を構築する
+3. 発見事項と発見されたパターンの包括的な要約を提示する
 
 ---
 
-## Phase 5: Implementation
+## フェーズ 3: 明確化の質問
 
-**Goal**: Build the feature
+**目標**: 設計前にギャップを埋め、すべての曖昧さを解消する
 
-**DO NOT START WITHOUT USER APPROVAL**
+**重要**: これは最も重要なフェーズの1つ。スキップしないこと。
 
-**Actions**:
-1. Wait for explicit user approval
-2. Read all relevant files identified in previous phases
-3. Implement following chosen architecture
-4. Follow codebase conventions strictly
-5. Write clean, well-documented code
-6. Update todos as you progress
+**アクション**:
+1. コードベースの調査結果と元の機能リクエストをレビューする
+2. 未指定の側面を特定する: エッジケース、エラーハンドリング、統合ポイント、スコープの境界、設計の好み、後方互換性、パフォーマンス要件
+3. **すべての質問を明確で整理されたリストでユーザーに提示する**
+4. **アーキテクチャ設計に進む前に回答を待つ**
 
----
-
-## Phase 6: Quality Review
-
-**Goal**: Ensure code is simple, DRY, elegant, easy to read, and functionally correct
-
-**Actions**:
-1. Launch 3 code-reviewer agents in parallel with different focuses: simplicity/DRY/elegance, bugs/functional correctness, project conventions/abstractions
-2. Consolidate findings and identify highest severity issues that you recommend fixing
-3. **Present findings to user and ask what they want to do** (fix now, fix later, or proceed as-is)
-4. Address issues based on user decision
+ユーザーが「おまかせで」と言った場合、自分の推奨事項を提示し明示的な確認を得る。
 
 ---
 
-## Phase 7: Summary
+## フェーズ 4: アーキテクチャ設計
 
-**Goal**: Document what was accomplished
+**目標**: 異なるトレードオフを持つ複数の実装アプローチを設計する
 
-**Actions**:
-1. Mark all todos complete
-2. Summarize:
-   - What was built
-   - Key decisions made
-   - Files modified
-   - Suggested next steps
+**アクション**:
+1. 異なるフォーカスを持つ 2〜3 の code-architect エージェントを並行して起動する: 最小限の変更（最小の変更、最大の再利用）、クリーンアーキテクチャ（保守性、エレガントな抽象化）、実用的なバランス（速度 + 品質）
+2. すべてのアプローチをレビューし、この特定のタスクに最適なものについて自分の意見を形成する（考慮事項: 小さな修正 vs 大きな機能、緊急性、複雑さ、チームのコンテキスト）
+3. ユーザーに提示する: 各アプローチの簡潔な要約、トレードオフの比較、**理由付きの推奨事項**、具体的な実装の違い
+4. **ユーザーにどのアプローチを好むか尋ねる**
+
+---
+
+## フェーズ 5: 実装
+
+**目標**: 機能を構築する
+
+**ユーザーの承認なしに開始しないこと**
+
+**アクション**:
+1. ユーザーの明示的な承認を待つ
+2. 前のフェーズで特定されたすべての関連ファイルを読む
+3. 選択されたアーキテクチャに従って実装する
+4. コードベースの規約に厳密に従う
+5. クリーンで十分にドキュメント化されたコードを書く
+6. 進捗に応じて todo を更新する
+
+---
+
+## フェーズ 6: 品質レビュー
+
+**目標**: コードがシンプルで DRY でエレガントで読みやすく、機能的に正しいことを確認する
+
+**アクション**:
+1. 異なるフォーカスを持つ 3 つの code-reviewer エージェントを並行して起動する: シンプルさ/DRY/エレガントさ、バグ/機能的正確性、プロジェクト規約/抽象化
+2. 調査結果を統合し、修正を推奨する最も重大度の高い問題を特定する
+3. **調査結果をユーザーに提示し、どうしたいか尋ねる**（今すぐ修正、後で修正、またはそのまま進める）
+4. ユーザーの決定に基づいて問題に対処する
+
+---
+
+## フェーズ 7: サマリー
+
+**目標**: 達成したことをドキュメント化する
+
+**アクション**:
+1. すべての todo を完了にマークする
+2. 要約する:
+   - 構築したもの
+   - 行った主要な決定
+   - 変更したファイル
+   - 推奨される次のステップ
 
 ---

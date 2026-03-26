@@ -1,12 +1,12 @@
-# JSON Schemas
+# JSON スキーマ
 
-This document defines the JSON schemas used by skill-creator.
+このドキュメントは skill-creator が使用する JSON スキーマを定義する。
 
 ---
 
 ## evals.json
 
-Defines the evals for a skill. Located at `evals/evals.json` within the skill directory.
+スキルの eval を定義する。スキルディレクトリ内の `evals/evals.json` に配置する。
 
 ```json
 {
@@ -26,19 +26,19 @@ Defines the evals for a skill. Located at `evals/evals.json` within the skill di
 }
 ```
 
-**Fields:**
-- `skill_name`: Name matching the skill's frontmatter
-- `evals[].id`: Unique integer identifier
-- `evals[].prompt`: The task to execute
-- `evals[].expected_output`: Human-readable description of success
-- `evals[].files`: Optional list of input file paths (relative to skill root)
-- `evals[].expectations`: List of verifiable statements
+**フィールド：**
+- `skill_name`: スキルのフロントマターと一致する名前
+- `evals[].id`: 一意の整数識別子
+- `evals[].prompt`: 実行するタスク
+- `evals[].expected_output`: 成功の人間向け説明
+- `evals[].files`: 入力ファイルパスのオプションリスト（スキルルートからの相対パス）
+- `evals[].expectations`: 検証可能な記述のリスト
 
 ---
 
 ## history.json
 
-Tracks version progression in Improve mode. Located at workspace root.
+改善モードでのバージョン進行を追跡する。ワークスペースルートに配置する。
 
 ```json
 {
@@ -71,21 +71,21 @@ Tracks version progression in Improve mode. Located at workspace root.
 }
 ```
 
-**Fields:**
-- `started_at`: ISO timestamp of when improvement started
-- `skill_name`: Name of the skill being improved
-- `current_best`: Version identifier of the best performer
-- `iterations[].version`: Version identifier (v0, v1, ...)
-- `iterations[].parent`: Parent version this was derived from
-- `iterations[].expectation_pass_rate`: Pass rate from grading
-- `iterations[].grading_result`: "baseline", "won", "lost", or "tie"
-- `iterations[].is_current_best`: Whether this is the current best version
+**フィールド：**
+- `started_at`: 改善を開始した ISO タイムスタンプ
+- `skill_name`: 改善対象のスキル名
+- `current_best`: 最高パフォーマンスのバージョン識別子
+- `iterations[].version`: バージョン識別子（v0、v1、...）
+- `iterations[].parent`: 派生元の親バージョン
+- `iterations[].expectation_pass_rate`: 採点結果のパス率
+- `iterations[].grading_result`: "baseline"、"won"、"lost"、または "tie"
+- `iterations[].is_current_best`: 現在の最良バージョンかどうか
 
 ---
 
 ## grading.json
 
-Output from the grader agent. Located at `<run-dir>/grading.json`.
+採点エージェントの出力。`<run-dir>/grading.json` に配置する。
 
 ```json
 {
@@ -149,20 +149,20 @@ Output from the grader agent. Located at `<run-dir>/grading.json`.
 }
 ```
 
-**Fields:**
-- `expectations[]`: Graded expectations with evidence
-- `summary`: Aggregate pass/fail counts
-- `execution_metrics`: Tool usage and output size (from executor's metrics.json)
-- `timing`: Wall clock timing (from timing.json)
-- `claims`: Extracted and verified claims from the output
-- `user_notes_summary`: Issues flagged by the executor
-- `eval_feedback`: (optional) Improvement suggestions for the evals, only present when the grader identifies issues worth raising
+**フィールド：**
+- `expectations[]`: 証拠付きの採点された expectation
+- `summary`: パス/失敗の集計カウント
+- `execution_metrics`: ツール使用量と出力サイズ（実行者の metrics.json より）
+- `timing`: 実時間タイミング（timing.json より）
+- `claims`: 出力から抽出・検証された主張
+- `user_notes_summary`: 実行者がフラグした問題
+- `eval_feedback`: （オプション）eval の改善提案。採点者が指摘すべき問題を特定した場合のみ含まれる
 
 ---
 
 ## metrics.json
 
-Output from the executor agent. Located at `<run-dir>/outputs/metrics.json`.
+実行者エージェントの出力。`<run-dir>/outputs/metrics.json` に配置する。
 
 ```json
 {
@@ -183,22 +183,22 @@ Output from the executor agent. Located at `<run-dir>/outputs/metrics.json`.
 }
 ```
 
-**Fields:**
-- `tool_calls`: Count per tool type
-- `total_tool_calls`: Sum of all tool calls
-- `total_steps`: Number of major execution steps
-- `files_created`: List of output files created
-- `errors_encountered`: Number of errors during execution
-- `output_chars`: Total character count of output files
-- `transcript_chars`: Character count of transcript
+**フィールド：**
+- `tool_calls`: ツール種別ごとのカウント
+- `total_tool_calls`: すべてのツール呼び出しの合計
+- `total_steps`: 主要な実行ステップの数
+- `files_created`: 作成された出力ファイルのリスト
+- `errors_encountered`: 実行中に発生したエラーの数
+- `output_chars`: 出力ファイルの合計文字数
+- `transcript_chars`: トランスクリプトの文字数
 
 ---
 
 ## timing.json
 
-Wall clock timing for a run. Located at `<run-dir>/timing.json`.
+実行の実時間タイミング。`<run-dir>/timing.json` に配置する。
 
-**How to capture:** When a subagent task completes, the task notification includes `total_tokens` and `duration_ms`. Save these immediately — they are not persisted anywhere else and cannot be recovered after the fact.
+**記録方法:** サブエージェントのタスクが完了すると、タスク通知に `total_tokens` と `duration_ms` が含まれる。これらは他の場所に永続化されず、事後に復元できないため、直ちに保存する。
 
 ```json
 {
@@ -218,7 +218,7 @@ Wall clock timing for a run. Located at `<run-dir>/timing.json`.
 
 ## benchmark.json
 
-Output from Benchmark mode. Located at `benchmarks/<timestamp>/benchmark.json`.
+ベンチマークモードの出力。`benchmarks/<timestamp>/benchmark.json` に配置する。
 
 ```json
 {
@@ -285,30 +285,30 @@ Output from Benchmark mode. Located at `benchmarks/<timestamp>/benchmark.json`.
 }
 ```
 
-**Fields:**
-- `metadata`: Information about the benchmark run
-  - `skill_name`: Name of the skill
-  - `timestamp`: When the benchmark was run
-  - `evals_run`: List of eval names or IDs
-  - `runs_per_configuration`: Number of runs per config (e.g. 3)
-- `runs[]`: Individual run results
-  - `eval_id`: Numeric eval identifier
-  - `eval_name`: Human-readable eval name (used as section header in the viewer)
-  - `configuration`: Must be `"with_skill"` or `"without_skill"` (the viewer uses this exact string for grouping and color coding)
-  - `run_number`: Integer run number (1, 2, 3...)
-  - `result`: Nested object with `pass_rate`, `passed`, `total`, `time_seconds`, `tokens`, `errors`
-- `run_summary`: Statistical aggregates per configuration
-  - `with_skill` / `without_skill`: Each contains `pass_rate`, `time_seconds`, `tokens` objects with `mean` and `stddev` fields
-  - `delta`: Difference strings like `"+0.50"`, `"+13.0"`, `"+1700"`
-- `notes`: Freeform observations from the analyzer
+**フィールド：**
+- `metadata`: ベンチマーク実行に関する情報
+  - `skill_name`: スキルの名前
+  - `timestamp`: ベンチマーク実行日時
+  - `evals_run`: eval 名または ID のリスト
+  - `runs_per_configuration`: 設定ごとの実行回数（例：3）
+- `runs[]`: 個別の実行結果
+  - `eval_id`: 数値の eval 識別子
+  - `eval_name`: 人間が読める eval 名（ビューアのセクション見出しとして使用）
+  - `configuration`: `"with_skill"` または `"without_skill"` でなければならない（ビューアはこの正確な文字列をグルーピングとカラーコーディングに使用する）
+  - `run_number`: 整数の実行番号（1、2、3...）
+  - `result`: `pass_rate`、`passed`、`total`、`time_seconds`、`tokens`、`errors` を含むネストされたオブジェクト
+- `run_summary`: 設定ごとの統計集計
+  - `with_skill` / `without_skill`: それぞれ `pass_rate`、`time_seconds`、`tokens` オブジェクトを含み、`mean` と `stddev` フィールドがある
+  - `delta`: `"+0.50"`、`"+13.0"`、`"+1700"` のような差分文字列
+- `notes`: 分析者からの自由形式の観察
 
-**Important:** The viewer reads these field names exactly. Using `config` instead of `configuration`, or putting `pass_rate` at the top level of a run instead of nested under `result`, will cause the viewer to show empty/zero values. Always reference this schema when generating benchmark.json manually.
+**重要:** ビューアはこれらのフィールド名を正確に読み取る。`configuration` の代わりに `config` を使ったり、`pass_rate` を `result` の下ではなく実行のトップレベルに置いたりすると、ビューアが空/ゼロ値を表示する原因になる。benchmark.json を手動で生成する際は、必ずこのスキーマを参照すること。
 
 ---
 
 ## comparison.json
 
-Output from blind comparator. Located at `<grading-dir>/comparison-N.json`.
+ブラインド比較者の出力。`<grading-dir>/comparison-N.json` に配置する。
 
 ```json
 {
@@ -383,7 +383,7 @@ Output from blind comparator. Located at `<grading-dir>/comparison-N.json`.
 
 ## analysis.json
 
-Output from post-hoc analyzer. Located at `<grading-dir>/analysis.json`.
+事後分析者の出力。`<grading-dir>/analysis.json` に配置する。
 
 ```json
 {

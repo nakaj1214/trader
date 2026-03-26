@@ -1,0 +1,69 @@
+# Slack approval skip patterns
+# Format: <action>:<prefix_pattern>
+# action: skip (no approval needed) or require (always require approval)
+# Evaluated top-to-bottom; first match wins.
+# Note: Shell metachar/redirect detection (>, >>, <, $(...), etc.) runs BEFORE
+#       these patterns and always forces require regardless of what's listed below.
+
+# --- Always require approval (dangerous operations) ---
+require:rm -rf
+require:rm -r
+require:rm
+require:git push
+require:git reset --hard
+require:git clean
+require:docker rm
+require:docker rmi
+require:chmod
+require:chown
+require:chgrp
+require:kill
+require:killall
+require:pkill
+require:sudo
+
+# --- Auto-proceed commands (no approval needed) ---
+skip:python3
+skip:python
+skip:codex
+skip:uv run
+skip:npm run
+skip:docker compose exec
+skip:docker compose logs
+skip:docker compose ps
+skip:docker exec
+skip:ls
+skip:cat
+skip:grep
+skip:head
+skip:tail
+skip:wc
+skip:sort
+skip:uniq
+skip:find
+skip:test
+skip:cd
+skip:mkdir
+skip:stat
+skip:file
+skip:diff
+skip:git status
+skip:git log
+skip:git diff
+skip:git show
+skip:git branch
+skip:git rev-parse
+skip:git remote
+skip:php artisan route:list
+skip:php artisan config:show
+skip:node
+skip:echo
+skip:pwd
+skip:which
+skip:whoami
+skip:date
+skip:env
+skip:printenv
+skip:gh
+
+# --- Everything else requires approval (default: require) ---

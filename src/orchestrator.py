@@ -266,7 +266,7 @@ def _step_persist(
             saved_sheets = append_predictions(predictions, flat_sheets_config)
             logger.info("sheets_persist_done", count=saved_sheets)
     except Exception:
-        logger.warning("sheets_persist_skipped", exc_info=True)
+        logger.exception("sheets_persist_failed")
 
     result.steps.append(
         StepResult(name="persist", success=saved_db > 0, data={"db": saved_db, "sheets": saved_sheets})
@@ -309,6 +309,7 @@ def _step_enrich(
                     else:
                         stock_data[t] = df
             except (KeyError, TypeError):
+                logger.debug("yfinance_ticker_extract_failed", ticker=t)
                 continue
 
         # Fetch info cache for each ticker
@@ -317,6 +318,7 @@ def _step_enrich(
             try:
                 info_cache[t] = yf.Ticker(t).info or {}
             except Exception:
+                logger.debug("yfinance_info_fetch_failed", ticker=t, exc_info=True)
                 info_cache[t] = {}
 
         enrichment = enrich_all(
@@ -519,6 +521,7 @@ def _export_comparison(
                     else:
                         prices[t] = df
             except (KeyError, TypeError):
+                logger.debug("yfinance_ticker_extract_failed", ticker=t)
                 continue
 
         ai_returns, ai_eq = compute_ai_weekly_returns(records)

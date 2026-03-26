@@ -1,0 +1,135 @@
+# Claude Ignore File
+# Files and directories that Claude should ignore when exploring the codebase
+
+# Dependencies
+node_modules/
+vendor/
+packages/
+bower_components/
+jspm_packages/
+
+# Build outputs
+dist/
+build/
+out/
+target/
+*.min.js
+*.min.css
+bundle.js
+*.bundle.*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+credentials.json
+
+# Test coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Cache directories
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.gatsby/
+
+# Lock files (often very large)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Gemfile.lock
+Cargo.lock
+poetry.lock
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.dat
+
+# Media files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.ico
+*.svg
+*.mp4
+*.mp3
+*.wav
+*.pdf
+
+# Documentation builds
+docs/build/
+site/
+_site/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Large data files
+*.csv
+*.json.gz
+*.xml
+*.sql
+*.dump
+
+# Minified files
+*.min.*
+*-min.*
+
+# Source maps
+*.map
+*.js.map
+*.css.map
+
+# Compiled Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Compiled Java
+*.class
+*.jar
+*.war
+
+# Git
+.git/
+.gitmodules
+
+# Docker
+.docker/
+*.dockerfile

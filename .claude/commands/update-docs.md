@@ -1,71 +1,71 @@
-Synchronize project documentation with current codebase state, generating from source rather than manual editing.
+プロジェクトドキュメントを現在のコードベースの状態と同期します。手動編集ではなく、ソースコードから生成します。
 
-## Sources of Truth
+## 信頼できる情報源
 
-Extract documentation content from actual code:
+実際のコードからドキュメントの内容を抽出:
 
-| Source File | Documents |
-|------------|-----------|
-| `package.json` scripts | Available commands table |
-| `.env.example` | Environment variables reference |
-| API route files | Endpoint documentation |
-| `Dockerfile` / `docker-compose.yml` | Deployment procedures |
-| Migration files | Database schema changes |
+| ソースファイル | ドキュメント内容 |
+|----------------|------------------|
+| `package.json` scripts | 利用可能なコマンドテーブル |
+| `.env.example` | 環境変数リファレンス |
+| API ルートファイル | エンドポイントドキュメント |
+| `Dockerfile` / `docker-compose.yml` | デプロイ手順 |
+| マイグレーションファイル | データベーススキーマ変更 |
 
-## Critical Rules
+## 重要なルール
 
-- **Generate from code, never manually edit generated sections**
-- **Only update generated sections — leave hand-written prose intact**
-- **Mark auto-generated content** with `<!-- AUTO-GENERATED -->` comments
-- **Don't create documentation files** without explicit request
+- **コードから生成し、生成されたセクションを手動で編集しない**
+- **生成されたセクションのみ更新 — 手書きの文章はそのまま残す**
+- **自動生成コンテンツ**は `<!-- AUTO-GENERATED -->` コメントでマーク
+- **明示的な要求なし**にドキュメントファイルを作成しない
 
-## Process
+## プロセス
 
-### 1. Scan for Changes
+### 1. 変更のスキャン
 ```bash
-git diff HEAD~1 --name-only   # Files changed since last commit
-git log --oneline -10          # Recent changes context
+git diff HEAD~1 --name-only   # 最後のコミット以降に変更されたファイル
+git log --oneline -10          # 最近の変更コンテキスト
 ```
 
-### 2. Extract and Update
+### 2. 抽出と更新
 
-**Scripts table** (from package.json):
+**スクリプトテーブル**（package.json から）:
 ```markdown
-| Command | Description |
-|---------|-------------|
-| npm run dev | Start development server |
-| npm run build | Production build |
-| npm test | Run test suite |
+| コマンド | 説明 |
+|----------|------|
+| npm run dev | 開発サーバーを起動 |
+| npm run build | プロダクションビルド |
+| npm test | テストスイートを実行 |
 ```
 
-**Environment variables** (from .env.example):
+**環境変数**（.env.example から）:
 ```markdown
-| Variable | Required | Example | Description |
-|----------|----------|---------|-------------|
-| DATABASE_URL | ✅ | postgresql://... | Database connection |
-| JWT_SECRET | ✅ | change-me | Auth token signing |
+| 変数 | 必須 | 例 | 説明 |
+|------|------|-----|------|
+| DATABASE_URL | ✅ | postgresql://... | データベース接続 |
+| JWT_SECRET | ✅ | change-me | 認証トークンの署名 |
 ```
 
-### 3. Staleness Check
+### 3. 陳腐化チェック
 
-Flag documentation older than 90 days that may be outdated:
+90日以上前で古くなっている可能性のあるドキュメントをフラグ:
 ```bash
-git log --oneline -- README.md | head -1  # Last README update
+git log --oneline -- README.md | head -1  # README の最終更新
 ```
 
-## Output Report
+## 出力レポート
 
 ```
-## Documentation Updated
+## ドキュメント更新完了
 
-### Updated
-- README.md — scripts table, env vars section
-- docs/api.md — 3 new endpoints added
+### 更新済み
+- README.md — スクリプトテーブル、環境変数セクション
+- docs/api.md — 3つの新しいエンドポイントを追加
 
-### Skipped (no changes detected)
+### スキップ（変更なし）
 - CONTRIBUTING.md
 - docs/architecture.md
 
-### Stale (>90 days, needs review)
-- docs/deployment.md — last updated 2025-10-15
+### 陳腐化（90日以上、レビューが必要）
+- docs/deployment.md — 最終更新日 2025-10-15
 ```

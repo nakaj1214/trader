@@ -1,47 +1,47 @@
-# Plugin Recommendations
+# プラグイン推奨
 
-Plugins are installable collections of skills, commands, agents, and hooks. Install via `/plugin install`.
+プラグインは、スキル、コマンド、エージェント、フックのインストール可能なコレクションです。`/plugin install` でインストールできます。
 
-**Note**: These are plugins from the official repository. Use web search to discover additional community plugins.
+**注意**: これらは公式リポジトリのプラグインです。追加のコミュニティプラグインを見つけるには、Web 検索を使用してください。
 
 ---
 
-## Official Plugins
+## 公式プラグイン
 
-### Development & Code Quality
+### 開発 & コード品質
 
-| Plugin | Best For | Key Features |
+| プラグイン | 最適な用途 | 主な機能 |
 |--------|----------|--------------|
-| **plugin-dev** | Building Claude Code plugins | Skills for creating skills, hooks, commands, agents |
-| **pr-review-toolkit** | PR review workflows | Specialized review agents (code, tests, types) |
-| **code-review** | Automated code review | Multi-agent review with confidence scoring |
-| **code-simplifier** | Code refactoring | Simplify code while preserving functionality |
-| **feature-dev** | Feature development | End-to-end feature workflow with agents |
+| **plugin-dev** | Claude Code プラグインの構築 | スキル、フック、コマンド、エージェントの作成スキル |
+| **pr-review-toolkit** | PR レビューワークフロー | 専門レビューエージェント（コード、テスト、型） |
+| **code-review** | 自動コードレビュー | 信頼度スコアリング付きマルチエージェントレビュー |
+| **code-simplifier** | コードリファクタリング | 機能を保持しつつコードを簡素化 |
+| **feature-dev** | 機能開発 | エージェントを使ったエンドツーエンドの機能ワークフロー |
 
-### Git & Workflow
+### Git & ワークフロー
 
-| Plugin | Best For | Key Features |
+| プラグイン | 最適な用途 | 主な機能 |
 |--------|----------|--------------|
-| **commit-commands** | Git workflows | /commit, /commit-push-pr commands |
-| **hookify** | Automation rules | Create hooks from conversation patterns |
+| **commit-commands** | Git ワークフロー | /commit, /commit-push-pr コマンド |
+| **hookify** | 自動化ルール | 会話パターンからフックを作成 |
 
-### Frontend
+### フロントエンド
 
-| Plugin | Best For | Key Features |
+| プラグイン | 最適な用途 | 主な機能 |
 |--------|----------|--------------|
-| **frontend-design** | UI development | Production-grade UI, avoids generic aesthetics |
+| **frontend-design** | UI 開発 | プロダクショングレードの UI、汎用的な美学を回避 |
 
-### Learning & Guidance
+### 学習 & ガイダンス
 
-| Plugin | Best For | Key Features |
+| プラグイン | 最適な用途 | 主な機能 |
 |--------|----------|--------------|
-| **explanatory-output-style** | Learning | Educational insights about code choices |
-| **learning-output-style** | Interactive learning | Requests contributions at decision points |
-| **security-guidance** | Security awareness | Warns about security issues when editing |
+| **explanatory-output-style** | 学習 | コード選択に関する教育的インサイト |
+| **learning-output-style** | インタラクティブ学習 | 判断ポイントで貢献を要求 |
+| **security-guidance** | セキュリティ意識 | 編集時にセキュリティ問題を警告 |
 
-### Language Servers (LSP)
+### 言語サーバー (LSP)
 
-| Plugin | Language |
+| プラグイン | 言語 |
 |--------|----------|
 | **typescript-lsp** | TypeScript/JavaScript |
 | **pyright-lsp** | Python |
@@ -57,42 +57,42 @@ Plugins are installable collections of skills, commands, agents, and hooks. Inst
 
 ---
 
-## Quick Reference: Codebase → Plugin
+## クイックリファレンス: コードベース → プラグイン
 
-| Codebase Signal | Recommended Plugin |
+| コードベースのシグナル | 推奨プラグイン |
 |-----------------|-------------------|
-| Building plugins | plugin-dev |
-| PR-based workflow | pr-review-toolkit |
-| Git commits | commit-commands |
+| プラグインの構築 | plugin-dev |
+| PR ベースのワークフロー | pr-review-toolkit |
+| Git コミット | commit-commands |
 | React/Vue/Angular | frontend-design |
-| Want automation rules | hookify |
-| TypeScript project | typescript-lsp |
-| Python project | pyright-lsp |
-| Go project | gopls-lsp |
-| Security-sensitive code | security-guidance |
-| Learning/onboarding | explanatory-output-style |
+| 自動化ルールが必要 | hookify |
+| TypeScript プロジェクト | typescript-lsp |
+| Python プロジェクト | pyright-lsp |
+| Go プロジェクト | gopls-lsp |
+| セキュリティ重視のコード | security-guidance |
+| 学習/オンボーディング | explanatory-output-style |
 
 ---
 
-## Plugin Management
+## プラグイン管理
 
 ```bash
-# Install a plugin
+# プラグインのインストール
 /plugin install <plugin-name>
 
-# List installed plugins
+# インストール済みプラグインの一覧
 /plugin list
 
-# View plugin details
+# プラグインの詳細表示
 /plugin info <plugin-name>
 ```
 
 ---
 
-## When to Recommend Plugins
+## プラグインを推奨する場面
 
-**Recommend plugin installation when:**
-- User wants to install Claude Code automations from Anthropic's official repository or another shared marketplace
-- User needs multiple related capabilities
-- Team wants standardized workflows
-- First-time Claude Code setup
+**以下の場合にプラグインのインストールを推奨:**
+- ユーザーが Anthropic の公式リポジトリまたは他の共有マーケットプレイスから Claude Code オートメーションをインストールしたい場合
+- ユーザーが複数の関連機能を必要としている場合
+- チームが標準化されたワークフローを求めている場合
+- Claude Code の初期セットアップ時

@@ -1,109 +1,109 @@
-# CLAUDE.md Quality Criteria
+# CLAUDE.md 品質基準
 
-## Scoring Rubric
+## 採点ルーブリック
 
-### 1. Commands/Workflows (20 points)
+### 1. コマンド/ワークフロー（20点）
 
-**20 points**: All essential commands documented with context
-- Build, test, lint, deploy commands present
-- Development workflow clear
-- Common operations documented
+**20点**: すべての重要なコマンドがコンテキスト付きでドキュメント化されている
+- ビルド、テスト、リント、デプロイコマンドがある
+- 開発ワークフローが明確
+- 一般的な操作がドキュメント化されている
 
-**15 points**: Most commands present, some missing context
+**15点**: ほとんどのコマンドがあるが、一部コンテキストが不足
 
-**10 points**: Basic commands only, no workflow
+**10点**: 基本的なコマンドのみ、ワークフローなし
 
-**5 points**: Few commands, many missing
+**5点**: コマンドが少なく、多くが欠落
 
-**0 points**: No commands documented
+**0点**: コマンドがドキュメント化されていない
 
-### 2. Architecture Clarity (20 points)
+### 2. アーキテクチャの明確さ（20点）
 
-**20 points**: Clear codebase map
-- Key directories explained
-- Module relationships documented
-- Entry points identified
-- Data flow described where relevant
+**20点**: コードベースのマップが明確
+- 主要なディレクトリが説明されている
+- モジュール間の関係がドキュメント化されている
+- エントリーポイントが特定されている
+- 関連する場合はデータフローが記述されている
 
-**15 points**: Good structure overview, minor gaps
+**15点**: 構造の概要が良好だが、軽微なギャップあり
 
-**10 points**: Basic directory listing only
+**10点**: 基本的なディレクトリ一覧のみ
 
-**5 points**: Vague or incomplete
+**5点**: 曖昧または不完全
 
-**0 points**: No architecture info
+**0点**: アーキテクチャ情報なし
 
-### 3. Non-Obvious Patterns (15 points)
+### 3. 非自明なパターン（15点）
 
-**15 points**: Gotchas and quirks captured
-- Known issues documented
-- Workarounds explained
-- Edge cases noted
-- "Why we do it this way" for unusual patterns
+**15点**: 落とし穴や特殊な動作が捕捉されている
+- 既知の問題がドキュメント化されている
+- ワークアラウンドが説明されている
+- エッジケースが記載されている
+- 通常とは異なるパターンに「なぜこうしているか」の説明がある
 
-**10 points**: Some patterns documented
+**10点**: 一部のパターンがドキュメント化されている
 
-**5 points**: Minimal pattern documentation
+**5点**: パターンのドキュメントが最小限
 
-**0 points**: No patterns or gotchas
+**0点**: パターンや落とし穴の記載なし
 
-### 4. Conciseness (15 points)
+### 4. 簡潔さ（15点）
 
-**15 points**: Dense, valuable content
-- No filler or obvious info
-- Each line adds value
-- No redundancy with code comments
+**15点**: 密度が高く価値のある内容
+- 埋め草や自明な情報がない
+- 各行が価値を付加している
+- コードコメントとの冗長性がない
 
-**10 points**: Mostly concise, some padding
+**10点**: おおむね簡潔だが、一部パディングあり
 
-**5 points**: Verbose in places
+**5点**: 箇所によって冗長
 
-**0 points**: Mostly filler or restates obvious code
+**0点**: ほとんどが埋め草、または自明なコードの言い換え
 
-### 5. Currency (15 points)
+### 5. 最新性（15点）
 
-**15 points**: Reflects current codebase
-- Commands work as documented
-- File references accurate
-- Tech stack current
+**15点**: 現在のコードベースを反映している
+- ドキュメント通りにコマンドが動作する
+- ファイル参照が正確
+- 技術スタックが最新
 
-**10 points**: Mostly current, minor staleness
+**10点**: おおむね最新だが、軽微な古さあり
 
-**5 points**: Several outdated references
+**5点**: 複数の古い参照がある
 
-**0 points**: Severely outdated
+**0点**: 著しく古い
 
-### 6. Actionability (15 points)
+### 6. 実行可能性（15点）
 
-**15 points**: Instructions are executable
-- Commands can be copy-pasted
-- Steps are concrete
-- Paths are real
+**15点**: 手順が実行可能
+- コマンドがコピー＆ペーストで使える
+- ステップが具体的
+- パスが実在する
 
-**10 points**: Mostly actionable
+**10点**: おおむね実行可能
 
-**5 points**: Some vague instructions
+**5点**: 一部の手順が曖昧
 
-**0 points**: Vague or theoretical
+**0点**: 曖昧または理論的
 
-## Assessment Process
+## 評価プロセス
 
-1. Read the CLAUDE.md file completely
-2. Cross-reference with actual codebase:
-   - Run documented commands (mentally or actually)
-   - Check if referenced files exist
-   - Verify architecture descriptions
-3. Score each criterion
-4. Calculate total and assign grade
-5. List specific issues found
-6. Propose concrete improvements
+1. CLAUDE.md ファイルを完全に読む
+2. 実際のコードベースと照合する:
+   - ドキュメント化されたコマンドを実行する（実際にまたは頭の中で）
+   - 参照されたファイルが存在するか確認する
+   - アーキテクチャの説明を検証する
+3. 各基準を採点する
+4. 合計を計算してグレードを割り当てる
+5. 発見した具体的な問題を一覧にする
+6. 具体的な改善案を提案する
 
-## Red Flags
+## レッドフラグ
 
-- Commands that would fail (wrong paths, missing deps)
-- References to deleted files/folders
-- Outdated tech versions
-- Copy-paste from templates without customization
-- Generic advice not specific to the project
-- "TODO" items never completed
-- Duplicate info across multiple CLAUDE.md files
+- 実行すると失敗するコマンド（パスの間違い、依存関係の欠落）
+- 削除されたファイル/フォルダへの参照
+- 古い技術バージョン
+- テンプレートからのカスタマイズなしのコピー＆ペースト
+- プロジェクトに特化しない汎用的なアドバイス
+- 完了していない「TODO」項目
+- 複数の CLAUDE.md ファイル間での情報の重複

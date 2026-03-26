@@ -1,70 +1,76 @@
-# Python Coding Style
+---
+paths:
+  - "**/*.py"
+  - "**/*.pyi"
+---
 
-Applies to: `**/*.py`, `**/*.pyi`
+# Python コーディングスタイル
 
-Extends [common coding style](../../common/coding-style.md).
+適用対象: `**/*.py`, `**/*.pyi`
 
-## PEP 8 Compliance
+[共通コーディングスタイル](../../common/coding-style.md) を拡張。
 
-All Python code must follow PEP 8 conventions. Use automated tools — no style debates:
+## PEP 8 準拠
+
+すべての Python コードは PEP 8 規約に従うこと。自動化ツールを使用し、スタイルの議論は不要:
 
 ```bash
-black .       # Auto-format
-isort .       # Sort imports
-ruff check .  # Lint
+black .       # 自動フォーマット
+isort .       # インポートのソート
+ruff check .  # リント
 ```
 
-## Type Annotations
+## 型アノテーション
 
-**All function signatures must have type annotations:**
+**すべての関数シグネチャに型アノテーションを付けること:**
 
 ```python
-# ❌ Bad
+# ❌ 悪い例
 def process_user(user_id, name):
     ...
 
-# ✅ Good
+# ✅ 良い例
 def process_user(user_id: int, name: str) -> dict[str, Any]:
     ...
 ```
 
-## Immutability
+## イミュータビリティ
 
-Prefer immutable data structures:
+イミュータブルなデータ構造を優先する:
 
 ```python
 from dataclasses import dataclass
 from typing import NamedTuple
 
-# Frozen dataclass (preferred for complex objects)
+# Frozen dataclass（複雑なオブジェクトに推奨）
 @dataclass(frozen=True)
 class UserRecord:
     id: int
     name: str
     email: str
 
-# NamedTuple (preferred for simple structures)
+# NamedTuple（シンプルな構造に推奨）
 class Point(NamedTuple):
     x: float
     y: float
 ```
 
-## Error Handling
+## エラーハンドリング
 
 ```python
-# ❌ Bad — bare except
+# ❌ 悪い例 — 素の except
 try:
     process()
 except:
     pass
 
-# ❌ Bad — swallowed exception
+# ❌ 悪い例 — 例外の握りつぶし
 try:
     process()
 except Exception:
     pass
 
-# ✅ Good — specific exception with logging
+# ✅ 良い例 — 具体的な例外をキャッチしてログ出力
 try:
     process()
 except ValueError as e:
@@ -72,15 +78,15 @@ except ValueError as e:
     raise ProcessingError("Invalid input") from e
 ```
 
-## Mutable Default Arguments
+## ミュータブルなデフォルト引数
 
 ```python
-# ❌ Bad — mutable default
+# ❌ 悪い例 — ミュータブルなデフォルト値
 def append_item(item, lst=[]):
     lst.append(item)
     return lst
 
-# ✅ Good — None sentinel
+# ✅ 良い例 — None をセンチネルとして使用
 def append_item(item: Any, lst: list | None = None) -> list:
     if lst is None:
         lst = []
@@ -88,9 +94,9 @@ def append_item(item: Any, lst: list | None = None) -> list:
     return lst
 ```
 
-## Naming Conventions
+## 命名規則
 
-- `snake_case` for functions, methods, variables
-- `PascalCase` for classes
-- `SCREAMING_SNAKE_CASE` for module-level constants
-- `_private` for private members (single underscore)
+- `snake_case`: 関数、メソッド、変数
+- `PascalCase`: クラス
+- `SCREAMING_SNAKE_CASE`: モジュールレベルの定数
+- `_private`: プライベートメンバー（アンダースコア1つ）

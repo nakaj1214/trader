@@ -1,33 +1,33 @@
 ---
-description: Create hooks to prevent unwanted behaviors from conversation analysis or explicit instructions
-argument-hint: Optional specific behavior to address
+description: 会話分析または明示的な指示から、望ましくない動作を防止するフックを作成する
+argument-hint: 対処する特定の動作（任意）
 allowed-tools: ["Read", "Write", "AskUserQuestion", "Task", "Grep", "TodoWrite", "Skill"]
 ---
 
-# Hookify - Create Hooks from Unwanted Behaviors
+# Hookify - 望ましくない動作からフックを作成
 
-**FIRST: Load the hookify:writing-rules skill** using the Skill tool to understand rule file format and syntax.
+**まず: Skill ツールを使って hookify:writing-rules スキルをロード**し、ルールファイルの形式と構文を理解してください。
 
-Create hook rules to prevent problematic behaviors by analyzing the conversation or from explicit user instructions.
+会話の分析やユーザーの明示的な指示に基づいて、問題のある動作を防止するフックルールを作成します。
 
-## Your Task
+## タスク
 
-You will help the user create hookify rules to prevent unwanted behaviors. Follow these steps:
+望ましくない動作を防止する hookify ルールの作成をサポートします。以下の手順に従ってください:
 
-### Step 1: Gather Behavior Information
+### ステップ 1: 動作情報の収集
 
-**If $ARGUMENTS is provided:**
-- User has given specific instructions: `$ARGUMENTS`
-- Still analyze recent conversation (last 10-15 user messages) for additional context
-- Look for examples of the behavior happening
+**$ARGUMENTS が指定されている場合:**
+- ユーザーが具体的な指示を提供: `$ARGUMENTS`
+- 追加のコンテキストのため、最近の会話（直近10〜15件のユーザーメッセージ）も分析する
+- その動作が発生している例を探す
 
-**If $ARGUMENTS is empty:**
-- Launch the conversation-analyzer agent to find problematic behaviors
-- Agent will scan user prompts for frustration signals
-- Agent will return structured findings
+**$ARGUMENTS が空の場合:**
+- conversation-analyzer エージェントを起動して問題のある動作を検出
+- エージェントがユーザーのプロンプトからフラストレーションの兆候をスキャン
+- エージェントが構造化された結果を返す
 
-**To analyze conversation:**
-Use the Task tool to launch conversation-analyzer agent:
+**会話を分析するには:**
+Task ツールを使って conversation-analyzer エージェントを起動:
 ```
 {
   "subagent_type": "general-purpose",
@@ -57,38 +57,38 @@ Focus on the most recent issues (last 20-30 messages). Don't go back further unl
 }
 ```
 
-### Step 2: Present Findings to User
+### ステップ 2: 検出結果をユーザーに提示
 
-After gathering behaviors (from arguments or agent), present to user using AskUserQuestion:
+動作の収集後（引数またはエージェントから）、AskUserQuestion を使ってユーザーに提示:
 
-**Question 1: Which behaviors to hookify?**
-- Header: "Create Rules"
+**質問 1: どの動作を hookify するか？**
+- ヘッダー: "ルール作成"
 - multiSelect: true
-- Options: List each detected behavior (max 4)
-  - Label: Short description (e.g., "Block rm -rf")
-  - Description: Why it's problematic
+- オプション: 検出された各動作を一覧表示（最大4件）
+  - ラベル: 短い説明（例: "rm -rf をブロック"）
+  - 説明: なぜ問題なのか
 
-**Question 2: For each selected behavior, ask about action:**
-- "Should this block the operation or just warn?"
-- Options:
-  - "Just warn" (action: warn - shows message but allows)
-  - "Block operation" (action: block - prevents execution)
+**質問 2: 選択された各動作に対して、アクションを確認:**
+- 「操作をブロックしますか、それとも警告のみにしますか？」
+- オプション:
+  - "警告のみ"（action: warn - メッセージを表示するが許可する）
+  - "操作をブロック"（action: block - 実行を防止する）
 
-**Question 3: Ask for example patterns:**
-- "What patterns should trigger this rule?"
-- Show detected patterns
-- Allow user to refine or add more
+**質問 3: パターン例を確認:**
+- 「このルールをトリガーするパターンは？」
+- 検出されたパターンを表示
+- ユーザーが修正または追加できるようにする
 
-### Step 3: Generate Rule Files
+### ステップ 3: ルールファイルの生成
 
-For each confirmed behavior, create a `.claude/hookify.{rule-name}.local.md` file:
+確認された各動作に対して `.claude/hookify.{rule-name}.local.md` ファイルを作成:
 
-**Rule naming convention:**
-- Use kebab-case
-- Be descriptive: `block-dangerous-rm`, `warn-console-log`, `require-tests-before-stop`
-- Start with action verb: block, warn, prevent, require
+**ルール命名規則:**
+- ケバブケースを使用
+- 説明的に: `block-dangerous-rm`, `warn-console-log`, `require-tests-before-stop`
+- アクション動詞で始める: block, warn, prevent, require
 
-**File format:**
+**ファイル形式:**
 ```markdown
 ---
 name: {rule-name}
@@ -98,14 +98,14 @@ pattern: {regex pattern}
 action: {warn|block}
 ---
 
-{Message to show Claude when rule triggers}
+{ルールがトリガーされたときに Claude に表示するメッセージ}
 ```
 
-**Action values:**
-- `warn`: Show message but allow operation (default)
-- `block`: Prevent operation or stop session
+**アクション値:**
+- `warn`: メッセージを表示するが操作は許可する（デフォルト）
+- `block`: 操作を防止するかセッションを停止する
 
-**For more complex rules (multiple conditions):**
+**より複雑なルール（複数条件）の場合:**
 ```markdown
 ---
 name: {rule-name}
@@ -120,71 +120,71 @@ conditions:
     pattern: API_KEY
 ---
 
-{Warning message}
+{警告メッセージ}
 ```
 
-### Step 4: Create Files and Confirm
+### ステップ 4: ファイルの作成と確認
 
-**IMPORTANT**: Rule files must be created in the current working directory's `.claude/` folder, NOT the plugin directory.
+**重要**: ルールファイルはカレントワーキングディレクトリの `.claude/` フォルダに作成する必要があります。プラグインディレクトリではありません。
 
-Use the current working directory (where Claude Code was started) as the base path.
+カレントワーキングディレクトリ（Claude Code を起動した場所）をベースパスとして使用します。
 
-1. Check if `.claude/` directory exists in current working directory
-   - If not, create it first with: `mkdir -p .claude`
+1. カレントワーキングディレクトリに `.claude/` ディレクトリが存在するか確認
+   - 存在しない場合は、まず作成: `mkdir -p .claude`
 
-2. Use Write tool to create each `.claude/hookify.{name}.local.md` file
-   - Use relative path from current working directory: `.claude/hookify.{name}.local.md`
-   - The path should resolve to the project's .claude directory, not the plugin's
+2. Write ツールで各 `.claude/hookify.{name}.local.md` ファイルを作成
+   - カレントワーキングディレクトリからの相対パスを使用: `.claude/hookify.{name}.local.md`
+   - パスはプラグインの .claude ディレクトリではなく、プロジェクトの .claude ディレクトリに解決されること
 
-3. Show user what was created:
+3. 作成された内容をユーザーに表示:
    ```
-   Created 3 hookify rules:
+   3つの hookify ルールを作成しました:
    - .claude/hookify.dangerous-rm.local.md
    - .claude/hookify.console-log.local.md
    - .claude/hookify.sensitive-files.local.md
 
-   These rules will trigger on:
-   - dangerous-rm: Bash commands matching "rm -rf"
-   - console-log: Edits adding console.log statements
-   - sensitive-files: Edits to .env or credentials files
+   これらのルールは以下でトリガーされます:
+   - dangerous-rm: "rm -rf" にマッチする Bash コマンド
+   - console-log: console.log 文を追加する編集
+   - sensitive-files: .env やクレデンシャルファイルの編集
    ```
 
-4. Verify files were created in the correct location by listing them
+4. ファイルが正しい場所に作成されたことをリストで確認
 
-5. Inform user: **"Rules are active immediately - no restart needed!"**
+5. ユーザーに通知: **「ルールは即座にアクティブになります。再起動は不要です！」**
 
-   The hookify hooks are already loaded and will read your new rules on the next tool use.
+   hookify フックは既にロードされており、次のツール使用時に新しいルールを読み込みます。
 
-## Event Types Reference
+## イベントタイプリファレンス
 
-- **bash**: Matches Bash tool commands
-- **file**: Matches Edit, Write, MultiEdit tools
-- **stop**: Matches when agent wants to stop (use for completion checks)
-- **prompt**: Matches when user submits prompts
-- **all**: Matches all events
+- **bash**: Bash ツールのコマンドにマッチ
+- **file**: Edit, Write, MultiEdit ツールにマッチ
+- **stop**: エージェントが停止しようとしたときにマッチ（完了チェックに使用）
+- **prompt**: ユーザーがプロンプトを送信したときにマッチ
+- **all**: すべてのイベントにマッチ
 
-## Pattern Writing Tips
+## パターン記述のヒント
 
-**Bash patterns:**
-- Match dangerous commands: `rm\s+-rf|chmod\s+777|dd\s+if=`
-- Match specific tools: `npm\s+install\s+|pip\s+install`
+**Bash パターン:**
+- 危険なコマンドにマッチ: `rm\s+-rf|chmod\s+777|dd\s+if=`
+- 特定のツールにマッチ: `npm\s+install\s+|pip\s+install`
 
-**File patterns:**
-- Match code patterns: `console\.log\(|eval\(|innerHTML\s*=`
-- Match file paths: `\.env$|\.git/|node_modules/`
+**ファイルパターン:**
+- コードパターンにマッチ: `console\.log\(|eval\(|innerHTML\s*=`
+- ファイルパスにマッチ: `\.env$|\.git/|node_modules/`
 
-**Stop patterns:**
-- Check for missing steps: (check transcript or completion criteria)
+**停止パターン:**
+- 欠落したステップをチェック:（トランスクリプトまたは完了基準を確認）
 
-## Example Workflow
+## ワークフロー例
 
-**User says**: "/hookify Don't use rm -rf without asking me first"
+**ユーザーの発言**: "/hookify 確認なしに rm -rf を使わないで"
 
-**Your response**:
-1. Analyze: User wants to prevent rm -rf commands
-2. Ask: "Should I block this command or just warn you?"
-3. User selects: "Just warn"
-4. Create `.claude/hookify.dangerous-rm.local.md`:
+**あなたの対応**:
+1. 分析: ユーザーは rm -rf コマンドを防止したい
+2. 確認: 「このコマンドをブロックしますか、警告だけにしますか？」
+3. ユーザーが選択: "警告のみ"
+4. `.claude/hookify.dangerous-rm.local.md` を作成:
    ```markdown
    ---
    name: warn-dangerous-rm
@@ -193,39 +193,39 @@ Use the current working directory (where Claude Code was started) as the base pa
    pattern: rm\s+-rf
    ---
 
-   ⚠️ **Dangerous rm command detected**
+   ⚠️ **危険な rm コマンドを検出しました**
 
-   You requested to be warned before using rm -rf.
-   Please verify the path is correct.
+   rm -rf を使用する前に警告するよう要求されました。
+   パスが正しいか確認してください。
    ```
-5. Confirm: "Created hookify rule. It's active immediately - try triggering it!"
+5. 確認: 「hookify ルールを作成しました。即座にアクティブです。トリガーしてみてください！」
 
-## Important Notes
+## 重要な注意事項
 
-- **No restart needed**: Rules take effect immediately on the next tool use
-- **File location**: Create files in project's `.claude/` directory (current working directory), NOT the plugin's .claude/
-- **Regex syntax**: Use Python regex syntax (raw strings, no need to escape in YAML)
-- **Action types**: Rules can `warn` (default) or `block` operations
-- **Testing**: Test rules immediately after creating them
+- **再起動不要**: ルールは次のツール使用時に即座に有効になります
+- **ファイルの場所**: プロジェクトの `.claude/` ディレクトリ（カレントワーキングディレクトリ）にファイルを作成。プラグインの .claude/ ではありません
+- **正規表現構文**: Python 正規表現構文を使用（生の文字列、YAML でのエスケープ不要）
+- **アクションタイプ**: ルールは操作を `warn`（デフォルト）または `block` できます
+- **テスト**: ルール作成後すぐにテストしてください
 
-## Troubleshooting
+## トラブルシューティング
 
-**If rule file creation fails:**
-1. Check current working directory with pwd
-2. Ensure `.claude/` directory exists (create with mkdir if needed)
-3. Use absolute path if needed: `{cwd}/.claude/hookify.{name}.local.md`
-4. Verify file was created with Glob or ls
+**ルールファイルの作成に失敗した場合:**
+1. pwd でカレントワーキングディレクトリを確認
+2. `.claude/` ディレクトリの存在を確認（必要なら mkdir で作成）
+3. 必要に応じて絶対パスを使用: `{cwd}/.claude/hookify.{name}.local.md`
+4. Glob または ls でファイルの作成を確認
 
-**If rule doesn't trigger after creation:**
-1. Verify file is in project `.claude/` not plugin `.claude/`
-2. Check file with Read tool to ensure pattern is correct
-3. Test pattern with: `python3 -c "import re; print(re.search(r'pattern', 'test text'))"`
-4. Verify `enabled: true` in frontmatter
-5. Remember: Rules work immediately, no restart needed
+**ルールが作成後にトリガーされない場合:**
+1. ファイルがプラグインの `.claude/` ではなくプロジェクトの `.claude/` にあるか確認
+2. Read ツールでファイルを確認し、パターンが正しいか検証
+3. パターンをテスト: `python3 -c "import re; print(re.search(r'pattern', 'test text'))"`
+4. フロントマターに `enabled: true` があるか確認
+5. ルールは即座に機能します。再起動は不要です
 
-**If blocking seems too strict:**
-1. Change `action: block` to `action: warn` in the rule file
-2. Or adjust the pattern to be more specific
-3. Changes take effect on next tool use
+**ブロックが厳しすぎる場合:**
+1. ルールファイルで `action: block` を `action: warn` に変更
+2. またはパターンをより具体的に調整
+3. 変更は次のツール使用時に有効になります
 
-Use TodoWrite to track your progress through the steps.
+TodoWrite を使って手順の進捗を管理してください。

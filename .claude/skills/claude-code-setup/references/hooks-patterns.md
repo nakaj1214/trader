@@ -1,163 +1,163 @@
-# Hooks Recommendations
+# フック推奨パターン
 
-Hooks automatically run commands in response to Claude Code events. They're ideal for enforcement and automation that should happen consistently.
+フックは Claude Code のイベントに応じてコマンドを自動実行します。一貫して実行すべきエンフォースメントや自動化に最適です。
 
-**Note**: These are common patterns. Use web search to find hooks for tools/frameworks not listed here to recommend the best hooks for the user.
+**注意**: これらは一般的なパターンです。ここに記載されていないツール/フレームワーク用のフックを見つけるには、Web 検索を使用して最適なフックを推奨してください。
 
-## Auto-Formatting Hooks
+## 自動フォーマットフック
 
 ### Prettier (JavaScript/TypeScript)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
 | `.prettierrc`, `.prettierrc.json`, `prettier.config.js` | ✓ |
 
-**Recommend**: PostToolUse hook on Edit/Write to auto-format
-**Value**: Code stays formatted without thinking about it
+**推奨**: Edit/Write 時の PostToolUse フックで自動フォーマット
+**価値**: 意識しなくてもコードが常にフォーマットされる
 
 ### ESLint (JavaScript/TypeScript)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
 | `.eslintrc`, `.eslintrc.json`, `eslint.config.js` | ✓ |
 
-**Recommend**: PostToolUse hook on Edit/Write to auto-fix
-**Value**: Lint errors fixed automatically
+**推奨**: Edit/Write 時の PostToolUse フックで自動修正
+**価値**: リントエラーが自動的に修正される
 
 ### Black/isort (Python)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
-| `pyproject.toml` with black/isort, `.black`, `setup.cfg` | ✓ |
+| `pyproject.toml` に black/isort 設定, `.black`, `setup.cfg` | ✓ |
 
-**Recommend**: PostToolUse hook to format Python files
-**Value**: Consistent Python formatting
+**推奨**: Python ファイルをフォーマットする PostToolUse フック
+**価値**: Python の一貫したフォーマット
 
-### Ruff (Python - Modern)
-| Detection | File Exists |
+### Ruff (Python - モダン)
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
-| `ruff.toml`, `pyproject.toml` with `[tool.ruff]` | ✓ |
+| `ruff.toml`, `pyproject.toml` に `[tool.ruff]` | ✓ |
 
-**Recommend**: PostToolUse hook for lint + format
-**Value**: Fast, comprehensive Python linting
+**推奨**: リント + フォーマット用の PostToolUse フック
+**価値**: 高速で包括的な Python リンティング
 
 ### gofmt (Go)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
 | `go.mod` | ✓ |
 
-**Recommend**: PostToolUse hook to run gofmt
-**Value**: Standard Go formatting
+**推奨**: gofmt を実行する PostToolUse フック
+**価値**: Go の標準フォーマット
 
 ### rustfmt (Rust)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
 | `Cargo.toml` | ✓ |
 
-**Recommend**: PostToolUse hook to run rustfmt
-**Value**: Standard Rust formatting
+**推奨**: rustfmt を実行する PostToolUse フック
+**価値**: Rust の標準フォーマット
 
 ---
 
-## Type Checking Hooks
+## 型チェックフック
 
 ### TypeScript
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
 | `tsconfig.json` | ✓ |
 
-**Recommend**: PostToolUse hook to run tsc --noEmit
-**Value**: Catch type errors immediately
+**推奨**: tsc --noEmit を実行する PostToolUse フック
+**価値**: 型エラーを即座にキャッチ
 
 ### mypy/pyright (Python)
-| Detection | File Exists |
+| 検出方法 | ファイルの存在 |
 |-----------|-------------|
-| `mypy.ini`, `pyrightconfig.json`, pyproject.toml with mypy | ✓ |
+| `mypy.ini`, `pyrightconfig.json`, pyproject.toml に mypy 設定 | ✓ |
 
-**Recommend**: PostToolUse hook for type checking
-**Value**: Catch type errors in Python
+**推奨**: 型チェック用の PostToolUse フック
+**価値**: Python の型エラーをキャッチ
 
 ---
 
-## Protection Hooks
+## 保護フック
 
-### Block Sensitive File Edits
-| Detection | Presence Of |
+### 機密ファイル編集のブロック
+| 検出方法 | 対象 |
 |-----------|-------------|
-| `.env`, `.env.local`, `.env.production` | Environment files |
-| `credentials.json`, `secrets.yaml` | Secret files |
-| `.git/` directory | Git internals |
+| `.env`, `.env.local`, `.env.production` | 環境変数ファイル |
+| `credentials.json`, `secrets.yaml` | シークレットファイル |
+| `.git/` ディレクトリ | Git 内部ファイル |
 
-**Recommend**: PreToolUse hook that blocks Edit/Write to these paths
-**Value**: Prevent accidental secret exposure or git corruption
+**推奨**: これらのパスへの Edit/Write をブロックする PreToolUse フック
+**価値**: 誤ったシークレット公開や git の破損を防止
 
-### Block Lock File Edits
-| Detection | Presence Of |
+### ロックファイル編集のブロック
+| 検出方法 | 対象 |
 |-----------|-------------|
-| `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` | JS lock files |
-| `Cargo.lock`, `poetry.lock`, `Pipfile.lock` | Other lock files |
+| `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` | JS ロックファイル |
+| `Cargo.lock`, `poetry.lock`, `Pipfile.lock` | その他のロックファイル |
 
-**Recommend**: PreToolUse hook that blocks direct edits
-**Value**: Lock files should only change via package manager
+**推奨**: 直接編集をブロックする PreToolUse フック
+**価値**: ロックファイルはパッケージマネージャー経由でのみ変更すべき
 
 ---
 
-## Test Runner Hooks
+## テストランナーフック
 
 ### Jest (JavaScript/TypeScript)
-| Detection | Presence Of |
+| 検出方法 | 対象 |
 |-----------|-------------|
-| `jest.config.js`, `jest` in package.json | Jest configured |
-| `__tests__/`, `*.test.ts`, `*.spec.ts` | Test files exist |
+| `jest.config.js`, package.json に `jest` | Jest が設定済み |
+| `__tests__/`, `*.test.ts`, `*.spec.ts` | テストファイルが存在 |
 
-**Recommend**: PostToolUse hook to run related tests after edit
-**Value**: Immediate test feedback on changes
+**推奨**: 編集後に関連テストを実行する PostToolUse フック
+**価値**: 変更に対する即座のテストフィードバック
 
 ### pytest (Python)
-| Detection | Presence Of |
+| 検出方法 | 対象 |
 |-----------|-------------|
-| `pytest.ini`, `pyproject.toml` with pytest | pytest configured |
-| `tests/`, `test_*.py` | Test files exist |
+| `pytest.ini`, `pyproject.toml` に pytest | pytest が設定済み |
+| `tests/`, `test_*.py` | テストファイルが存在 |
 
-**Recommend**: PostToolUse hook to run pytest on changed files
-**Value**: Immediate test feedback
+**推奨**: 変更されたファイルに対して pytest を実行する PostToolUse フック
+**価値**: 即座のテストフィードバック
 
 ---
 
-## Quick Reference: Detection → Recommendation
+## クイックリファレンス: 検出 → 推奨
 
-| If You See | Recommend This Hook |
+| 検出された場合 | 推奨フック |
 |------------|-------------------|
-| Prettier config | Auto-format on Edit/Write |
-| ESLint config | Auto-lint on Edit/Write |
-| Ruff/Black config | Auto-format Python |
-| tsconfig.json | Type-check on Edit |
-| Test directory | Run related tests on Edit |
-| .env files | Block .env edits |
-| Lock files | Block lock file edits |
-| Go project | gofmt on Edit |
-| Rust project | rustfmt on Edit |
+| Prettier 設定 | Edit/Write 時の自動フォーマット |
+| ESLint 設定 | Edit/Write 時の自動リント |
+| Ruff/Black 設定 | Python の自動フォーマット |
+| tsconfig.json | Edit 時の型チェック |
+| テストディレクトリ | Edit 時の関連テスト実行 |
+| .env ファイル | .env 編集のブロック |
+| ロックファイル | ロックファイル編集のブロック |
+| Go プロジェクト | Edit 時の gofmt |
+| Rust プロジェクト | Edit 時の rustfmt |
 
 ---
 
-## Notification Hooks
+## 通知フック
 
-Notification hooks run when Claude Code sends notifications. Use matchers to filter by notification type.
+通知フックは Claude Code が通知を送信するときに実行されます。マッチャーを使用して通知タイプでフィルタリングできます。
 
-### Permission Alerts
-| Matcher | Use Case |
+### 権限アラート
+| マッチャー | ユースケース |
 |---------|----------|
-| `permission_prompt` | Alert when Claude requests permissions |
+| `permission_prompt` | Claude が権限を要求したときにアラート |
 
-**Recommend**: Play sound, send desktop notification, or log permission requests
-**Value**: Never miss permission prompts when multitasking
+**推奨**: サウンド再生、デスクトップ通知の送信、または権限リクエストのログ記録
+**価値**: マルチタスク中に権限プロンプトを見逃さない
 
-### Idle Notifications
-| Matcher | Use Case |
+### アイドル通知
+| マッチャー | ユースケース |
 |---------|----------|
-| `idle_prompt` | Alert when Claude is waiting for input (60+ seconds idle) |
+| `idle_prompt` | Claude が入力待ちのときにアラート（60秒以上のアイドル） |
 
-**Recommend**: Play sound or send notification when Claude needs attention
-**Value**: Know when Claude is ready for your input
+**推奨**: Claude がアテンションを必要とするときにサウンドまたは通知を送信
+**価値**: Claude が入力待ちであることを把握できる
 
-### Example Configuration
+### 設定例
 
 ```json
 {
@@ -186,41 +186,41 @@ Notification hooks run when Claude Code sends notifications. Use matchers to fil
 }
 ```
 
-### Available Matchers
+### 利用可能なマッチャー
 
-| Matcher | Triggers When |
+| マッチャー | トリガー条件 |
 |---------|---------------|
-| `permission_prompt` | Claude needs permission for a tool |
-| `idle_prompt` | Claude waiting for input (60+ seconds) |
-| `auth_success` | Authentication succeeds |
-| `elicitation_dialog` | MCP tool needs input |
+| `permission_prompt` | Claude がツールの権限を必要とするとき |
+| `idle_prompt` | Claude が入力待ちのとき（60秒以上） |
+| `auth_success` | 認証が成功したとき |
+| `elicitation_dialog` | MCP ツールが入力を必要とするとき |
 
 ---
 
-## Quick Reference: Detection → Recommendation
+## クイックリファレンス: 検出 → 推奨
 
-| If You See | Recommend This Hook |
+| 検出された場合 | 推奨フック |
 |------------|-------------------|
-| Prettier config | Auto-format on Edit/Write |
-| ESLint config | Auto-lint on Edit/Write |
-| Ruff/Black config | Auto-format Python |
-| tsconfig.json | Type-check on Edit |
-| Test directory | Run related tests on Edit |
-| .env files | Block .env edits |
-| Lock files | Block lock file edits |
-| Go project | gofmt on Edit |
-| Rust project | rustfmt on Edit |
-| Multitasking workflow | Notification hooks for alerts |
+| Prettier 設定 | Edit/Write 時の自動フォーマット |
+| ESLint 設定 | Edit/Write 時の自動リント |
+| Ruff/Black 設定 | Python の自動フォーマット |
+| tsconfig.json | Edit 時の型チェック |
+| テストディレクトリ | Edit 時の関連テスト実行 |
+| .env ファイル | .env 編集のブロック |
+| ロックファイル | ロックファイル編集のブロック |
+| Go プロジェクト | Edit 時の gofmt |
+| Rust プロジェクト | Edit 時の rustfmt |
+| マルチタスクワークフロー | アラート用の通知フック |
 
 ---
 
-## Hook Placement
+## フックの配置場所
 
-Hooks go in `.claude/settings.json`:
+フックは `.claude/settings.json` に配置します:
 
 ```
 .claude/
-└── settings.json  ← Hook configurations here
+└── settings.json  ← フック設定はここ
 ```
 
-Recommend creating the `.claude/` directory if it doesn't exist.
+`.claude/` ディレクトリが存在しない場合は作成を推奨します。

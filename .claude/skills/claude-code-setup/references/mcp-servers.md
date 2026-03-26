@@ -1,263 +1,263 @@
-# MCP Server Recommendations
+# MCP サーバー推奨
 
-MCP (Model Context Protocol) servers extend Claude's capabilities by connecting to external tools and services.
+MCP（Model Context Protocol）サーバーは、外部ツールやサービスに接続することで Claude の機能を拡張します。
 
-**Note**: These are common MCP servers. Use web search to find MCP servers specific to the codebase's services and integrations.
+**注意**: これらは一般的な MCP サーバーです。コードベースのサービスや統合に特化した MCP サーバーを見つけるには、Web 検索を使用してください。
 
-## Setup & Team Sharing
+## セットアップとチーム共有
 
-**Connection methods:**
-1. **Project config** (`.mcp.json`) - Available only in that directory
-2. **Global config** (`~/.claude.json`) - Available across all projects
-3. **Checked-in `.mcp.json`** - Available to entire team (recommended!)
+**接続方法:**
+1. **プロジェクト設定** (`.mcp.json`) - そのディレクトリでのみ利用可能
+2. **グローバル設定** (`~/.claude.json`) - すべてのプロジェクトで利用可能
+3. **コミット済み `.mcp.json`** - チーム全体で利用可能（推奨！）
 
-**Tip**: Check `.mcp.json` into git so your whole team gets the same MCP servers.
+**ヒント**: `.mcp.json` を git にコミットすれば、チーム全員が同じ MCP サーバーを使用できます。
 
-**Debugging**: Use `claude --mcp-debug` to identify configuration issues.
+**デバッグ**: `claude --mcp-debug` で設定の問題を特定できます。
 
-## Documentation & Knowledge
+## ドキュメントとナレッジ
 
 ### context7
-**Best for**: Projects using popular libraries/SDKs where you want Claude to code with up-to-date documentation
+**最適な用途**: 人気のライブラリ/SDK を使用するプロジェクトで、Claude に最新のドキュメントを参照させたい場合
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Using React, Vue, Angular | Frontend frameworks |
-| Using Express, FastAPI, Django | Backend frameworks |
-| Using Prisma, Drizzle | ORMs |
-| Using Stripe, Twilio, SendGrid | Third-party APIs |
-| Using AWS SDK, Google Cloud | Cloud SDKs |
-| Using LangChain, OpenAI SDK | AI/ML libraries |
+| React, Vue, Angular を使用 | フロントエンドフレームワーク |
+| Express, FastAPI, Django を使用 | バックエンドフレームワーク |
+| Prisma, Drizzle を使用 | ORM |
+| Stripe, Twilio, SendGrid を使用 | サードパーティ API |
+| AWS SDK, Google Cloud を使用 | クラウド SDK |
+| LangChain, OpenAI SDK を使用 | AI/ML ライブラリ |
 
-**Value**: Claude fetches live documentation instead of relying on training data, reducing hallucinated APIs and outdated patterns.
+**価値**: Claude がトレーニングデータに頼らずライブドキュメントを取得するため、API のハルシネーションや古いパターンが減少します。
 
 ---
 
-## Browser & Frontend
+## ブラウザ & フロントエンド
 
 ### Playwright MCP
-**Best for**: Frontend projects needing browser automation, testing, or screenshots
+**最適な用途**: ブラウザ自動化、テスト、スクリーンショットが必要なフロントエンドプロジェクト
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| React/Vue/Angular app | UI component testing |
-| E2E tests needed | User flow validation |
-| Visual regression testing | Screenshot comparisons |
-| Debugging UI issues | See what user sees |
-| Form testing | Multi-step workflows |
+| React/Vue/Angular アプリ | UI コンポーネントテスト |
+| E2E テストが必要 | ユーザーフロー検証 |
+| ビジュアルリグレッションテスト | スクリーンショット比較 |
+| UI 問題のデバッグ | ユーザーが見ている画面の確認 |
+| フォームテスト | 複数ステップのワークフロー |
 
-**Value**: Claude can interact with your running app, take screenshots, fill forms, and verify UI behavior.
+**価値**: Claude が実行中のアプリとやり取りし、スクリーンショットの撮影、フォームの入力、UI 動作の検証ができます。
 
 ### Puppeteer MCP
-**Best for**: Headless browser automation, web scraping
+**最適な用途**: ヘッドレスブラウザ自動化、Web スクレイピング
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| PDF generation from HTML | Report generation |
-| Web scraping tasks | Data extraction |
-| Headless testing | CI environments |
+| HTML から PDF 生成 | レポート生成 |
+| Web スクレイピングタスク | データ抽出 |
+| ヘッドレステスト | CI 環境 |
 
 ---
 
-## Databases
+## データベース
 
 ### Supabase MCP
-**Best for**: Projects using Supabase for backend/database
+**最適な用途**: バックエンド/データベースに Supabase を使用するプロジェクト
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Supabase project detected | `@supabase/supabase-js` in deps |
-| Auth + database needs | User management apps |
-| Real-time features | Live data sync |
+| Supabase プロジェクトが検出された | deps に `@supabase/supabase-js` |
+| 認証 + データベースのニーズ | ユーザー管理アプリ |
+| リアルタイム機能 | ライブデータ同期 |
 
-**Value**: Claude can query tables, manage auth, and interact with Supabase storage directly.
+**価値**: Claude がテーブルのクエリ、認証の管理、Supabase ストレージとの直接やり取りができます。
 
 ### PostgreSQL MCP
-**Best for**: Direct PostgreSQL database access
+**最適な用途**: PostgreSQL データベースへの直接アクセス
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Raw PostgreSQL usage | No ORM layer |
-| Database migrations | Schema management |
-| Data analysis tasks | Complex queries |
-| Debugging data issues | Inspect actual data |
+| 生の PostgreSQL 使用 | ORM レイヤーなし |
+| データベースマイグレーション | スキーマ管理 |
+| データ分析タスク | 複雑なクエリ |
+| データ問題のデバッグ | 実際のデータの検査 |
 
 ### Neon MCP
-**Best for**: Neon serverless Postgres users
+**最適な用途**: Neon サーバーレス Postgres ユーザー
 
 ### Turso MCP
-**Best for**: Turso/libSQL edge database users
+**最適な用途**: Turso/libSQL エッジデータベースユーザー
 
 ---
 
-## Version Control & DevOps
+## バージョン管理 & DevOps
 
 ### GitHub MCP
-**Best for**: GitHub-hosted repositories needing issue/PR integration
+**最適な用途**: Issue/PR 統合が必要な GitHub ホストのリポジトリ
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| GitHub repository | `.git` with GitHub remote |
-| Issue-driven development | Reference issues in commits |
-| PR workflows | Review, merge operations |
-| GitHub Actions | CI/CD pipeline access |
-| Release management | Tag and release automation |
+| GitHub リポジトリ | GitHub リモートの `.git` |
+| Issue 駆動開発 | コミットで Issue を参照 |
+| PR ワークフロー | レビュー、マージ操作 |
+| GitHub Actions | CI/CD パイプラインへのアクセス |
+| リリース管理 | タグ付けとリリースの自動化 |
 
-**Value**: Claude can create issues, review PRs, check workflow runs, and manage releases.
+**価値**: Claude が Issue の作成、PR のレビュー、ワークフロー実行の確認、リリースの管理ができます。
 
 ### GitLab MCP
-**Best for**: GitLab-hosted repositories
+**最適な用途**: GitLab ホストのリポジトリ
 
 ### Linear MCP
-**Best for**: Teams using Linear for issue tracking
+**最適な用途**: Issue トラッキングに Linear を使用するチーム
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Linear workspace | Issue references like `ABC-123` |
-| Sprint planning | Backlog management |
-| Issue creation from code | Auto-create issues for TODOs |
+| Linear ワークスペース | `ABC-123` のような Issue 参照 |
+| スプリント計画 | バックログ管理 |
+| コードから Issue を作成 | TODO から自動 Issue 作成 |
 
 ---
 
-## Cloud Infrastructure
+## クラウドインフラ
 
 ### AWS MCP
-**Best for**: AWS infrastructure management
+**最適な用途**: AWS インフラ管理
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| AWS SDK in dependencies | `@aws-sdk/*` packages |
-| Infrastructure as code | Terraform, CDK, SAM |
-| Lambda development | Serverless functions |
-| S3, DynamoDB usage | Cloud data services |
+| 依存関係に AWS SDK | `@aws-sdk/*` パッケージ |
+| Infrastructure as Code | Terraform, CDK, SAM |
+| Lambda 開発 | サーバーレス関数 |
+| S3, DynamoDB の使用 | クラウドデータサービス |
 
 ### Cloudflare MCP
-**Best for**: Cloudflare Workers, Pages, R2, D1
+**最適な用途**: Cloudflare Workers, Pages, R2, D1
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Cloudflare Workers | Edge functions |
-| Pages deployment | Static site hosting |
-| R2 storage | Object storage |
-| D1 database | Edge SQL database |
+| Cloudflare Workers | エッジ関数 |
+| Pages デプロイメント | 静的サイトホスティング |
+| R2 ストレージ | オブジェクトストレージ |
+| D1 データベース | エッジ SQL データベース |
 
 ### Vercel MCP
-**Best for**: Vercel deployment and configuration
+**最適な用途**: Vercel のデプロイメントと設定
 
 ---
 
-## Monitoring & Observtic
+## モニタリング & オブザーバビリティ
 
 ### Sentry MCP
-**Best for**: Error tracking and debugging
+**最適な用途**: エラートラッキングとデバッグ
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Sentry configured | `@sentry/*` in deps |
-| Production debugging | Investigate errors |
-| Error patterns | Group similar issues |
-| Release tracking | Correlate deploys with errors |
+| Sentry が設定済み | deps に `@sentry/*` |
+| 本番環境のデバッグ | エラーの調査 |
+| エラーパターン | 類似 Issue のグルーピング |
+| リリーストラッキング | デプロイとエラーの相関 |
 
-**Value**: Claude can investigate Sentry issues, find root causes, and suggest fixes.
+**価値**: Claude が Sentry の Issue を調査し、根本原因を見つけ、修正を提案できます。
 
 ### Datadog MCP
-**Best for**: APM, logs, and metrics
+**最適な用途**: APM、ログ、メトリクス
 
 ---
 
-## Communication
+## コミュニケーション
 
 ### Slack MCP
-**Best for**: Slack workspace integration
+**最適な用途**: Slack ワークスペース統合
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Team uses Slack | Send notifications |
-| Deployment notifications | Alert channels |
-| Incident response | Post updates |
+| チームが Slack を使用 | 通知の送信 |
+| デプロイメント通知 | チャンネルへのアラート |
+| インシデント対応 | アップデートの投稿 |
 
 ### Notion MCP
-**Best for**: Notion workspace for documentation
+**最適な用途**: ドキュメント用の Notion ワークスペース
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Notion for docs | Read/update pages |
-| Knowledge base | Search documentation |
-| Meeting notes | Create summaries |
+| Notion でドキュメント | ページの読み取り/更新 |
+| ナレッジベース | ドキュメントの検索 |
+| 議事録 | サマリーの作成 |
 
 ---
 
-## File & Data
+## ファイル & データ
 
 ### Filesystem MCP
-**Best for**: Enhanced file operations beyond built-in tools
+**最適な用途**: 組み込みツールを超える高度なファイル操作
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Complex file operations | Batch processing |
-| File watching | Monitor changes |
-| Advanced search | Custom patterns |
+| 複雑なファイル操作 | バッチ処理 |
+| ファイル監視 | 変更のモニタリング |
+| 高度な検索 | カスタムパターン |
 
 ### Memory MCP
-**Best for**: Persistent memory across sessions
+**最適な用途**: セッションをまたいだ永続的メモリ
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Long-running projects | Remember context |
-| User preferences | Store settings |
-| Learning patterns | Build knowledge |
+| 長期プロジェクト | コンテキストの記憶 |
+| ユーザー設定 | 設定の保存 |
+| 学習パターン | ナレッジの構築 |
 
-**Value**: Claude remembers project context, decisions, and patterns across conversations.
+**価値**: Claude が会話をまたいでプロジェクトのコンテキスト、決定事項、パターンを記憶します。
 
 ---
 
-## Containers & DevOps
+## コンテナ & DevOps
 
 ### Docker MCP
-**Best for**: Container management
+**最適な用途**: コンテナ管理
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Docker Compose file | Container orchestration |
-| Dockerfile present | Build images |
-| Container debugging | Inspect logs, exec |
+| Docker Compose ファイル | コンテナオーケストレーション |
+| Dockerfile が存在 | イメージのビルド |
+| コンテナデバッグ | ログ検査、exec |
 
 ### Kubernetes MCP
-**Best for**: Kubernetes cluster management
+**最適な用途**: Kubernetes クラスター管理
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| K8s manifests | Deploy, scale pods |
-| Helm charts | Package management |
-| Cluster debugging | Pod logs, status |
+| K8s マニフェスト | デプロイ、Pod のスケーリング |
+| Helm チャート | パッケージ管理 |
+| クラスターデバッグ | Pod ログ、ステータス |
 
 ---
 
 ## AI & ML
 
 ### Exa MCP
-**Best for**: Web search and research
+**最適な用途**: Web 検索とリサーチ
 
-| Recommend When | Examples |
+| 推奨する場面 | 例 |
 |----------------|----------|
-| Research tasks | Find current info |
-| Competitive analysis | Market research |
-| Documentation gaps | Find examples |
+| リサーチタスク | 最新情報の検索 |
+| 競合分析 | 市場調査 |
+| ドキュメントのギャップ | サンプルの検索 |
 
 ---
 
-## Quick Reference: Detection Patterns
+## クイックリファレンス: 検出パターン
 
-| Look For | Suggests MCP Server |
+| 検出対象 | 推奨 MCP サーバー |
 |----------|-------------------|
-| Popular npm packages | context7 |
+| 人気の npm パッケージ | context7 |
 | React/Vue/Next.js | Playwright MCP |
 | `@supabase/supabase-js` | Supabase MCP |
-| `pg` or `postgres` | PostgreSQL MCP |
-| GitHub remote | GitHub MCP |
-| `.linear` or Linear refs | Linear MCP |
+| `pg` または `postgres` | PostgreSQL MCP |
+| GitHub リモート | GitHub MCP |
+| `.linear` または Linear の参照 | Linear MCP |
 | `@aws-sdk/*` | AWS MCP |
 | `@sentry/*` | Sentry MCP |
 | `docker-compose.yml` | Docker MCP |
-| Slack webhook URLs | Slack MCP |
-| `@anthropic-ai/sdk` | context7 for Anthropic docs |
+| Slack Webhook URL | Slack MCP |
+| `@anthropic-ai/sdk` | context7（Anthropic ドキュメント用） |

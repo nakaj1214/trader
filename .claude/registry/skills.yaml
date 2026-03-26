@@ -1,0 +1,221 @@
+# .claude スキルルーティングインデックス
+#
+# このファイルは meta/generate-registry.py で自動生成される。
+# スキルを追加・変更したら再生成すること:
+#   python .claude/meta/generate-registry.py
+#
+# Claude はこのファイルを読むことで、全 SKILL.md を個別ロードせずに
+# どのスキルが存在するかを把握し、適切なスキルへルーティングできる。
+#
+# generated: 2026-03-17
+
+version: "1.0"
+generated: "2026-03-17"
+
+skills:
+  - name: analyze-project
+    path: skills/analyze-project/SKILL.md
+    description: "既存のコードベースを解析し、コーディング規約・命名規則・アーキテクチャパターン・ ドメイン固有のワークフローを抽出した上で、そのプロジェクトに合わせた rules/ および skills/ ファイルを自動生成する。"
+    tags: []
+    triggers: []
+
+  - name: claude-automation-recommender
+    path: skills/claude-code-setup/SKILL.md
+    description: "コードベースを分析してClaude Codeのオートメーション（フック、サブエージェント、スキル、プラグイン、MCPサーバー）を推奨する。ユーザーがオートメーションの推奨を求めたり、Claude Codeのセットアップを最適化したい場合、Claude Codeワークフローの改善に言及した場合、プロジェクトに対してClaude Codeを初めてセットアップする方法を聞いた場合、またはどのCla..."
+    tags: []
+    triggers:
+      - "Claude Code設定"
+      - "自動化推薦"
+      - "フック推薦"
+
+  - name: claude-md-improver
+    path: skills/claude-md-management/SKILL.md
+    description: "Audits and improves CLAUDE.md files across a repository by scanning all instances, evaluating quality against a rubric, generating a quality report, and applying targeted updates. Use when asked to..."
+    tags: [config]
+    triggers:
+      - "CLAUDE.md"
+      - "claude.md改善"
+      - "claude.md更新"
+
+  - name: code-review
+    path: skills/code-review/SKILL.md
+    description: "Conducts comprehensive code reviews focusing on quality, security, performance, and best practices. Use when the user requests a code review, quality assessment, pre-merge validation, or PR evaluat..."
+    tags: []
+    triggers:
+      - "コードレビュー"
+      - "review"
+      - "レビュー"
+
+  - name: codex-review
+    path: skills/codex-review/SKILL.md
+    description: "指定されたドキュメントファイルに対して Codex（gpt-5.4）レビューループを実行する。 MCP サーバー経由で Codex を呼び出し（base-instructions でプロジェクト instruction 読み込みを回避）、 APPROVED になるか最大反復回数に達するまで、各ラウンドで Claude がブロッキング問題を修正する。 異なる AI モデル（GPT系）による独立..."
+    tags: []
+    triggers: []
+
+  - name: create-plan
+    path: skills/create-plan/SKILL.md
+    description: "Reads docs/implement/proposal.md and creates docs/implement/plan.md. Then runs a Codex review loop (via codex-review skill, gpt-5.4 MCP) until APPROVED or max iterations reached. 5回以内で APPROVED の場合..."
+    tags: [planning]
+    triggers:
+      - "計画作成"
+      - "plan作成"
+      - "proposal"
+
+  - name: create-proposal
+    path: skills/create-proposal/SKILL.md
+    description: "docs/implement/prompt.md（ユーザーの自由な依頼文）を読み込み、構造化した docs/implement/proposal.md（実装要件書）を生成する。品質チェック（7項目）で 曖昧な記述・繰り返し失敗パターン・具体性不足を検出し、必要に応じてリライトする。 create-plan とは独立したスキル。「要件を整理して」「proposalを作って」 「prompt.m..."
+    tags: []
+    triggers: []
+
+  - name: css-features
+    path: skills/css-features/SKILL.md
+    description: "Provides reference and patterns for modern CSS features (2024+) including native nesting, container queries, :has(), @layer cascade control, and modern color functions. Use when writing modern styl..."
+    tags: [css, frontend]
+    triggers:
+      - "モダンCSS"
+      - "CSS 2024"
+      - "CSSネスト"
+      - "コンテナクエリ"
+      - ":has()"
+      - "@layer"
+
+  - name: css-layout
+    path: skills/css-layout/SKILL.md
+    description: "Provides CSS layout patterns using Grid, Flexbox, and responsive design techniques. Use when building page layouts, creating responsive designs, positioning components, or implementing fluid typogr..."
+    tags: [css, frontend]
+    triggers:
+      - "CSSレイアウト"
+      - "Grid"
+      - "Flexbox"
+      - "レスポンシブ"
+
+  - name: css-organization
+    path: skills/css-organization/SKILL.md
+    description: "Provides best practices for organizing CSS code including file structure, BEM naming conventions, CSS custom properties, animations, and accessibility. Use when starting a new project, establishing..."
+    tags: [css, frontend]
+    triggers:
+      - "CSS設計"
+      - "BEM"
+      - "デザインシステム"
+      - "CSS変数"
+
+  - name: design-tracker
+    path: skills/design-tracker/SKILL.md
+    description: "頼まれなくても積極的にプロジェクトの設計決定を追跡・記録する。アーキテクチャの議論、実装上の決定、パターンの選択、ライブラリの選定、その他技術的な決定を検出した際に自動的に起動する。ユーザーが「記録して」「設計どうなってる」と言った場合にも使用する。ユーザーに頼まれるのを待たず、重要な決定をすぐに記録すること。"
+    tags: []
+    triggers:
+      - "設計記録"
+      - "アーキテクチャ記録"
+      - "DESIGN.md記録"
+      - "DESIGN.md更新"
+      - "設計ドキュメント更新"
+
+  - name: docker-dev
+    path: skills/docker-dev/SKILL.md
+    description: "Laravel/PHP および Python プロジェクト向けの Docker Compose ベース開発ワークフローをガイドする。 コンテナ内でのコマンド実行、コンテナの問題デバッグ、サービス管理、 docker compose・Docker 内の artisan・コンテナログに言及した際に使用する。"
+    tags: []
+    triggers:
+      - "Docker"
+      - "docker compose"
+      - "コンテナ開発"
+
+  - name: error-doc-fix
+    path: skills/error-doc-fix/SKILL.md
+    description: "docs/error/error.md のエラー報告を解析し、原因特定→修正→検証を一括実行する。 「エラーを直して」「error.md を確認して修正」「docs/error/ のエラーを解決」 と言われたときにトリガーする。"
+    tags: []
+    triggers: []
+
+  - name: feedback-loop
+    path: skills/feedback-loop/SKILL.md
+    description: "ユーザーから修正・指摘を受けた際にフィードバックを分類・記録し、同カテゴリ3件で自動対策を提案する。否定フィードバック、繰り返し指摘、修正指示を受けた場合に使用する。"
+    tags: []
+    triggers: []
+
+  - name: fix-escalation
+    path: skills/fix-escalation/SKILL.md
+    description: "同じバグに対して修正が2回失敗したとき、試行履歴を根拠にエスカレーション調査を強制するスキル。 試行ごとの仮説・修正内容・失敗理由を tasks/fix-attempts.md に自動記録し、 2回失敗で「視点を変えた再調査」を強制する。方針転換なしの3回目修正を禁止する。 「何度直しても直らない」「N回目の修正」「また同じバグ」「改善されていない」と 言われたとき、または verify-b..."
+    tags: []
+    triggers: []
+
+  - name: handover
+    path: skills/handover/SKILL.md
+    description: "セッションの引き継ぎドキュメント (HANDOVER.md) を生成する。コンテキストが圧迫されたとき、長時間の作業セッションを終了するとき、または次の Claude セッションへ作業を引き継ぐときに使用する。 Use when context is getting large, when ending a long work session, or when handing off to ..."
+    tags: [session, memory]
+    triggers:
+      - "引き継ぎ"
+      - "handover"
+      - "セッション終了"
+
+  - name: implement-plans
+    path: skills/implement-plans/SKILL.md
+    description: "書かれた実装計画を中断なしで連続実行する。ブロッカー発生時のみ停止し、完了後にまとめて報告する。"
+    tags: [planning]
+    triggers:
+      - "計画実行"
+      - "計画に従って"
+
+  - name: jquery-interactions
+    path: skills/jquery-interactions/SKILL.md
+    description: "Laravel バックエンド向けの jQuery ベースのユーザーインタラクションを実装する。 アニメーション、AJAX 通信、イベントハンドリング、フォーム操作を含む。 ボタンクリック、モーダル切替、フェード/スライドアニメーション、AJAX フォーム送信、 スクロールイベント、動的コンテンツ読み込み、PHP/Laravel との jQuery フロントエンド連携に使用する。"
+    tags: []
+    triggers: []
+
+  - name: js-css-sync-check
+    path: skills/js-css-sync-check/SKILL.md
+    description: "JS ファイルの UI スタイル変更後に、対応する CSS ファイルの同期チェックを促す。JS+CSS のペア変更忘れを防止し、スタイル不整合バグを未然に防ぐ。セル描画・選択ハイライト・ボーダー描画などの UI 変更時に特に有効。"
+    tags: []
+    triggers: []
+
+  - name: open-feature-files
+    path: skills/open-feature-files/SKILL.md
+    description: "機能名から関連する JS + CSS + blade.php の3点セットを特定し、一覧表示する。「{feature}を実装」「{feature}を修正」と言われたときにトリガーする。"
+    tags: []
+    triggers: []
+
+  - name: proposal-quality-gate
+    path: skills/proposal-quality-gate/SKILL.md
+    description: "create-plan 実行前に docs/implement/proposal.md の品質をチェックし、 曖昧な記述・繰り返し失敗パターン・具体性不足を検出した場合は 計画作成ではなく proposal.md の構造化リライトを行うゲートスキル。 「create-plan」「計画を作成」「plan作成」と言われたときに自動トリガーする。"
+    tags: []
+    triggers: []
+
+  - name: propose-one
+    path: skills/propose-one/SKILL.md
+    description: "docs/implement/prompt.md から課題を1つだけ選び、create-proposal → create-plan を順に実行する。 「1個ずつ確実に修正」のワークフローを強制し、複数課題を同時に扱うことで生じる混乱を防ぐ。 「1つだけ実装して」「一個ずつ進めて」「propose-one」「最初のタスクだけ」と言われたときにトリガーする。 create-proposal +..."
+    tags: []
+    triggers: []
+
+  - name: refactor-with-read-first
+    path: skills/refactor-with-read-first/SKILL.md
+    description: "同一ファイルへの Edit が5回を超えた場合に、ファイル全体を Read して設計を固めてから一括 Write するよう促す。細粒度 Edit の繰り返しによる手戻りを防止する。"
+    tags: []
+    triggers: []
+
+  - name: skill-creator
+    path: skills/skill-creator/SKILL.md
+    description: "新しいスキルの作成、既存スキルの修正・改善、スキルのパフォーマンス測定を行う。ユーザーがスキルをゼロから作りたい場合、既存のスキルを更新・最適化したい場合、スキルをテストするためのevalを実行したい場合、分散分析付きのスキルパフォーマンスベンチマークを行いたい場合、またはトリガー精度を向上させるためにスキルのdescriptionを最適化したい場合に使用する。"
+    tags: [meta]
+    triggers:
+      - "スキル作成"
+      - "新スキル"
+      - "skill作成"
+
+  - name: skill-stocktake
+    path: skills/skill-stocktake/SKILL.md
+    description: "Audits Claude skills and commands using a quality checklist + AI holistic judgment. Claude のスキルとコマンドを品質チェックリスト＋AI総合判断で監査する。月次メンテナンスに使用。"
+    tags: []
+    triggers: []
+
+  - name: debug
+    path: skills/systematic-debugging/SKILL.md
+    description: "Provides a 4-stage evidence-based debugging process (symptom collection → hypothesis generation → verification → fix) to reliably resolve bugs without guessing. Use when the cause of a bug is unkno..."
+    tags: [debugging]
+    triggers:
+      - "デバッグ"
+      - "バグ修正"
+      - "エラー調査"
+
+  - name: verify-before-fix
+    path: skills/verify-before-fix/SKILL.md
+    description: "バグ修正・機能修正に着手する前に、推測ではなく証拠を収集して原因を特定するゲートスキル。 フロントエンド問題では antigravity IDE でスクリーンショット・DOM キャプチャ・コンソールログを取得し、 バックエンド問題では docker compose exec によるログ・クエリ確認、Python ではテスト実行で検証する。 「直して」「バグ修正して」「改善されていない」「動か..."
+    tags: []
+    triggers: []

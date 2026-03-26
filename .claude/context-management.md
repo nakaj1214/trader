@@ -1,36 +1,36 @@
-# Context Management Guide
+# コンテキスト管理ガイド
 
-Managing Claude's context window effectively is critical for performance and cost optimization.
+Claude のコンテキストウィンドウを効果的に管理することは、パフォーマンスとコストの最適化に不可欠です。
 
-## Understanding Context
+## コンテキストの理解
 
-### Context Window Size
-- **Total Available**: 200,000 tokens
-- **Effective With MCPs**: Can drop to 70,000 tokens
-- **Critical Threshold**: < 80,000 tokens = degraded performance
+### コンテキストウィンドウサイズ
+- **利用可能な合計**: 200,000 トークン
+- **MCP 使用時の実効値**: 70,000 トークンまで低下する可能性あり
+- **危険閾値**: 80,000 トークン未満 = パフォーマンス低下
 
-### What Consumes Context
+### コンテキストを消費するもの
 
-1. **System Prompts** (~5,000-15,000 tokens)
-2. **Conversation History** (grows over time)
-3. **File Contents** (when read)
-4. **Tool Definitions** (MCP servers)
-5. **Agent Context** (specialized agents)
+1. **システムプロンプト** (~5,000-15,000 トークン)
+2. **会話履歴** (時間とともに増加)
+3. **ファイル内容** (読み込み時)
+4. **ツール定義** (MCP サーバー)
+5. **エージェントコンテキスト** (特化エージェント)
 
-## MCP Server Management
+## MCP サーバー管理
 
-### The Problem
-Each MCP (Model Context Protocol) server adds tools to Claude's context. Too many tools overwhelm the context window.
+### 問題
+各 MCP（Model Context Protocol）サーバーは Claude のコンテキストにツールを追加します。ツールが多すぎるとコンテキストウィンドウが圧迫されます。
 
-### Recommended Limits
-- **Total MCPs**: 20-30 maximum
-- **Enabled Per Project**: < 10
-- **Active Tools**: < 80
+### 推奨上限
+- **合計 MCP 数**: 最大 20-30
+- **プロジェクトごとの有効数**: 10 未満
+- **アクティブツール数**: 80 未満
 
-### How to Manage MCPs
+### MCP の管理方法
 
-#### Project-Level Configuration
-Create `.claude/config.json` in your project:
+#### プロジェクトレベルの設定
+プロジェクトに `.claude/config.json` を作成:
 
 ```json
 {
@@ -42,8 +42,8 @@ Create `.claude/config.json` in your project:
 }
 ```
 
-#### Global Configuration
-Edit `~/.claude/settings.json`:
+#### グローバル設定
+`~/.claude/settings.json` を編集:
 
 ```json
 {
@@ -56,36 +56,36 @@ Edit `~/.claude/settings.json`:
 }
 ```
 
-#### Smart MCP Strategy
+#### スマートな MCP 戦略
 
-**Enable Only What You Need:**
-- Web development? Enable: filesystem, github, npm
-- Cloud work? Enable: aws, docker, kubernetes
-- Data science? Enable: filesystem, python, jupyter
+**必要なものだけを有効にする:**
+- Web 開発？有効にする: filesystem, github, npm
+- クラウド作業？有効にする: aws, docker, kubernetes
+- データサイエンス？有効にする: filesystem, python, jupyter
 
-**Disable When Not Using:**
+**使用しないときは無効にする:**
 ```bash
-# Disable MCP temporarily
+# MCP を一時的に無効化
 /mcp disable aws-mcp
 
-# Re-enable when needed
+# 必要なときに再有効化
 /mcp enable aws-mcp
 
-# List all MCPs
+# すべての MCP を一覧表示
 /mcp list
 ```
 
-## Package Manager Detection
+## パッケージマネージャーの検出
 
-### Configuration Priority
-Claude detects package managers in this order:
+### 設定の優先順位
+Claude は以下の順序でパッケージマネージャーを検出します:
 
-1. **Environment Variable**
+1. **環境変数**
    ```bash
    export CLAUDE_PACKAGE_MANAGER=pnpm
    ```
 
-2. **Project Config**
+2. **プロジェクト設定**
    ```json
    // .claude/package-manager.json
    {
@@ -100,13 +100,13 @@ Claude detects package managers in this order:
    }
    ```
 
-4. **Lock File Detection**
+4. **ロックファイル検出**
    - `pnpm-lock.yaml` → pnpm
    - `yarn.lock` → yarn
    - `package-lock.json` → npm
    - `bun.lockb` → bun
 
-5. **Global Config**
+5. **グローバル設定**
    ```json
    // ~/.claude/package-manager.json
    {
@@ -114,134 +114,166 @@ Claude detects package managers in this order:
    }
    ```
 
-6. **First Available**
-   - Checks: pnpm, yarn, bun, npm
+6. **最初に見つかったもの**
+   - チェック順: pnpm, yarn, bun, npm
 
-### Setup Command
+### セットアップコマンド
 ```bash
-# Run this in your project
+# プロジェクトでこれを実行
 /setup-pm
 
-# Or manually create config
+# または手動で設定ファイルを作成
 echo '{"packageManager":"pnpm"}' > .claude/package-manager.json
 ```
 
-## Context Optimization Strategies
+## トークンコスト削減設定
 
-### 1. Minimize File Reads
+出典: [everything-claude-code](https://github.com/affaan-m/everything-claude-code) `docs/token-optimization.md`
 
-**Bad Approach:**
+### 推奨設定値
+
+`~/.claude/settings.json` に以下を設定:
+
+| 設定 | 推奨値 | デフォルト | 効果 |
+|------|--------|-----------|------|
+| `MAX_THINKING_TOKENS` | 10,000 | 31,999 | 隠れコストを約70%削減 |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 50% | 95% | 品質低下前に自動圧縮 |
+
+```bash
+# 環境変数で設定
+export MAX_THINKING_TOKENS=10000
+export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50
+```
+
+### モデル別コスト戦略
+
+- **メイン作業**: Sonnet（タスクの80%を処理、Opus 比60%コスト削減）
+- **サブエージェント**: Haiku（約80%安価、探索・ファイル読み込み・テスト実行に十分）
+- **複雑な推論**: Opus（セッション中に `/model opus` で切替）
+
+### その他の最適化
+
+- `/clear` で無関係なタスク間を切替
+- `/compact` で論理的なブレークポイント（計画後、デバッグ後）に圧縮
+- `/cost` で支出を監視
+- MCP サーバーはプロジェクトあたり10未満に抑える
+
+## コンテキスト最適化戦略
+
+### 1. ファイル読み込みを最小化する
+
+**悪いアプローチ:**
 ```typescript
-// Reading entire large files
+// 大きなファイルを丸ごと読み込む
 Read('src/components/LargeComponent.tsx')
 Read('src/utils/helpers.ts')
 Read('src/config/settings.ts')
 ```
 
-**Better Approach:**
+**良いアプローチ:**
 ```typescript
-// Use Grep to find specific code first
+// まず Grep で特定のコードを見つける
 Grep('function targetFunction', { type: 'ts' })
-// Then read only the relevant file
+// 次に関連ファイルのみ読み込む
 Read('src/utils/helpers.ts', { offset: 100, limit: 50 })
 ```
 
-### 2. Use Agents Wisely
+### 2. エージェントを賢く使う
 
-**Problem**: Spawning agents adds their context to yours
+**問題**: エージェントを起動すると、そのコンテキストが自分のコンテキストに追加される
 
-**Solution**: Use agents for expensive operations
+**解決策**: 高コストな操作にエージェントを使用する
 ```typescript
-// Bad: Reading 50 files in main context
+// Bad: メインコンテキストで50ファイルを読み込む
 for (const file of allFiles) {
   Read(file);
 }
 
-// Good: Delegate to Explore agent
+// Good: Explore エージェントに委任する
 Task({
   subagent_type: 'Explore',
   prompt: 'Find all authentication-related functions'
 });
 ```
 
-### 3. Clear Unnecessary History
+### 3. 不要な履歴をクリアする
 
-**When to Reset:**
-- Switching to unrelated task
-- Context getting too large
-- Performance degrading
+**リセットするタイミング:**
+- 無関係なタスクに切り替えるとき
+- コンテキストが大きくなりすぎたとき
+- パフォーマンスが低下したとき
 
-**How to Reset:**
+**リセット方法:**
 ```bash
-# Start fresh conversation
+# 新しい会話を開始
 /clear
 
-# Or use checkpoint/save for important context
+# または重要なコンテキストのためにチェックポイント/保存を使用
 /save checkpoint-before-refactor
 ```
 
-### 4. Optimize System Prompts
+### 4. システムプロンプトを最適化する
 
-**Keep Custom Instructions Concise:**
+**カスタム指示を簡潔に保つ:**
 ```markdown
-<!-- Bad: 5,000 tokens of instructions -->
-- Always do X
-- Never do Y
-- Consider Z
-[... 200 more rules ...]
+<!-- Bad: 5,000 トークンの指示 -->
+- 常に X を行う
+- Y は決してしない
+- Z を考慮する
+[... さらに 200 のルール ...]
 
-<!-- Good: 500 tokens, focused -->
-# Core Rules
-1. Security: Validate all input
-2. Quality: Test before commit
-3. Style: Follow project patterns
+<!-- Good: 500 トークンに集約 -->
+# コアルール
+1. セキュリティ: すべての入力をバリデーション
+2. 品質: コミット前にテスト
+3. スタイル: プロジェクトパターンに従う
 ```
 
-### 5. Strategic File Grouping
+### 5. 戦略的なファイルグルーピング
 
-**Bad: Many small reads**
+**Bad: 小さな読み込みを大量に**
 ```typescript
 Read('types/user.ts')
 Read('types/auth.ts')
 Read('types/api.ts')
 ```
 
-**Better: Use Glob**
+**Better: Glob を使用する**
 ```typescript
 Glob('types/**/*.ts')
-// Then read specific files as needed
+// 必要に応じて特定のファイルを読み込む
 ```
 
-## Token Budget Management
+## トークンバジェット管理
 
-### Monitoring Usage
-Claude shows token usage after each response:
+### 使用量の監視
+Claude は各レスポンスの後にトークン使用量を表示します:
 ```
 Token usage: 25,000/200,000; 175,000 remaining
 ```
 
-### Staying Under Budget
+### バジェット内に収める
 
-**Target Ranges:**
-- **Healthy**: < 50,000 tokens used
-- **Warning**: 50,000-100,000 tokens
-- **Critical**: > 100,000 tokens
+**目標範囲:**
+- **健全**: 使用量 50,000 トークン未満
+- **警告**: 50,000-100,000 トークン
+- **危険**: 100,000 トークン超
 
-**When Critical:**
-1. Finish current task
-2. Start new conversation
-3. Provide brief summary of context
-4. Continue fresh
+**危険な場合:**
+1. 現在のタスクを完了する
+2. 新しい会話を開始する
+3. コンテキストの簡単な要約を提供する
+4. 新しい状態で続行する
 
-## Model Selection for Context
+## コンテキストに応じたモデル選択
 
-### When to Use Each Model
+### 各モデルの使い分け
 
-**Haiku (Fast, Small Context)**
-- Simple tasks
-- Quick operations
-- File searches
-- Running commands
+**Haiku（高速、小さなコンテキスト）**
+- シンプルなタスク
+- 素早い操作
+- ファイル検索
+- コマンド実行
 
 ```typescript
 Task({
@@ -250,11 +282,11 @@ Task({
 })
 ```
 
-**Sonnet (Balanced)**
-- General development
-- Code review
-- Implementation
-- Default choice
+**Sonnet（バランス型）**
+- 一般的な開発
+- コードレビュー
+- 実装
+- デフォルトの選択肢
 
 ```typescript
 Task({
@@ -263,11 +295,11 @@ Task({
 })
 ```
 
-**Opus (Large Context, Deep Reasoning)**
-- Complex architecture
-- Critical decisions
-- Large refactors
-- System design
+**Opus（大きなコンテキスト、深い推論）**
+- 複雑なアーキテクチャ
+- 重要な判断
+- 大規模なリファクタリング
+- システム設計
 
 ```typescript
 Task({
@@ -276,37 +308,37 @@ Task({
 })
 ```
 
-## Context-Aware Workflows
+## コンテキストを意識したワークフロー
 
-### Pattern 1: Progressive Loading
+### パターン 1: プログレッシブローディング
 ```
-1. Start with high-level search (Grep/Glob)
-2. Identify relevant files
-3. Read only necessary sections
-4. Implement changes
-```
-
-### Pattern 2: Agent Delegation
-```
-1. Delegate research to Explore agent
-2. Agent returns summary
-3. Make decisions with minimal context
-4. Implement with focused reads
+1. ハイレベルな検索から始める（Grep/Glob）
+2. 関連ファイルを特定する
+3. 必要なセクションのみ読み込む
+4. 変更を実装する
 ```
 
-### Pattern 3: Checkpoint Strategy
+### パターン 2: エージェント委任
 ```
-1. Complete Phase 1
-2. Save checkpoint
-3. Clear conversation
-4. Resume with summary
-5. Continue Phase 2
+1. リサーチを Explore エージェントに委任する
+2. エージェントが要約を返す
+3. 最小限のコンテキストで判断する
+4. 焦点を絞った読み込みで実装する
 ```
 
-## Memory Persistence
+### パターン 3: チェックポイント戦略
+```
+1. フェーズ 1 を完了する
+2. チェックポイントを保存する
+3. 会話をクリアする
+4. 要約で再開する
+5. フェーズ 2 を続行する
+```
 
-### Session Hooks
-Save and load context between sessions:
+## メモリの永続化
+
+### セッションフック
+セッション間でコンテキストを保存・読み込みする:
 
 ```json
 // ~/.claude/settings.json
@@ -321,83 +353,83 @@ Save and load context between sessions:
 **save-context.sh:**
 ```bash
 #!/bin/bash
-# Save important context to file
+# 重要なコンテキストをファイルに保存
 echo "$CONVERSATION_SUMMARY" > ~/.claude/memory/last-session.txt
 ```
 
 **load-context.sh:**
 ```bash
 #!/bin/bash
-# Load previous context if relevant
+# 関連する場合、前回のコンテキストを読み込む
 if [ -f ~/.claude/memory/last-session.txt ]; then
   cat ~/.claude/memory/last-session.txt
 fi
 ```
 
-## Best Practices Summary
+## ベストプラクティスまとめ
 
-### Do ✅
-- Monitor token usage regularly
-- Disable unused MCPs
-- Use agents for expensive operations
-- Read files selectively
-- Clear context when switching tasks
-- Use appropriate model for task
-- Keep custom instructions concise
+### すべきこと
+- トークン使用量を定期的に監視する
+- 使用していない MCP を無効にする
+- 高コストな操作にはエージェントを使用する
+- ファイルは選択的に読み込む
+- タスク切り替え時にコンテキストをクリアする
+- タスクに適したモデルを使用する
+- カスタム指示を簡潔に保つ
 
-### Don't ❌
-- Enable all MCPs at once
-- Read entire large files unnecessarily
-- Keep irrelevant history
-- Use Opus for simple tasks
-- Let context grow unbounded
-- Read files you don't need
+### すべきでないこと
+- すべての MCP を一度に有効にする
+- 大きなファイルを不必要に丸ごと読み込む
+- 無関係な履歴を残す
+- シンプルなタスクに Opus を使用する
+- コンテキストを際限なく増やす
+- 不要なファイルを読み込む
 
-## Troubleshooting
+## トラブルシューティング
 
-### Symptom: Slow Responses
-**Cause**: Context too large
-**Solution**:
-1. Check token usage
-2. Clear unnecessary history
-3. Disable unused MCPs
+### 症状: レスポンスが遅い
+**原因**: コンテキストが大きすぎる
+**解決策**:
+1. トークン使用量を確認する
+2. 不要な履歴をクリアする
+3. 使用していない MCP を無効にする
 
-### Symptom: "Context Limit Exceeded"
-**Cause**: Too much content
-**Solution**:
-1. Start new conversation
-2. Reduce MCP count
-3. Read fewer files
+### 症状: 「コンテキスト制限超過」
+**原因**: コンテンツが多すぎる
+**解決策**:
+1. 新しい会話を開始する
+2. MCP の数を減らす
+3. 読み込むファイルを減らす
 
-### Symptom: Claude "Forgets" Earlier Info
-**Cause**: Context window full
-**Solution**:
-1. Use memory persistence hooks
-2. Save checkpoints
-3. Provide brief summaries when resuming
+### 症状: Claude が以前の情報を「忘れる」
+**原因**: コンテキストウィンドウが一杯
+**解決策**:
+1. メモリ永続化フックを使用する
+2. チェックポイントを保存する
+3. 再開時に簡潔な要約を提供する
 
-## Advanced: Context Compression
+## 上級テクニック: コンテキスト圧縮
 
-### Technique 1: Summarization
+### テクニック 1: 要約
 ```
-# At context checkpoint
-"Summarize the key decisions and code changes from this session"
+# コンテキストチェックポイント時
+「このセッションの主要な決定とコード変更を要約して」
 
-# Use summary to start fresh
-"Continuing from: [summary]. Now let's implement feature Y."
+# 要約を使って新しいセッションを開始
+「続き: [要約]。次に機能 Y を実装しましょう。」
 ```
 
-### Technique 2: Artifact Storage
+### テクニック 2: アーティファクトストレージ
 ```bash
-# Save important info externally
+# 重要な情報を外部に保存
 echo "API endpoints: /api/users, /api/auth" > .claude/project-info.txt
 
-# Reference when needed
-"Check .claude/project-info.txt for endpoints"
+# 必要なときに参照
+「エンドポイントは .claude/project-info.txt を確認してください」
 ```
 
-### Technique 3: Continuous Learning
-Extract patterns mid-session and save as skills:
+### テクニック 3: 継続的学習
+セッション中にパターンを抽出してスキルとして保存する:
 
 ```markdown
 # .claude/skills/project-patterns.md
@@ -406,18 +438,18 @@ name: project-patterns
 description: Common patterns used in this project
 ---
 
-- API routes in /api directory
-- Components use hooks pattern
-- Error handling via ErrorBoundary
+- API ルートは /api ディレクトリ内
+- コンポーネントはフックパターンを使用
+- エラーハンドリングは ErrorBoundary 経由
 ```
 
-## Metrics to Track
+## 追跡すべきメトリクス
 
-Monitor these over time:
-- Average tokens per session
-- Number of active MCPs
-- Files read per task
-- Agent spawn frequency
-- Session duration before reset
+以下を継続的に監視する:
+- セッションあたりの平均トークン数
+- アクティブな MCP 数
+- タスクあたりの読み込みファイル数
+- エージェント起動頻度
+- リセットまでのセッション持続時間
 
-Optimize based on your workflow patterns.
+ワークフローのパターンに基づいて最適化する。

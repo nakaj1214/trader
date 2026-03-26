@@ -1,96 +1,96 @@
-# Post-hoc Analyzer Agent
+# 事後分析エージェント
 
-Analyze blind comparison results to understand WHY the winner won and generate improvement suggestions.
+ブラインド比較の結果を分析し、勝者が勝った理由を理解して改善提案を生成する。
 
-## Role
+## 役割
 
-After the blind comparator determines a winner, the Post-hoc Analyzer "unblids" the results by examining the skills and transcripts. The goal is to extract actionable insights: what made the winner better, and how can the loser be improved?
+ブラインド比較者が勝者を決定した後、事後分析エージェントはスキルとトランスクリプトを調査して結果を「アンブラインド」する。目標は実行可能なインサイトを抽出すること：何が勝者を優れたものにし、敗者をどう改善できるかを明らかにする。
 
-## Inputs
+## 入力
 
-You receive these parameters in your prompt:
+プロンプトで以下のパラメータを受け取る：
 
-- **winner**: "A" or "B" (from blind comparison)
-- **winner_skill_path**: Path to the skill that produced the winning output
-- **winner_transcript_path**: Path to the execution transcript for the winner
-- **loser_skill_path**: Path to the skill that produced the losing output
-- **loser_transcript_path**: Path to the execution transcript for the loser
-- **comparison_result_path**: Path to the blind comparator's output JSON
-- **output_path**: Where to save the analysis results
+- **winner**: "A" または "B"（ブラインド比較の結果）
+- **winner_skill_path**: 勝利した出力を生成したスキルへのパス
+- **winner_transcript_path**: 勝者の実行トランスクリプトへのパス
+- **loser_skill_path**: 敗北した出力を生成したスキルへのパス
+- **loser_transcript_path**: 敗者の実行トランスクリプトへのパス
+- **comparison_result_path**: ブラインド比較者の出力 JSON へのパス
+- **output_path**: 分析結果の保存先
 
-## Process
+## プロセス
 
-### Step 1: Read Comparison Result
+### ステップ 1: 比較結果を読む
 
-1. Read the blind comparator's output at comparison_result_path
-2. Note the winning side (A or B), the reasoning, and any scores
-3. Understand what the comparator valued in the winning output
+1. comparison_result_path にあるブラインド比較者の出力を読む
+2. 勝者側（A または B）、理由、スコアを記録する
+3. 比較者が勝利した出力で何を評価したかを理解する
 
-### Step 2: Read Both Skills
+### ステップ 2: 両方のスキルを読む
 
-1. Read the winner skill's SKILL.md and key referenced files
-2. Read the loser skill's SKILL.md and key referenced files
-3. Identify structural differences:
-   - Instructions clarity and specificity
-   - Script/tool usage patterns
-   - Example coverage
-   - Edge case handling
+1. 勝者スキルの SKILL.md と主要な参照ファイルを読む
+2. 敗者スキルの SKILL.md と主要な参照ファイルを読む
+3. 構造的な違いを特定する：
+   - 指示の明確さと具体性
+   - スクリプト/ツールの使用パターン
+   - 例のカバレッジ
+   - エッジケースの処理
 
-### Step 3: Read Both Transcripts
+### ステップ 3: 両方のトランスクリプトを読む
 
-1. Read the winner's transcript
-2. Read the loser's transcript
-3. Compare execution patterns:
-   - How closely did each follow their skill's instructions?
-   - What tools were used differently?
-   - Where did the loser diverge from optimal behavior?
-   - Did either encounter errors or make recovery attempts?
+1. 勝者のトランスクリプトを読む
+2. 敗者のトランスクリプトを読む
+3. 実行パターンを比較する：
+   - 各エージェントはスキルの指示にどれだけ忠実に従ったか？
+   - どのツールが異なる使われ方をしたか？
+   - 敗者はどこで最適な動作から逸脱したか？
+   - どちらかがエラーに遭遇したり、回復を試みたりしたか？
 
-### Step 4: Analyze Instruction Following
+### ステップ 4: 指示遵守を分析する
 
-For each transcript, evaluate:
-- Did the agent follow the skill's explicit instructions?
-- Did the agent use the skill's provided tools/scripts?
-- Were there missed opportunities to leverage skill content?
-- Did the agent add unnecessary steps not in the skill?
+各トランスクリプトについて評価する：
+- エージェントはスキルの明示的な指示に従ったか？
+- エージェントはスキルが提供するツール/スクリプトを使用したか？
+- スキルのコンテンツを活用する機会を逃していないか？
+- エージェントはスキルにない不要なステップを追加していないか？
 
-Score instruction following 1-10 and note specific issues.
+指示遵守を 1-10 でスコアリングし、具体的な問題を記録する。
 
-### Step 5: Identify Winner Strengths
+### ステップ 5: 勝者の強みを特定する
 
-Determine what made the winner better:
-- Clearer instructions that led to better behavior?
-- Better scripts/tools that produced better output?
-- More comprehensive examples that guided edge cases?
-- Better error handling guidance?
+勝者が優れていた点を判断する：
+- より良い動作につながる明確な指示か？
+- より良い出力を生成するスクリプト/ツールか？
+- エッジケースをガイドするより包括的な例か？
+- より良いエラー処理のガイダンスか？
 
-Be specific. Quote from skills/transcripts where relevant.
+具体的に記述する。関連する箇所ではスキル/トランスクリプトから引用する。
 
-### Step 6: Identify Loser Weaknesses
+### ステップ 6: 敗者の弱点を特定する
 
-Determine what held the loser back:
-- Ambiguous instructions that led to suboptimal choices?
-- Missing tools/scripts that forced workarounds?
-- Gaps in edge case coverage?
-- Poor error handling that caused failures?
+敗者を妨げた点を判断する：
+- 最適でない選択につながった曖昧な指示か？
+- 回避策を強いた不足しているツール/スクリプトか？
+- エッジケースのカバレッジの欠如か？
+- 失敗を引き起こした不十分なエラー処理か？
 
-### Step 7: Generate Improvement Suggestions
+### ステップ 7: 改善提案を生成する
 
-Based on the analysis, produce actionable suggestions for improving the loser skill:
-- Specific instruction changes to make
-- Tools/scripts to add or modify
-- Examples to include
-- Edge cases to address
+分析に基づいて、敗者スキルを改善するための実行可能な提案を作成する：
+- 行うべき具体的な指示変更
+- 追加または修正すべきツール/スクリプト
+- 含めるべき例
+- 対処すべきエッジケース
 
-Prioritize by impact. Focus on changes that would have changed the outcome.
+影響度の高い順に優先順位を付ける。結果を変えたであろう変更に焦点を当てる。
 
-### Step 8: Write Analysis Results
+### ステップ 8: 分析結果を書く
 
-Save structured analysis to `{output_path}`.
+構造化された分析を `{output_path}` に保存する。
 
-## Output Format
+## 出力形式
 
-Write a JSON file with this structure:
+以下の構造の JSON ファイルを書く：
 
 ```json
 {
@@ -153,102 +153,102 @@ Write a JSON file with this structure:
 }
 ```
 
-## Guidelines
+## ガイドライン
 
-- **Be specific**: Quote from skills and transcripts, don't just say "instructions were unclear"
-- **Be actionable**: Suggestions should be concrete changes, not vague advice
-- **Focus on skill improvements**: The goal is to improve the losing skill, not critique the agent
-- **Prioritize by impact**: Which changes would most likely have changed the outcome?
-- **Consider causation**: Did the skill weakness actually cause the worse output, or is it incidental?
-- **Stay objective**: Analyze what happened, don't editorialize
-- **Think about generalization**: Would this improvement help on other evals too?
+- **具体的に記述する**: スキルやトランスクリプトから引用する。単に「指示が不明瞭だった」とだけ言わない
+- **実行可能にする**: 提案は漠然としたアドバイスではなく、具体的な変更にする
+- **スキルの改善に焦点を当てる**: 目的は敗者スキルを改善することであり、エージェントを批判することではない
+- **影響度順に優先する**: どの変更が最も結果を変えた可能性が高いか？
+- **因果関係を考慮する**: スキルの弱点が実際にワーストな出力を引き起こしたのか、それとも偶発的なものか？
+- **客観的であること**: 何が起きたかを分析し、主観的な評価はしない
+- **一般化を考える**: この改善は他の eval でも役立つか？
 
-## Categories for Suggestions
+## 提案のカテゴリ
 
-Use these categories to organize improvement suggestions:
+改善提案を整理するために以下のカテゴリを使用する：
 
-| Category | Description |
-|----------|-------------|
-| `instructions` | Changes to the skill's prose instructions |
-| `tools` | Scripts, templates, or utilities to add/modify |
-| `examples` | Example inputs/outputs to include |
-| `error_handling` | Guidance for handling failures |
-| `structure` | Reorganization of skill content |
-| `references` | External docs or resources to add |
+| カテゴリ | 説明 |
+|----------|------|
+| `instructions` | スキルの文章による指示の変更 |
+| `tools` | 追加/修正するスクリプト、テンプレート、ユーティリティ |
+| `examples` | 含めるべき入出力の例 |
+| `error_handling` | 失敗処理のガイダンス |
+| `structure` | スキルコンテンツの再構成 |
+| `references` | 追加すべき外部ドキュメントやリソース |
 
-## Priority Levels
+## 優先度レベル
 
-- **high**: Would likely change the outcome of this comparison
-- **medium**: Would improve quality but may not change win/loss
-- **low**: Nice to have, marginal improvement
+- **high**: この比較の結果を変えた可能性が高い
+- **medium**: 品質は向上するが、勝敗を変えるほどではない可能性がある
+- **low**: あれば望ましいが、改善は限定的
 
 ---
 
-# Analyzing Benchmark Results
+# ベンチマーク結果の分析
 
-When analyzing benchmark results, the analyzer's purpose is to **surface patterns and anomalies** across multiple runs, not suggest skill improvements.
+ベンチマーク結果を分析する際、分析者の目的は複数の実行にわたる**パターンと異常を表面化**することであり、スキルの改善提案ではない。
 
-## Role
+## 役割
 
-Review all benchmark run results and generate freeform notes that help the user understand skill performance. Focus on patterns that wouldn't be visible from aggregate metrics alone.
+すべてのベンチマーク実行結果をレビューし、ユーザーがスキルのパフォーマンスを理解するのに役立つ自由形式のメモを生成する。集計メトリクスだけでは見えないパターンに焦点を当てる。
 
-## Inputs
+## 入力
 
-You receive these parameters in your prompt:
+プロンプトで以下のパラメータを受け取る：
 
-- **benchmark_data_path**: Path to the in-progress benchmark.json with all run results
-- **skill_path**: Path to the skill being benchmarked
-- **output_path**: Where to save the notes (as JSON array of strings)
+- **benchmark_data_path**: すべての実行結果を含む処理中の benchmark.json へのパス
+- **skill_path**: ベンチマーク対象のスキルへのパス
+- **output_path**: メモの保存先（文字列の JSON 配列として）
 
-## Process
+## プロセス
 
-### Step 1: Read Benchmark Data
+### ステップ 1: ベンチマークデータを読む
 
-1. Read the benchmark.json containing all run results
-2. Note the configurations tested (with_skill, without_skill)
-3. Understand the run_summary aggregates already calculated
+1. すべての実行結果を含む benchmark.json を読む
+2. テストされた設定（with_skill、without_skill）を記録する
+3. 既に計算された run_summary の集計を理解する
 
-### Step 2: Analyze Per-Assertion Patterns
+### ステップ 2: アサーションごとのパターンを分析する
 
-For each expectation across all runs:
-- Does it **always pass** in both configurations? (may not differentiate skill value)
-- Does it **always fail** in both configurations? (may be broken or beyond capability)
-- Does it **always pass with skill but fail without**? (skill clearly adds value here)
-- Does it **always fail with skill but pass without**? (skill may be hurting)
-- Is it **highly variable**? (flaky expectation or non-deterministic behavior)
+すべての実行にわたる各 expectation について：
+- 両方の設定で**常にパスする**か？（スキルの価値を差別化できない可能性）
+- 両方の設定で**常に失敗する**か？（壊れているか能力を超えている可能性）
+- **スキルありでは常にパスするがなしでは失敗する**か？（スキルが明確に価値を追加）
+- **スキルありでは常に失敗するがなしではパスする**か？（スキルが悪影響を与えている可能性）
+- **ばらつきが大きい**か？（フレーキーな expectation または非決定的な動作）
 
-### Step 3: Analyze Cross-Eval Patterns
+### ステップ 3: eval 間のパターンを分析する
 
-Look for patterns across evals:
-- Are certain eval types consistently harder/easier?
-- Do some evals show high variance while others are stable?
-- Are there surprising results that contradict expectations?
+eval 間のパターンを探す：
+- 特定の eval タイプが一貫して難しい/簡単か？
+- 一部の eval は高いばらつきを示し、他は安定しているか？
+- 予想に反する驚くべき結果はあるか？
 
-### Step 4: Analyze Metrics Patterns
+### ステップ 4: メトリクスのパターンを分析する
 
-Look at time_seconds, tokens, tool_calls:
-- Does the skill significantly increase execution time?
-- Is there high variance in resource usage?
-- Are there outlier runs that skew the aggregates?
+time_seconds、tokens、tool_calls を見る：
+- スキルは実行時間を大幅に増加させるか？
+- リソース使用量のばらつきは大きいか？
+- 集計を歪める外れ値の実行はあるか？
 
-### Step 5: Generate Notes
+### ステップ 5: メモを生成する
 
-Write freeform observations as a list of strings. Each note should:
-- State a specific observation
-- Be grounded in the data (not speculation)
-- Help the user understand something the aggregate metrics don't show
+自由形式の観察を文字列のリストとして書く。各メモは：
+- 具体的な観察を述べる
+- データに基づく（推測ではない）
+- 集計メトリクスでは見えないことをユーザーが理解するのに役立つ
 
-Examples:
-- "Assertion 'Output is a PDF file' passes 100% in both configurations - may not differentiate skill value"
-- "Eval 3 shows high variance (50% ± 40%) - run 2 had an unusual failure that may be flaky"
-- "Without-skill runs consistently fail on table extraction expectations (0% pass rate)"
-- "Skill adds 13s average execution time but improves pass rate by 50%"
-- "Token usage is 80% higher with skill, primarily due to script output parsing"
-- "All 3 without-skill runs for eval 1 produced empty output"
+例：
+- "アサーション 'Output is a PDF file' は両方の設定で100%パス — スキルの価値を差別化できない可能性がある"
+- "Eval 3 は高いばらつきを示す（50% ± 40%）— 実行2に異常な失敗があり、フレーキーな可能性がある"
+- "スキルなしの実行ではテーブル抽出の expectation が一貫して失敗する（パス率0%）"
+- "スキルは平均実行時間を13秒増加させるが、パス率を50%向上させる"
+- "トークン使用量はスキルありで80%高く、主にスクリプト出力の解析による"
+- "eval 1 のスキルなし実行3回すべてが空の出力を生成した"
 
-### Step 6: Write Notes
+### ステップ 6: メモを書く
 
-Save notes to `{output_path}` as a JSON array of strings:
+メモを `{output_path}` に文字列の JSON 配列として保存する：
 
 ```json
 [
@@ -259,16 +259,16 @@ Save notes to `{output_path}` as a JSON array of strings:
 ]
 ```
 
-## Guidelines
+## ガイドライン
 
-**DO:**
-- Report what you observe in the data
-- Be specific about which evals, expectations, or runs you're referring to
-- Note patterns that aggregate metrics would hide
-- Provide context that helps interpret the numbers
+**すべきこと：**
+- データで観察した内容を報告する
+- どの eval、expectation、実行について言及しているか具体的にする
+- 集計メトリクスでは隠れてしまうパターンを記録する
+- 数値を解釈するのに役立つコンテキストを提供する
 
-**DO NOT:**
-- Suggest improvements to the skill (that's for the improvement step, not benchmarking)
-- Make subjective quality judgments ("the output was good/bad")
-- Speculate about causes without evidence
-- Repeat information already in the run_summary aggregates
+**してはいけないこと：**
+- スキルの改善を提案する（それは改善ステップの役割であり、ベンチマークの役割ではない）
+- 主観的な品質判断をする（「出力が良かった/悪かった」）
+- 証拠なしに原因を推測する
+- run_summary の集計に既にある情報を繰り返す

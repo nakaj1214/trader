@@ -1,409 +1,95 @@
-# Security Rules
+---
+paths:
+  - "**/*.php"
+  - "**/*.js"
+  - "**/*.py"
+---
 
-These rules MUST be followed at all times when writing or reviewing code.
+# セキュリティルール
 
-## 1. No Hardcoded Secrets
+コードの記述・レビュー時に常に従うこと。
 
-### Rule
-NEVER hardcode secrets, credentials, API keys, or sensitive data in code.
+## 1. シークレットのハードコード禁止
 
-### Violations
+シークレット・API キー・認証情報をコードに直書きしない。環境変数を使用する。
+
 ```typescript
-// ❌ NEVER DO THIS
-const API_KEY = "sk_live_abc123xyz789";
-const DB_PASSWORD = "mypassword123";
-const SECRET_TOKEN = "super-secret-token";
+// ❌ const API_KEY = "sk_live_abc123xyz789";
+// ✅ const API_KEY = process.env.API_KEY;
 ```
 
-### Correct Approach
+検出: `password`, `secret`, `key`, `token` パターンをスキャン。`.env` を `.gitignore` に含める。
+
+## 2. 入力バリデーション
+
+すべてのユーザー入力を処理前にバリデーション: 型・フォーマット・長さ・範囲・特殊文字サニタイズ。
+スキーマベースのバリデーション（Zod、Pydantic 等）を推奨。
+
+## 3. SQL インジェクション防止
+
+パラメータ化クエリまたは ORM を使用。ユーザー入力を SQL に結合しない。
+
 ```typescript
-// ✅ Use environment variables
-const API_KEY = process.env.API_KEY;
-const DB_PASSWORD = process.env.DB_PASSWORD;
-const SECRET_TOKEN = process.env.SECRET_TOKEN;
-
-// ✅ Validate they exist
-if (!API_KEY) {
-  throw new Error('API_KEY environment variable is required');
-}
+// ❌ db.query(`SELECT * FROM users WHERE id = ${userId}`);
+// ✅ db.query('SELECT * FROM users WHERE id = ?', [userId]);
 ```
 
-### Detection
-- Scan for patterns: `password`, `secret`, `key`, `token`, `api_key`
-- Check for credential-like strings in assignments
-- Verify .env files are in .gitignore
+## 4. XSS 防止
 
-## 2. Input Validation
+HTML レンダリング前にユーザー生成コンテンツをエスケープ。フレームワーク組み込み機能を使用。
 
-### Rule
-ALL user input MUST be validated before processing.
-
-### Requirements
-- Validate type
-- Validate format
-- Validate length
-- Validate range
-- Sanitize for special characters
-
-### Examples
 ```typescript
-// ❌ No validation
-function createUser(email: string, age: number) {
-  db.query(`INSERT INTO users (email, age) VALUES ('${email}', ${age})`);
-}
-
-// ✅ Proper validation
-function createUser(email: string, age: number) {
-  // Type validation
-  if (typeof email !== 'string' || typeof age !== 'number') {
-    throw new ValidationError('Invalid types');
-  }
-
-  // Format validation
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    throw new ValidationError('Invalid email format');
-  }
-
-  // Range validation
-  if (age < 0 || age > 150) {
-    throw new ValidationError('Invalid age range');
-  }
-
-  // Length validation
-  if (email.length > 255) {
-    throw new ValidationError('Email too long');
-  }
-
-  // Use parameterized queries
-  db.query('INSERT INTO users (email, age) VALUES (?, ?)', [email, age]);
-}
+// ❌ return `<div>${comment}</div>`;
+// ✅ return `<div>${escapeHtml(comment)}</div>`;
 ```
 
-## 3. SQL Injection Prevention
+## 5. 認証と認可
 
-### Rule
-ALWAYS use parameterized queries or ORMs. NEVER concatenate user input into SQL.
+- パスワード: bcrypt/argon2 でハッシュ化（md5/sha1 禁止）
+- セッション: `crypto.randomBytes(32)`, cookie に `secure`, `httpOnly`, `sameSite: 'strict'`
+- 認可: すべての保護ルートでチェック。レート制限を実装
 
-### Violations
+## 6. コマンドインジェクション防止
+
+ユーザー入力でシェルコマンドを実行しない。`spawn` の配列引数またはライブラリを使用。
+
 ```typescript
-// ❌ SQL Injection vulnerability
-const query = `SELECT * FROM users WHERE id = ${userId}`;
-const query = `SELECT * FROM users WHERE name = '${userName}'`;
-db.execute(query);
+// ❌ exec(`convert ${userFileName} output.jpg`);
+// ✅ spawn('convert', [userFileName, 'output.jpg']);
 ```
 
-### Correct Approach
-```typescript
-// ✅ Parameterized query
-db.query('SELECT * FROM users WHERE id = ?', [userId]);
+## 7. パストラバーサル防止
 
-// ✅ Using ORM
-await User.findOne({ where: { id: userId } });
+ファイルパスをバリデーション。`path.resolve()` + `startsWith()` で許可ディレクトリ内を確認。
 
-// ✅ Named parameters
-db.query('SELECT * FROM users WHERE name = :name', { name: userName });
-```
+## 8. CSRF 保護
 
-## 4. XSS Prevention
+状態変更操作に CSRF トークンを実装。Laravel: `<meta name="csrf-token">` + `$.ajaxSetup`。
 
-### Rule
-Escape all user-generated content before rendering in HTML.
+## 9. セキュアヘッダー
 
-### Violations
-```typescript
-// ❌ XSS vulnerability
-function displayComment(comment: string) {
-  return `<div>${comment}</div>`;
-}
-```
+`helmet.js` または手動で設定: `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`, `Content-Security-Policy`。
 
-### Correct Approach
-```typescript
-// ✅ Escape HTML
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, m => map[m]);
-}
+## 10. エラーハンドリング
 
-function displayComment(comment: string) {
-  return `<div>${escapeHtml(comment)}</div>`;
-}
+エラーメッセージで機密情報を公開しない。サーバーに詳細ログ、クライアントには汎用エラー。
 
-// ✅ Use framework built-ins (React)
-function Comment({ text }: { text: string }) {
-  return <div>{text}</div>; // React auto-escapes
-}
-```
+## セキュリティチェックリスト
 
-## 5. Authentication & Authorization
+- [ ] シークレットがハードコードされていない
+- [ ] ユーザー入力がバリデーションされている
+- [ ] SQL がパラメータ化されている
+- [ ] HTML 出力がエスケープされている
+- [ ] パスワードが bcrypt/argon2 でハッシュ化されている
+- [ ] 認証・認可チェックが実施されている
+- [ ] コマンドインジェクション脆弱性がない
+- [ ] ファイルパスがバリデーションされている
+- [ ] CSRF 保護が実装されている
+- [ ] セキュリティヘッダーが設定されている
+- [ ] エラーメッセージが情報を漏洩していない
+- [ ] 本番で HTTPS が強制されている
 
-### Rule
-- Passwords MUST be hashed with bcrypt or argon2
-- Session tokens MUST be cryptographically random
-- Authorization checks MUST occur on every request
-- Rate limiting MUST be implemented
+## インシデント対応
 
-### Password Hashing
-```typescript
-// ❌ Plaintext or weak hashing
-const password = userInput;
-const hash = md5(password); // WEAK
-const hash = sha1(password); // WEAK
-
-// ✅ Proper hashing
-import bcrypt from 'bcrypt';
-
-const saltRounds = 12;
-const hash = await bcrypt.hash(password, saltRounds);
-
-// Verification
-const isValid = await bcrypt.compare(inputPassword, storedHash);
-```
-
-### Session Management
-```typescript
-// ✅ Secure session token generation
-import crypto from 'crypto';
-
-function generateSessionToken(): string {
-  return crypto.randomBytes(32).toString('hex');
-}
-
-// ✅ Session configuration
-app.use(session({
-  secret: process.env.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: true,      // HTTPS only
-    httpOnly: true,    // No JavaScript access
-    sameSite: 'strict', // CSRF protection
-    maxAge: 3600000    // 1 hour
-  }
-}));
-```
-
-### Authorization
-```typescript
-// ✅ Check on every protected route
-function requireAuth(req, res, next) {
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
-
-function requireRole(role: string) {
-  return (req, res, next) => {
-    if (req.user.role !== role) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-    next();
-  };
-}
-
-app.get('/admin', requireAuth, requireRole('admin'), handler);
-```
-
-## 6. Command Injection Prevention
-
-### Rule
-NEVER execute shell commands with unsanitized user input.
-
-### Violations
-```typescript
-// ❌ Command injection vulnerability
-exec(`convert ${userFileName} output.jpg`);
-```
-
-### Correct Approach
-```typescript
-// ✅ Validate and sanitize
-function sanitizeFileName(fileName: string): string {
-  // Only allow alphanumeric, dots, and hyphens
-  return fileName.replace(/[^a-zA-Z0-9.-]/g, '');
-}
-
-const safeFileName = sanitizeFileName(userFileName);
-exec(`convert ${safeFileName} output.jpg`);
-
-// ✅ Better: Use libraries instead of shell commands
-import sharp from 'sharp';
-await sharp(userFileName).toFile('output.jpg');
-
-// ✅ Best: Use spawn with array args (no shell interpolation)
-import { spawn } from 'child_process';
-spawn('convert', [userFileName, 'output.jpg']);
-```
-
-## 7. Path Traversal Prevention
-
-### Rule
-Validate file paths to prevent directory traversal attacks.
-
-### Violations
-```typescript
-// ❌ Path traversal vulnerability
-app.get('/file/:name', (req, res) => {
-  const filePath = `./uploads/${req.params.name}`;
-  res.sendFile(filePath);
-});
-// Attacker could use: /file/../../etc/passwd
-```
-
-### Correct Approach
-```typescript
-// ✅ Validate path
-import path from 'path';
-
-app.get('/file/:name', (req, res) => {
-  const uploadsDir = path.resolve('./uploads');
-  const filePath = path.resolve(uploadsDir, req.params.name);
-
-  // Ensure path is within uploads directory
-  if (!filePath.startsWith(uploadsDir)) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
-  res.sendFile(filePath);
-});
-```
-
-## 8. CSRF Protection
-
-### Rule
-Implement CSRF tokens for state-changing operations.
-
-### Implementation
-```typescript
-// ✅ CSRF protection middleware
-import csrf from 'csurf';
-
-const csrfProtection = csrf({ cookie: true });
-
-app.get('/form', csrfProtection, (req, res) => {
-  res.render('form', { csrfToken: req.csrfToken() });
-});
-
-app.post('/submit', csrfProtection, (req, res) => {
-  // Process form
-});
-
-// ✅ In HTML
-<form method="POST">
-  <input type="hidden" name="_csrf" value="{{csrfToken}}">
-  <!-- form fields -->
-</form>
-```
-
-## 9. Secure Headers
-
-### Rule
-Always set security headers.
-
-### Implementation
-```typescript
-// ✅ Using helmet.js
-import helmet from 'helmet';
-
-app.use(helmet());
-
-// ✅ Manual configuration
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  res.setHeader('Content-Security-Policy', "default-src 'self'");
-  next();
-});
-```
-
-## 10. Error Handling
-
-### Rule
-Don't expose sensitive information in error messages.
-
-### Violations
-```typescript
-// ❌ Information leakage
-catch (err) {
-  res.status(500).json({
-    error: err.message,
-    stack: err.stack,
-    query: sql
-  });
-}
-```
-
-### Correct Approach
-```typescript
-// ✅ Safe error handling
-catch (err) {
-  // Log detailed error server-side
-  logger.error('Database error', {
-    error: err,
-    query: sql,
-    user: req.user.id
-  });
-
-  // Send generic error to client
-  res.status(500).json({
-    error: 'An error occurred while processing your request'
-  });
-}
-```
-
-## Security Checklist
-
-Before committing code, verify:
-
-- [ ] No hardcoded secrets or credentials
-- [ ] All user input is validated
-- [ ] SQL queries are parameterized
-- [ ] HTML output is escaped
-- [ ] Passwords are properly hashed (bcrypt/argon2)
-- [ ] Authentication is enforced on protected routes
-- [ ] Authorization checks are in place
-- [ ] No command injection vulnerabilities
-- [ ] File paths are validated
-- [ ] CSRF protection is implemented
-- [ ] Security headers are set
-- [ ] Error messages don't leak information
-- [ ] Rate limiting is implemented
-- [ ] HTTPS is enforced in production
-- [ ] Dependencies are up to date
-
-## Automatic Checks
-
-These should be automated in CI/CD:
-
-```bash
-# Dependency vulnerability scanning
-npm audit
-
-# Static analysis
-npm run lint:security
-
-# Secret scanning
-git-secrets --scan
-
-# License compliance
-npm run license-check
-```
-
-## When to Escalate
-
-Immediately escalate to security team if:
-- Potential data breach discovered
-- Authentication bypass found
-- Privilege escalation possible
-- Secrets committed to repository
-- Production credentials exposed
+脆弱性発見時: 停止 → エスカレーション → 修正 → 認証情報ローテーション → コードベース全体監査。
+データ漏洩・認証バイパス・権限昇格・シークレット漏洩は直ちにセキュリティチームにエスカレーション。

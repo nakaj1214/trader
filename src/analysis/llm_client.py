@@ -114,6 +114,9 @@ class ClaudeClient(LLMClient):
             kwargs["temperature"] = self._config.temperature
 
         response = client.messages.create(**kwargs)
+        if not response.content:
+            logger.warning("claude_empty_response", model=self._config.model)
+            return "", 0
         text = response.content[0].text
         token_count = response.usage.input_tokens + response.usage.output_tokens
         return text, token_count
@@ -153,6 +156,9 @@ class OpenAIClient(LLMClient):
             max_tokens=self._config.max_tokens,
             temperature=self._config.temperature,
         )
+        if not response.choices:
+            logger.warning("openai_empty_response", model=self._config.model)
+            return "", 0
         text = response.choices[0].message.content or ""
         token_count = response.usage.total_tokens if response.usage else 0
         return text, token_count

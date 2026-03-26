@@ -458,7 +458,7 @@ def export_vba_module(file_path: str, module_name: str, output_path: str) -> str
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:/Users/nakashima/Desktop/claude"
+        "<YOUR_PROJECT_ROOT>"
       ]
     },
     "git": {

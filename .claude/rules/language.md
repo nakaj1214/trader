@@ -1,26 +1,27 @@
-# Language Rules
+# 言語ルール
 
-## Thinking and Reasoning
+## 思考と推論
 
-- **Always think and reason in English**
-- Internal analysis, planning, and problem-solving should be in English
-- Code comments, variable names, function names, and docstrings should be in English
+- **常に英語で思考・推論すること**
+- 内部的な分析、計画、問題解決は英語で行う
+- 変数名、関数名、docstring は英語で記述する
 
-## User Communication
+## ユーザーとのコミュニケーション
 
-- **Always respond to users in Japanese**
-- Explanations, questions, and status updates should be in Japanese
-- Error messages shown to users should be in Japanese
+- **常にユーザーには日本語で回答すること**
+- 説明、質問、ステータス更新は日本語で行う
+- コードコメント、docstringは日本語で記述する
+- ユーザーに表示するエラーメッセージは日本語にする
 
-## Code
+## コード
 
-- All code should be written in English:
-  - Variable names: `user_count`, not `ユーザー数`
-  - Function names: `calculate_total()`, not `合計計算()`
-  - Comments: `# Check if valid`, not `# 有効かチェック`
-  - Docstrings: English descriptions
+- すべてのコードは英語で記述する:
+  - 変数名: `ユーザー数` ではなく `user_count`
+  - 関数名: `合計計算()` ではなく `calculate_total()`
+  - コメント: `# Check if valid` ではなく `# 有効かチェック`
+  - Docstring: 日本語で記述
 
-## Documentation
+## ドキュメント
 
-- Technical documentation: English
-- User-facing documentation (README, etc.): Japanese is acceptable
+- 技術ドキュメント: 英語
+- ユーザー向けドキュメント（README など）: 日本語でも可

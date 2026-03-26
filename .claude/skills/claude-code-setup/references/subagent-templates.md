@@ -1,181 +1,186 @@
-# Subagent Recommendations
+# サブエージェント推奨
 
-Subagents are specialized Claude instances that run in parallel, each with their own context window and tool access. They're ideal for focused reviews, analysis, or generation tasks.
+サブエージェントは、それぞれ独自のコンテキストウィンドウとツールアクセスを持つ、並列実行可能な専門 Claude インスタンスです。集中的なレビュー、分析、生成タスクに最適です。
 
-**Note**: These are common patterns. Design custom subagents based on the codebase's specific review and analysis needs.
+**注意**: これらは一般的なパターンです。コードベース固有のレビューや分析のニーズに基づいてカスタムサブエージェントを設計してください。
 
-## Code Review Agents
+## コードレビューエージェント
 
 ### code-reviewer
-**Best for**: Automated code quality checks on large codebases
+**最適な用途**: 大規模コードベースでの自動コード品質チェック
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Large codebase (>500 files) | File count |
-| Frequent code changes | Active development |
-| Team wants consistent review | Quality focus |
+| 大規模コードベース（500ファイル超） | ファイル数 |
+| 頻繁なコード変更 | アクティブな開発 |
+| チームが一貫したレビューを求める | 品質重視 |
 
-**Value**: Runs code review in parallel while you continue working
-**Model**: sonnet (balanced quality/speed)
-**Tools**: Read, Grep, Glob, Bash
+**価値**: 作業を続けながら並行してコードレビューを実行
+**モデル**: sonnet（品質/速度のバランス）
+**ツール**: Read, Grep, Glob, Bash
 
 ---
 
 ### security-reviewer
-**Best for**: Security-focused code review
+**最適な用途**: セキュリティに焦点を当てたコードレビュー
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Auth code present | `auth/`, `login`, `session` patterns |
-| Payment processing | `stripe`, `payment`, `billing` patterns |
-| User data handling | `user`, `profile`, `pii` patterns |
-| API keys in code | Environment variable patterns |
+| 認証コードが存在 | `auth/`, `login`, `session` パターン |
+| 支払い処理 | `stripe`, `payment`, `billing` パターン |
+| ユーザーデータの取り扱い | `user`, `profile`, `pii` パターン |
+| コード内の API キー | 環境変数パターン |
 
-**Value**: Catches OWASP vulnerabilities, auth issues, data exposure
-**Model**: sonnet
-**Tools**: Read, Grep, Glob (read-only for safety)
+**価値**: OWASP 脆弱性、認証の問題、データ漏洩をキャッチ
+**モデル**: sonnet
+**ツール**: Read, Grep, Glob（安全性のため読み取り専用）
 
 ---
 
 ### test-writer
-**Best for**: Generating comprehensive test coverage
+**最適な用途**: 包括的なテストカバレッジの生成
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Low test coverage | Few test files vs source files |
-| Test suite exists | `tests/`, `__tests__/` present |
-| Testing framework configured | jest, pytest, vitest in deps |
+| テストカバレッジが低い | ソースファイルに対してテストファイルが少ない |
+| テストスイートが存在 | `tests/`, `__tests__/` が存在 |
+| テストフレームワークが設定済み | deps に jest, pytest, vitest |
 
-**Value**: Generates tests matching project conventions
-**Model**: sonnet
-**Tools**: Read, Write, Grep, Glob
+**価値**: プロジェクトの規約に合ったテストを生成
+**モデル**: sonnet
+**ツール**: Read, Write, Grep, Glob
 
 ---
 
-## Specialized Agents
+## 専門エージェント
 
 ### api-documenter
-**Best for**: API documentation generation
+**最適な用途**: API ドキュメントの生成
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| REST endpoints | Express routes, FastAPI paths |
-| GraphQL schema | `.graphql` files |
-| OpenAPI exists | `openapi.yaml`, `swagger.json` |
-| Undocumented APIs | Routes without docs |
+| REST エンドポイント | Express ルート、FastAPI パス |
+| GraphQL スキーマ | `.graphql` ファイル |
+| OpenAPI が存在 | `openapi.yaml`, `swagger.json` |
+| 未ドキュメントの API | ドキュメントのないルート |
 
-**Value**: Generates OpenAPI specs, endpoint documentation
-**Model**: sonnet
-**Tools**: Read, Write, Grep, Glob
+**価値**: OpenAPI 仕様、エンドポイントドキュメントを生成
+**モデル**: sonnet
+**ツール**: Read, Write, Grep, Glob
 
 ---
 
 ### performance-analyzer
-**Best for**: Finding performance bottlenecks
+**最適な用途**: パフォーマンスボトルネックの発見
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Database queries | ORM usage, raw SQL |
-| High-traffic code | API endpoints, hot paths |
-| Performance complaints | User reports slowness |
-| Complex algorithms | Nested loops, recursion |
+| データベースクエリ | ORM 使用、生 SQL |
+| 高トラフィックコード | API エンドポイント、ホットパス |
+| パフォーマンスの不満 | ユーザーが遅いと報告 |
+| 複雑なアルゴリズム | ネストされたループ、再帰 |
 
-**Value**: Finds N+1 queries, O(n²) algorithms, memory leaks
-**Model**: sonnet
-**Tools**: Read, Grep, Glob, Bash
+**価値**: N+1 クエリ、O(n²) アルゴリズム、メモリリークを発見
+**モデル**: sonnet
+**ツール**: Read, Grep, Glob, Bash
 
 ---
 
 ### ui-reviewer
-**Best for**: Frontend accessibility and UX review
+**最適な用途**: フロントエンドのアクセシビリティと UX レビュー
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| React/Vue/Angular | Frontend framework detected |
-| Component library | `components/` directory |
-| User-facing UI | Not just API project |
+| React/Vue/Angular | フロントエンドフレームワーク検出 |
+| コンポーネントライブラリ | `components/` ディレクトリ |
+| ユーザー向け UI | API 専用プロジェクトではない |
 
-**Value**: Catches accessibility issues, UX problems, responsive design gaps
-**Model**: sonnet
-**Tools**: Read, Grep, Glob
+**価値**: アクセシビリティの問題、UX の問題、レスポンシブデザインのギャップをキャッチ
+**モデル**: sonnet
+**ツール**: Read, Grep, Glob
 
 ---
 
-## Utility Agents
+## ユーティリティエージェント
 
 ### dependency-updater
-**Best for**: Safe dependency updates
+**最適な用途**: 安全な依存関係の更新
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Outdated deps | `npm outdated` has results |
-| Security advisories | `npm audit` warnings |
-| Major version behind | Significant version gaps |
+| 古い依存関係 | `npm outdated` に結果がある |
+| セキュリティアドバイザリ | `npm audit` の警告 |
+| メジャーバージョン遅れ | 大幅なバージョンギャップ |
 
-**Value**: Updates dependencies incrementally with testing
-**Model**: sonnet
-**Tools**: Read, Write, Bash, Grep
+**価値**: テスト付きで段階的に依存関係を更新
+**モデル**: sonnet
+**ツール**: Read, Write, Bash, Grep
 
 ---
 
 ### migration-helper
-**Best for**: Framework/version migrations
+**最適な用途**: フレームワーク/バージョンのマイグレーション
 
-| Recommend When | Detection |
+| 推奨する場面 | 検出方法 |
 |----------------|-----------|
-| Major upgrade needed | Framework version very old |
-| Breaking changes coming | Deprecation warnings |
-| Refactoring planned | Architectural changes |
+| メジャーアップグレードが必要 | フレームワークのバージョンが非常に古い |
+| 破壊的変更が予定 | 非推奨警告 |
+| リファクタリングが計画済み | アーキテクチャの変更 |
 
-**Value**: Plans and executes migrations incrementally
-**Model**: opus (complex reasoning needed)
-**Tools**: Read, Write, Grep, Glob, Bash
+**価値**: マイグレーションを段階的に計画・実行
+**モデル**: opus（複雑な推論が必要）
+**ツール**: Read, Write, Grep, Glob, Bash
 
 ---
 
-## Quick Reference: Detection → Recommendation
+## クイックリファレンス: 検出 → 推奨
 
-| If You See | Recommend Subagent |
+| 検出された場合 | 推奨サブエージェント |
 |------------|-------------------|
-| Large codebase | code-reviewer |
-| Auth/payment code | security-reviewer |
-| Few tests | test-writer |
-| API routes | api-documenter |
-| Database heavy | performance-analyzer |
-| Frontend components | ui-reviewer |
-| Outdated packages | dependency-updater |
-| Old framework version | migration-helper |
+| 大規模コードベース | code-reviewer |
+| 認証/支払いコード | security-reviewer |
+| テストが少ない | test-writer |
+| API ルート | api-documenter |
+| データベース重視 | performance-analyzer |
+| フロントエンドコンポーネント | ui-reviewer |
+| 古いパッケージ | dependency-updater |
+| 古いフレームワークバージョン | migration-helper |
 
 ---
 
-## Subagent Placement
+## サブエージェントの配置場所
 
-Subagents go in `.claude/agents/`:
+サブエージェントは `.claude/agents/[category]/` に配置します:
 
 ```
 .claude/
 └── agents/
-    ├── code-reviewer.md
-    ├── security-reviewer.md
-    └── test-writer.md
+    ├── planning/          # planner, architect, code-architect
+    ├── review/            # code-reviewer, security-reviewer 等
+    ├── testing/           # tester, tdd-guide, e2e-runner 等
+    ├── debugging/         # debugger, performance, build-error-resolver
+    ├── refactoring/       # refactorer, refactor-cleaner
+    ├── documentation/     # documenter, doc-updater
+    ├── exploration/       # code-explorer, conversation-analyzer
+    └── tooling/           # agent-creator, plugin-validator, skill-reviewer
 ```
 
 ---
 
-## Model Selection Guide
+## モデル選択ガイド
 
-| Model | Best For | Trade-off |
+| モデル | 最適な用途 | トレードオフ |
 |-------|----------|-----------|
-| **haiku** | Simple, repetitive checks | Fast, cheap, less thorough |
-| **sonnet** | Most review/analysis tasks | Balanced (recommended default) |
-| **opus** | Complex migrations, architecture | Thorough, slower, more expensive |
+| **haiku** | シンプルで反復的なチェック | 高速、低コスト、精度は低い |
+| **sonnet** | ほとんどのレビュー/分析タスク | バランス型（推奨デフォルト） |
+| **opus** | 複雑なマイグレーション、アーキテクチャ | 精度が高い、遅い、コストが高い |
 
 ---
 
-## Tool Access Guide
+## ツールアクセスガイド
 
-| Access Level | Tools | Use Case |
+| アクセスレベル | ツール | ユースケース |
 |--------------|-------|----------|
-| Read-only | Read, Grep, Glob | Reviews, analysis |
-| Writing | + Write | Code generation, docs |
-| Full | + Bash | Migrations, testing |
+| 読み取り専用 | Read, Grep, Glob | レビュー、分析 |
+| 書き込み | + Write | コード生成、ドキュメント |
+| フル | + Bash | マイグレーション、テスト |

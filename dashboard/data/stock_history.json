@@ -1,50 +1,92 @@
 {
-  "MRVL": [
+  "CF": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 131.63
+      "date": "2026-03-29",
+      "predicted_price": 238.06
+    }
+  ],
+  "OXY": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 109.82
     }
   ],
   "APA": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 51.19
+      "date": "2026-03-29",
+      "predicted_price": 54.14
+    }
+  ],
+  "MRVL": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 115.36
+    }
+  ],
+  "VLO": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 291.24
+    }
+  ],
+  "MPC": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 264.27
     }
   ],
   "FANG": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 224.53
-    }
-  ],
-  "LYB": [
-    {
-      "date": "2026-03-22",
-      "predicted_price": 76.26
+      "date": "2026-03-29",
+      "predicted_price": 211.0
     }
   ],
   "9104.T": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 12716.58
+      "date": "2026-03-29",
+      "predicted_price": 12644.89
     }
   ],
-  "8031.T": [
+  "4061.T": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 8101.13
+      "date": "2026-03-29",
+      "predicted_price": 5881.21
     }
   ],
   "1605.T": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 5825.49
+      "date": "2026-03-29",
+      "predicted_price": 7850.85
     }
   ],
-  "9101.T": [
+  "6952.T": [
     {
-      "date": "2026-03-22",
-      "predicted_price": 7565.69
+      "date": "2026-03-29",
+      "predicted_price": 2319.81
+    }
+  ],
+  "5020.T": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 2218.78
+    }
+  ],
+  "5803.T": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 6669.91
+    }
+  ],
+  "8031.T": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 9304.92
+    }
+  ],
+  "8058.T": [
+    {
+      "date": "2026-03-29",
+      "predicted_price": 7002.4
     }
   ]
 }

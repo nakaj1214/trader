@@ -1,98 +1,68 @@
 {
-  "DAL": [
+  "SLB": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 150.79
+      "date": "2026-04-12",
+      "predicted_price": 81.7
     }
   ],
-  "BA": [
+  "LKQ": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 445.79
-    }
-  ],
-  "VMC": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 584.38
-    }
-  ],
-  "TFC": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 85.43
-    }
-  ],
-  "STT": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 187.3
-    }
-  ],
-  "MRVL": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 144.11
-    }
-  ],
-  "HOLX": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 79.18
+      "date": "2026-04-12",
+      "predicted_price": 42.97
     }
   ],
   "ULTA": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 555.93
+      "date": "2026-04-12",
+      "predicted_price": 615.87
     }
   ],
-  "6952.T": [
+  "AMCR": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 3357.51
+      "date": "2026-04-12",
+      "predicted_price": 48.18
+    }
+  ],
+  "GE": [
+    {
+      "date": "2026-04-12",
+      "predicted_price": 347.44
+    }
+  ],
+  "ITW": [
+    {
+      "date": "2026-04-12",
+      "predicted_price": 284.28
+    }
+  ],
+  "PHM": [
+    {
+      "date": "2026-04-12",
+      "predicted_price": 123.1
+    }
+  ],
+  "5803.T": [
+    {
+      "date": "2026-04-12",
+      "predicted_price": 10701.98
     }
   ],
   "5801.T": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 67494.14
+      "date": "2026-04-12",
+      "predicted_price": 75211.4
     }
   ],
-  "1963.T": [
+  "8795.T": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 3885.58
+      "date": "2026-04-12",
+      "predicted_price": 4637.05
     }
   ],
-  "4902.T": [
+  "4188.T": [
     {
-      "date": "2026-04-05",
-      "predicted_price": 798.72
-    }
-  ],
-  "8628.T": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 1367.05
-    }
-  ],
-  "9101.T": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 8406.82
-    }
-  ],
-  "6674.T": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 7828.57
-    }
-  ],
-  "6752.T": [
-    {
-      "date": "2026-04-05",
-      "predicted_price": 3146.76
+      "date": "2026-04-12",
+      "predicted_price": 1052.69
     }
   ]
 }

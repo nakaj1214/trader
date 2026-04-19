@@ -1,68 +1,56 @@
 {
-  "SLB": [
+  "CCEP": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 81.7
+      "date": "2026-04-19",
+      "predicted_price": 152.39
     }
   ],
-  "LKQ": [
+  "DRI": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 42.97
-    }
-  ],
-  "ULTA": [
-    {
-      "date": "2026-04-12",
-      "predicted_price": 615.87
-    }
-  ],
-  "AMCR": [
-    {
-      "date": "2026-04-12",
-      "predicted_price": 48.18
-    }
-  ],
-  "GE": [
-    {
-      "date": "2026-04-12",
-      "predicted_price": 347.44
-    }
-  ],
-  "ITW": [
-    {
-      "date": "2026-04-12",
-      "predicted_price": 284.28
+      "date": "2026-04-19",
+      "predicted_price": 293.62
     }
   ],
   "PHM": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 123.1
+      "date": "2026-04-19",
+      "predicted_price": 170.21
     }
   ],
-  "5803.T": [
+  "AMCR": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 10701.98
+      "date": "2026-04-19",
+      "predicted_price": 49.93
     }
   ],
-  "5801.T": [
+  "INTC": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 75211.4
+      "date": "2026-04-19",
+      "predicted_price": 69.86
     }
   ],
-  "8795.T": [
+  "3103.T": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 4637.05
+      "date": "2026-04-19",
+      "predicted_price": 7343.62
     }
   ],
-  "4188.T": [
+  "7752.T": [
     {
-      "date": "2026-04-12",
-      "predicted_price": 1052.69
+      "date": "2026-04-19",
+      "predicted_price": 1975.23
+    }
+  ],
+  "6367.T": [
+    {
+      "date": "2026-04-19",
+      "predicted_price": 29339.41
+    }
+  ],
+  "7004.T": [
+    {
+      "date": "2026-04-19",
+      "predicted_price": 1314.94
     }
   ]
 }

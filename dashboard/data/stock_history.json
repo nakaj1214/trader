@@ -1,56 +1,86 @@
 {
-  "CCEP": [
-    {
-      "date": "2026-04-19",
-      "predicted_price": 152.39
-    }
-  ],
-  "DRI": [
-    {
-      "date": "2026-04-19",
-      "predicted_price": 293.62
-    }
-  ],
-  "PHM": [
-    {
-      "date": "2026-04-19",
-      "predicted_price": 170.21
-    }
-  ],
-  "AMCR": [
-    {
-      "date": "2026-04-19",
-      "predicted_price": 49.93
-    }
-  ],
   "INTC": [
     {
-      "date": "2026-04-19",
-      "predicted_price": 69.86
+      "date": "2026-04-26",
+      "predicted_price": 252.22
     }
   ],
-  "3103.T": [
+  "ARM": [
     {
-      "date": "2026-04-19",
-      "predicted_price": 7343.62
+      "date": "2026-04-26",
+      "predicted_price": 706.3
     }
   ],
-  "7752.T": [
+  "AMD": [
     {
-      "date": "2026-04-19",
-      "predicted_price": 1975.23
+      "date": "2026-04-26",
+      "predicted_price": 811.29
     }
   ],
-  "6367.T": [
+  "ON": [
     {
-      "date": "2026-04-19",
-      "predicted_price": 29339.41
+      "date": "2026-04-26",
+      "predicted_price": 168.96
     }
   ],
-  "7004.T": [
+  "WAB": [
     {
-      "date": "2026-04-19",
-      "predicted_price": 1314.94
+      "date": "2026-04-26",
+      "predicted_price": 420.63
+    }
+  ],
+  "SYY": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 117.04
+    }
+  ],
+  "MRVL": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 217.29
+    }
+  ],
+  "EW": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 96.85
+    }
+  ],
+  "6857.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 60848.16
+    }
+  ],
+  "6976.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 9865.93
+    }
+  ],
+  "6723.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 4302.53
+    }
+  ],
+  "6506.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 6418.11
+    }
+  ],
+  "6920.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 52222.24
+    }
+  ],
+  "6762.T": [
+    {
+      "date": "2026-04-26",
+      "predicted_price": 2877.19
     }
   ]
 }

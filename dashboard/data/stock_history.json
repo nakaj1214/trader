@@ -1,44 +1,68 @@
 {
-  "STX": [
-    {
-      "date": "2026-05-03",
-      "predicted_price": 1190.68
-    }
-  ],
-  "MRVL": [
-    {
-      "date": "2026-05-03",
-      "predicted_price": 233.03
-    }
-  ],
-  "ON": [
-    {
-      "date": "2026-05-03",
-      "predicted_price": 124.38
-    }
-  ],
   "AMD": [
     {
-      "date": "2026-05-03",
-      "predicted_price": 418.46
+      "date": "2026-05-10",
+      "predicted_price": 1143.46
     }
   ],
-  "3103.T": [
+  "MU": [
     {
-      "date": "2026-05-03",
-      "predicted_price": 12604.93
+      "date": "2026-05-10",
+      "predicted_price": 1525.54
     }
   ],
-  "5901.T": [
+  "INTC": [
     {
-      "date": "2026-05-03",
-      "predicted_price": 5474.73
+      "date": "2026-05-10",
+      "predicted_price": 221.53
+    }
+  ],
+  "VTR": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 123.95
+    }
+  ],
+  "TXN": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 383.55
+    }
+  ],
+  "3436.T": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 5107.95
     }
   ],
   "6723.T": [
     {
-      "date": "2026-05-03",
-      "predicted_price": 3256.63
+      "date": "2026-05-10",
+      "predicted_price": 4975.17
+    }
+  ],
+  "6981.T": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 7522.11
+    }
+  ],
+  "3103.T": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 3235.56
+    }
+  ],
+  "6861.T": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 104941.65
+    }
+  ],
+  "6976.T": [
+    {
+      "date": "2026-05-10",
+      "predicted_price": 7984.03
     }
   ]
 }

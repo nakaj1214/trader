@@ -1,12 +1,12 @@
 {
   "predictions": [
     {
-      "date": "2026-05-10",
-      "ticker": "AMD",
-      "current_price": 455.19,
-      "predicted_price": 1143.46,
-      "predicted_change_pct": 151.2,
-      "ci_pct": 3.28,
+      "date": "2026-05-17",
+      "ticker": "ENPH",
+      "current_price": 52.89,
+      "predicted_price": 139.71,
+      "predicted_change_pct": 164.15,
+      "ci_pct": 4.71,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -17,208 +17,76 @@
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.9713,
-        "vol_60d_ann": 0.7338,
-        "beta": 2.96,
-        "max_drawdown_1y": -0.2776
+        "vol_20d_ann": 0.9273,
+        "vol_60d_ann": 0.7866,
+        "beta": 1.86,
+        "max_drawdown_1y": -0.4313
       },
       "evidence": {
-        "momentum_z": -0.07,
-        "value_z": -1.22,
-        "quality_z": -0.29,
+        "momentum_z": -1.61,
+        "value_z": -0.65,
+        "quality_z": 0.94,
         "low_risk_z": null,
-        "composite": 42
+        "composite": 41
       },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.103,
-        "stop_loss_pct": -0.2804,
+        "max_position_weight": 0.1078,
+        "stop_loss_pct": -0.2677,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": 1.08,
-        "short_pct_float": 0.022,
-        "signal": "neutral",
+        "short_ratio": 4.29,
+        "short_pct_float": 0.2765,
+        "signal": "high_short",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9976,
-      "fifty2w_pct_from_high": -0.0024
+      "fifty2w_score": 0.9814,
+      "fifty2w_pct_from_high": -0.0186
     },
     {
-      "date": "2026-05-10",
-      "ticker": "MU",
-      "current_price": 746.81,
-      "predicted_price": 1525.54,
-      "predicted_change_pct": 104.27,
-      "ci_pct": 3.61,
+      "date": "2026-05-17",
+      "ticker": "ON",
+      "current_price": 113.11,
+      "predicted_price": 129.17,
+      "predicted_change_pct": 14.2,
+      "ci_pct": 3.46,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
-      "predicted_change_pct_clipped": 30.0,
+      "predicted_change_pct_clipped": 14.2,
       "sanity_flags": [
-        "CLIPPED"
+        "OK"
       ],
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.8126,
-        "vol_60d_ann": 0.7774,
-        "beta": 2.81,
-        "max_drawdown_1y": -0.3028
+        "vol_20d_ann": 0.6748,
+        "vol_60d_ann": 0.614,
+        "beta": 2.21,
+        "max_drawdown_1y": -0.281
       },
       "evidence": {
-        "momentum_z": 1.72,
-        "value_z": -1.21,
-        "quality_z": 1.74,
+        "momentum_z": 1.21,
+        "value_z": -0.62,
+        "quality_z": 0.26,
         "low_risk_z": null,
-        "composite": 64
+        "composite": 56
       },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.1231,
-        "stop_loss_pct": -0.2346,
+        "max_position_weight": 0.1482,
+        "stop_loss_pct": -0.1948,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": 0.69,
-        "short_pct_float": 0.0323,
-        "signal": "neutral",
+        "short_ratio": 2.88,
+        "short_pct_float": 0.102,
+        "signal": "moderate_short",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9995,
-      "fifty2w_pct_from_high": -0.0005
-    },
-    {
-      "date": "2026-05-10",
-      "ticker": "INTC",
-      "current_price": 124.92,
-      "predicted_price": 221.53,
-      "predicted_change_pct": 77.34,
-      "ci_pct": 3.99,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 1.1221,
-        "vol_60d_ann": 0.8838,
-        "beta": 3.01,
-        "max_drawdown_1y": -0.2417
-      },
-      "evidence": {
-        "momentum_z": 0.18,
-        "value_z": -0.48,
-        "quality_z": -0.99,
-        "low_risk_z": null,
-        "composite": 43
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.0891,
-        "stop_loss_pct": -0.3239,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 1.38,
-        "short_pct_float": 0.0287,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9567,
-      "fifty2w_pct_from_high": -0.0433
-    },
-    {
-      "date": "2026-05-10",
-      "ticker": "VTR",
-      "current_price": 87.26,
-      "predicted_price": 123.95,
-      "predicted_change_pct": 42.05,
-      "ci_pct": 2.07,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.2481,
-        "vol_60d_ann": 0.1969,
-        "beta": 0.19,
-        "max_drawdown_1y": -0.0839
-      },
-      "evidence": {
-        "momentum_z": -0.81,
-        "value_z": 0.46,
-        "quality_z": -0.67,
-        "low_risk_z": null,
-        "composite": 44
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.0716,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 5.97,
-        "short_pct_float": 0.0453,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.986,
-      "fifty2w_pct_from_high": -0.014
-    },
-    {
-      "date": "2026-05-10",
-      "ticker": "TXN",
-      "current_price": 287.8,
-      "predicted_price": 383.55,
-      "predicted_change_pct": 33.27,
-      "ci_pct": 3.95,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 0.7299,
-        "vol_60d_ann": 0.5026,
-        "beta": 1.04,
-        "max_drawdown_1y": -0.2957
-      },
-      "evidence": {
-        "momentum_z": -0.7,
-        "value_z": -1.37,
-        "quality_z": 1.26,
-        "low_risk_z": null,
-        "composite": 45
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.137,
-        "stop_loss_pct": -0.2107,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 2.98,
-        "short_pct_float": 0.0212,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9835,
-      "fifty2w_pct_from_high": -0.0165
+      "fifty2w_score": 0.9497,
+      "fifty2w_pct_from_high": -0.0503
     }
   ]
 }

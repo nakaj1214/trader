@@ -1,74 +1,38 @@
 {
-  "BWA": [
+  "NTAP": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 152.51
+      "date": "2026-05-31",
+      "predicted_price": 373.64
     }
   ],
-  "ENPH": [
+  "F": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 132.68
+      "date": "2026-05-31",
+      "predicted_price": 29.54
     }
   ],
   "DDOG": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 457.31
-    }
-  ],
-  "AKAM": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 291.52
-    }
-  ],
-  "6981.T": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 18112.04
-    }
-  ],
-  "6506.T": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 16402.13
-    }
-  ],
-  "6723.T": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 8869.07
-    }
-  ],
-  "4208.T": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 6274.28
-    }
-  ],
-  "4004.T": [
-    {
-      "date": "2026-05-24",
-      "predicted_price": 35630.8
+      "date": "2026-05-31",
+      "predicted_price": 401.75
     }
   ],
   "6976.T": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 17946.83
+      "date": "2026-05-31",
+      "predicted_price": 30070.59
     }
   ],
-  "3105.T": [
+  "5301.T": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 2861.43
+      "date": "2026-05-31",
+      "predicted_price": 3364.99
     }
   ],
-  "6954.T": [
+  "6981.T": [
     {
-      "date": "2026-05-24",
-      "predicted_price": 9756.96
+      "date": "2026-05-31",
+      "predicted_price": 11980.2
     }
   ]
 }

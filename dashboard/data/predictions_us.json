@@ -1,12 +1,12 @@
 {
   "predictions": [
     {
-      "date": "2026-05-24",
-      "ticker": "BWA",
-      "current_price": 65.82,
-      "predicted_price": 152.51,
-      "predicted_change_pct": 131.7,
-      "ci_pct": 2.91,
+      "date": "2026-05-31",
+      "ticker": "NTAP",
+      "current_price": 174.29,
+      "predicted_price": 373.64,
+      "predicted_change_pct": 114.38,
+      "ci_pct": 3.23,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -17,136 +17,120 @@
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.4781,
-        "vol_60d_ann": 0.397,
-        "beta": 1.44,
-        "max_drawdown_1y": -0.238
+        "vol_20d_ann": 0.8928,
+        "vol_60d_ann": 0.5919,
+        "beta": 0.99,
+        "max_drawdown_1y": -0.2483
+      },
+      "evidence": {
+        "momentum_z": -0.74,
+        "value_z": -0.91,
+        "quality_z": 2.19,
+        "low_risk_z": null,
+        "composite": 52
       },
       "sizing": {
         "vol_target_ann": 0.1,
-        "max_position_weight": 0.2,
-        "stop_loss_pct": -0.138,
+        "max_position_weight": 0.112,
+        "stop_loss_pct": -0.2577,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": 3.95,
-        "short_pct_float": 0.036,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9361,
-      "fifty2w_pct_from_high": -0.0639
-    },
-    {
-      "date": "2026-05-24",
-      "ticker": "ENPH",
-      "current_price": 64.03,
-      "predicted_price": 132.68,
-      "predicted_change_pct": 107.22,
-      "ci_pct": 5.49,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 1.2032,
-        "vol_60d_ann": 0.9054,
-        "beta": 2.12,
-        "max_drawdown_1y": -0.4313
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.0831,
-        "stop_loss_pct": -0.3473,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 4.29,
-        "short_pct_float": 0.2765,
-        "signal": "high_short",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.986,
-      "fifty2w_pct_from_high": -0.014
-    },
-    {
-      "date": "2026-05-24",
-      "ticker": "DDOG",
-      "current_price": 222.32,
-      "predicted_price": 457.31,
-      "predicted_change_pct": 105.7,
-      "ci_pct": 5.24,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 1.1274,
-        "vol_60d_ann": 0.7987,
-        "beta": 1.19,
-        "max_drawdown_1y": -0.4862
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.0887,
-        "stop_loss_pct": -0.3254,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 3.34,
-        "short_pct_float": 0.0538,
-        "signal": "neutral",
-        "data_note": "Monthly data, reference only (yfinance)"
-      },
-      "fifty2w_score": 0.9891,
-      "fifty2w_pct_from_high": -0.0109
-    },
-    {
-      "date": "2026-05-24",
-      "ticker": "AKAM",
-      "current_price": 147.23,
-      "predicted_price": 291.52,
-      "predicted_change_pct": 98.01,
-      "ci_pct": 5.55,
-      "actual_price": null,
-      "status": "predicted",
-      "hit": null,
-      "predicted_change_pct_clipped": 30.0,
-      "sanity_flags": [
-        "CLIPPED"
-      ],
-      "prob_up": 1.0,
-      "prob_up_calibrated": null,
-      "risk": {
-        "vol_20d_ann": 1.1128,
-        "vol_60d_ann": 0.82,
-        "beta": 0.94,
-        "max_drawdown_1y": -0.2544
-      },
-      "sizing": {
-        "vol_target_ann": 0.1,
-        "max_position_weight": 0.0899,
-        "stop_loss_pct": -0.3212,
-        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
-      },
-      "short_interest": {
-        "short_ratio": 3.33,
-        "short_pct_float": 0.1273,
+        "short_ratio": 11.04,
+        "short_pct_float": 0.1402,
         "signal": "moderate_short",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.8899,
-      "fifty2w_pct_from_high": -0.1101
+      "fifty2w_score": 0.9039,
+      "fifty2w_pct_from_high": -0.0961
+    },
+    {
+      "date": "2026-05-31",
+      "ticker": "F",
+      "current_price": 17.44,
+      "predicted_price": 29.54,
+      "predicted_change_pct": 69.38,
+      "ci_pct": 3.35,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 30.0,
+      "sanity_flags": [
+        "CLIPPED"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.7411,
+        "vol_60d_ann": 0.5195,
+        "beta": 1.58,
+        "max_drawdown_1y": -0.2231
+      },
+      "evidence": {
+        "momentum_z": -0.69,
+        "value_z": 0.82,
+        "quality_z": -0.86,
+        "low_risk_z": null,
+        "composite": 46
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1349,
+        "stop_loss_pct": -0.2139,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 0.0,
+        "short_pct_float": 0.0,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.9809,
+      "fifty2w_pct_from_high": -0.0191
+    },
+    {
+      "date": "2026-05-31",
+      "ticker": "DDOG",
+      "current_price": 247.35,
+      "predicted_price": 401.75,
+      "predicted_change_pct": 62.42,
+      "ci_pct": 4.77,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 30.0,
+      "sanity_flags": [
+        "CLIPPED"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 1.1536,
+        "vol_60d_ann": 0.8056,
+        "beta": 1.25,
+        "max_drawdown_1y": -0.4862
+      },
+      "evidence": {
+        "momentum_z": -0.72,
+        "value_z": -0.87,
+        "quality_z": -0.39,
+        "low_risk_z": null,
+        "composite": 39
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.0867,
+        "stop_loss_pct": -0.333,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 2.42,
+        "short_pct_float": 0.0544,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.9902,
+      "fifty2w_pct_from_high": -0.0098
     }
   ]
 }

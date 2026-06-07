@@ -1,38 +1,26 @@
 {
-  "NTAP": [
+  "ROST": [
     {
-      "date": "2026-05-31",
-      "predicted_price": 373.64
+      "date": "2026-06-07",
+      "predicted_price": 443.39
     }
   ],
-  "F": [
+  "CZR": [
     {
-      "date": "2026-05-31",
-      "predicted_price": 29.54
+      "date": "2026-06-07",
+      "predicted_price": 29.77
     }
   ],
-  "DDOG": [
+  "4208.T": [
     {
-      "date": "2026-05-31",
-      "predicted_price": 401.75
+      "date": "2026-06-07",
+      "predicted_price": 5511.39
     }
   ],
-  "6976.T": [
+  "4631.T": [
     {
-      "date": "2026-05-31",
-      "predicted_price": 30070.59
-    }
-  ],
-  "5301.T": [
-    {
-      "date": "2026-05-31",
-      "predicted_price": 3364.99
-    }
-  ],
-  "6981.T": [
-    {
-      "date": "2026-05-31",
-      "predicted_price": 11980.2
+      "date": "2026-06-07",
+      "predicted_price": 5536.87
     }
   ]
 }

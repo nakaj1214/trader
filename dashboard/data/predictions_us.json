@@ -1,12 +1,12 @@
 {
   "predictions": [
     {
-      "date": "2026-06-07",
-      "ticker": "ROST",
-      "current_price": 230.37,
-      "predicted_price": 443.39,
-      "predicted_change_pct": 92.47,
-      "ci_pct": 2.43,
+      "date": "2026-06-14",
+      "ticker": "VFC",
+      "current_price": 17.64,
+      "predicted_price": 40.5,
+      "predicted_change_pct": 129.62,
+      "ci_pct": 5.78,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
@@ -17,76 +17,210 @@
       "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.4475,
-        "vol_60d_ann": 0.3054,
-        "beta": 0.69,
-        "max_drawdown_1y": -0.0779
-      },
-      "evidence": {
-        "momentum_z": 0.96,
-        "value_z": -1.35,
-        "quality_z": 1.56,
-        "low_risk_z": null,
-        "composite": 57
+        "vol_20d_ann": 0.4446,
+        "vol_60d_ann": 0.4637,
+        "beta": 1.73,
+        "max_drawdown_1y": -0.2557
       },
       "sizing": {
         "vol_target_ann": 0.1,
         "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1292,
+        "stop_loss_pct": -0.1283,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": 3.27,
-        "short_pct_float": 0.0271,
+        "short_ratio": 3.26,
+        "short_pct_float": 0.0933,
         "signal": "neutral",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9703,
-      "fifty2w_pct_from_high": -0.0297
+      "fifty2w_score": 0.7921,
+      "fifty2w_pct_from_high": -0.2079
     },
     {
-      "date": "2026-06-07",
-      "ticker": "CZR",
-      "current_price": 29.2,
-      "predicted_price": 29.77,
-      "predicted_change_pct": 1.94,
-      "ci_pct": 2.85,
+      "date": "2026-06-14",
+      "ticker": "IFF",
+      "current_price": 78.27,
+      "predicted_price": 166.24,
+      "predicted_change_pct": 112.39,
+      "ci_pct": 5.02,
       "actual_price": null,
       "status": "predicted",
       "hit": null,
-      "predicted_change_pct_clipped": 1.94,
+      "predicted_change_pct_clipped": 30.0,
       "sanity_flags": [
-        "OK"
+        "CLIPPED"
       ],
-      "prob_up": 0.9089,
+      "prob_up": 1.0,
       "prob_up_calibrated": null,
       "risk": {
-        "vol_20d_ann": 0.3973,
-        "vol_60d_ann": 0.3999,
-        "beta": 0.52,
-        "max_drawdown_1y": -0.4243
-      },
-      "evidence": {
-        "momentum_z": -1.4,
-        "value_z": -0.43,
-        "quality_z": -1.21,
-        "low_risk_z": null,
-        "composite": 33
+        "vol_20d_ann": 0.364,
+        "vol_60d_ann": 0.5043,
+        "beta": 1.01,
+        "max_drawdown_1y": -0.2261
       },
       "sizing": {
         "vol_target_ann": 0.1,
         "max_position_weight": 0.2,
-        "stop_loss_pct": -0.1147,
+        "stop_loss_pct": -0.1051,
         "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
       },
       "short_interest": {
-        "short_ratio": 5.84,
-        "short_pct_float": 0.1461,
+        "short_ratio": 5.85,
+        "short_pct_float": 0.0687,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.9268,
+      "fifty2w_pct_from_high": -0.0732
+    },
+    {
+      "date": "2026-06-14",
+      "ticker": "NTAP",
+      "current_price": 161.61,
+      "predicted_price": 324.38,
+      "predicted_change_pct": 100.72,
+      "ci_pct": 4.52,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 30.0,
+      "sanity_flags": [
+        "CLIPPED"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.9736,
+        "vol_60d_ann": 0.6158,
+        "beta": 1.07,
+        "max_drawdown_1y": -0.2483
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1027,
+        "stop_loss_pct": -0.2811,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 6.06,
+        "short_pct_float": 0.1268,
         "signal": "moderate_short",
         "data_note": "Monthly data, reference only (yfinance)"
       },
-      "fifty2w_score": 0.9246,
-      "fifty2w_pct_from_high": -0.0754
+      "fifty2w_score": 0.8381,
+      "fifty2w_pct_from_high": -0.1619
+    },
+    {
+      "date": "2026-06-14",
+      "ticker": "HPE",
+      "current_price": 48.17,
+      "predicted_price": 82.3,
+      "predicted_change_pct": 70.84,
+      "ci_pct": 6.44,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 30.0,
+      "sanity_flags": [
+        "CLIPPED"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 1.068,
+        "vol_60d_ann": 0.7363,
+        "beta": 1.97,
+        "max_drawdown_1y": -0.2373
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.0936,
+        "stop_loss_pct": -0.3083,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 3.13,
+        "short_pct_float": 0.0534,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.7497,
+      "fifty2w_pct_from_high": -0.2503
+    },
+    {
+      "date": "2026-06-14",
+      "ticker": "RL",
+      "current_price": 403.98,
+      "predicted_price": 506.89,
+      "predicted_change_pct": 25.47,
+      "ci_pct": 4.53,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 25.47,
+      "sanity_flags": [
+        "WARN_HIGH"
+      ],
+      "prob_up": 1.0,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 0.599,
+        "vol_60d_ann": 0.4855,
+        "beta": 1.58,
+        "max_drawdown_1y": -0.1767
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.1669,
+        "stop_loss_pct": -0.1729,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 4.31,
+        "short_pct_float": 0.1051,
+        "signal": "moderate_short",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.9963,
+      "fifty2w_pct_from_high": -0.0037
+    },
+    {
+      "date": "2026-06-14",
+      "ticker": "MRVL",
+      "current_price": 279.7,
+      "predicted_price": 284.75,
+      "predicted_change_pct": 1.8,
+      "ci_pct": 7.45,
+      "actual_price": null,
+      "status": "predicted",
+      "hit": null,
+      "predicted_change_pct_clipped": 1.8,
+      "sanity_flags": [
+        "OK"
+      ],
+      "prob_up": 0.6821,
+      "prob_up_calibrated": null,
+      "risk": {
+        "vol_20d_ann": 1.5232,
+        "vol_60d_ann": 1.0249,
+        "beta": 2.88,
+        "max_drawdown_1y": -0.2636
+      },
+      "sizing": {
+        "vol_target_ann": 0.1,
+        "max_position_weight": 0.0657,
+        "stop_loss_pct": -0.4397,
+        "stop_loss_rationale": "Monthly risk estimate based on 20d volatility"
+      },
+      "short_interest": {
+        "short_ratio": 1.3,
+        "short_pct_float": 0.0471,
+        "signal": "neutral",
+        "data_note": "Monthly data, reference only (yfinance)"
+      },
+      "fifty2w_score": 0.8627,
+      "fifty2w_pct_from_high": -0.1373
     }
   ]
 }

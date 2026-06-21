@@ -1,92 +1,62 @@
 {
-  "VFC": [
+  "MRVL": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 40.5
-    }
-  ],
-  "IFF": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 166.24
-    }
-  ],
-  "NTAP": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 324.38
+      "date": "2026-06-21",
+      "predicted_price": 733.81
     }
   ],
   "HPE": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 82.3
+      "date": "2026-06-21",
+      "predicted_price": 109.13
     }
   ],
-  "RL": [
+  "DE": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 506.89
+      "date": "2026-06-21",
+      "predicted_price": 1102.04
     }
   ],
-  "MRVL": [
+  "ARM": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 284.75
+      "date": "2026-06-21",
+      "predicted_price": 604.49
     }
   ],
-  "6981.T": [
+  "ADI": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 20979.02
+      "date": "2026-06-21",
+      "predicted_price": 499.93
     }
   ],
-  "6976.T": [
+  "MU": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 29279.61
-    }
-  ],
-  "8802.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 7111.49
-    }
-  ],
-  "3289.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 1638.09
-    }
-  ],
-  "8630.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 6859.72
-    }
-  ],
-  "8697.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 2318.44
-    }
-  ],
-  "6178.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 2423.72
-    }
-  ],
-  "8253.T": [
-    {
-      "date": "2026-06-14",
-      "predicted_price": 4318.11
+      "date": "2026-06-21",
+      "predicted_price": 1283.54
     }
   ],
   "8725.T": [
     {
-      "date": "2026-06-14",
-      "predicted_price": 4690.52
+      "date": "2026-06-21",
+      "predicted_price": 5556.31
+    }
+  ],
+  "7735.T": [
+    {
+      "date": "2026-06-21",
+      "predicted_price": 18352.7
+    }
+  ],
+  "8253.T": [
+    {
+      "date": "2026-06-21",
+      "predicted_price": 4706.13
+    }
+  ],
+  "6981.T": [
+    {
+      "date": "2026-06-21",
+      "predicted_price": 12280.99
     }
   ]
 }

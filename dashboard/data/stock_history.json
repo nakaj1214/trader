@@ -1,62 +1,38 @@
 {
-  "MRVL": [
+  "NWL": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 733.81
+      "date": "2026-06-28",
+      "predicted_price": 14.89
     }
   ],
-  "HPE": [
+  "TFC": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 109.13
+      "date": "2026-06-28",
+      "predicted_price": 80.5
     }
   ],
-  "DE": [
+  "CZR": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 1102.04
+      "date": "2026-06-28",
+      "predicted_price": 46.92
     }
   ],
-  "ARM": [
+  "ATO": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 604.49
+      "date": "2026-06-28",
+      "predicted_price": 249.62
     }
   ],
-  "ADI": [
+  "8233.T": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 499.93
+      "date": "2026-06-28",
+      "predicted_price": 4020.54
     }
   ],
-  "MU": [
+  "6752.T": [
     {
-      "date": "2026-06-21",
-      "predicted_price": 1283.54
-    }
-  ],
-  "8725.T": [
-    {
-      "date": "2026-06-21",
-      "predicted_price": 5556.31
-    }
-  ],
-  "7735.T": [
-    {
-      "date": "2026-06-21",
-      "predicted_price": 18352.7
-    }
-  ],
-  "8253.T": [
-    {
-      "date": "2026-06-21",
-      "predicted_price": 4706.13
-    }
-  ],
-  "6981.T": [
-    {
-      "date": "2026-06-21",
-      "predicted_price": 12280.99
+      "date": "2026-06-28",
+      "predicted_price": 5835.81
     }
   ]
 }

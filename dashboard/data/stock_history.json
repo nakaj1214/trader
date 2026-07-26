@@ -1,38 +1,62 @@
 {
-  "NWL": [
+  "IRM": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 14.89
+      "date": "2026-07-26",
+      "predicted_price": 223.0
     }
   ],
-  "TFC": [
+  "BKR": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 80.5
+      "date": "2026-07-26",
+      "predicted_price": 96.38
     }
   ],
-  "CZR": [
+  "ETR": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 46.92
+      "date": "2026-07-26",
+      "predicted_price": 156.64
     }
   ],
-  "ATO": [
+  "CNP": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 249.62
+      "date": "2026-07-26",
+      "predicted_price": 54.34
     }
   ],
-  "8233.T": [
+  "VRSN": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 4020.54
+      "date": "2026-07-26",
+      "predicted_price": 307.38
     }
   ],
-  "6752.T": [
+  "IVZ": [
     {
-      "date": "2026-06-28",
-      "predicted_price": 5835.81
+      "date": "2026-07-26",
+      "predicted_price": 31.88
+    }
+  ],
+  "6770.T": [
+    {
+      "date": "2026-07-26",
+      "predicted_price": 3547.17
+    }
+  ],
+  "8306.T": [
+    {
+      "date": "2026-07-26",
+      "predicted_price": 6115.1
+    }
+  ],
+  "6724.T": [
+    {
+      "date": "2026-07-26",
+      "predicted_price": 4406.21
+    }
+  ],
+  "8697.T": [
+    {
+      "date": "2026-07-26",
+      "predicted_price": 2586.63
     }
   ]
 }

@@ -1,62 +1,26 @@
 {
-  "IRM": [
+  "FANG": [
     {
-      "date": "2026-07-26",
-      "predicted_price": 223.0
+      "date": "2026-08-02",
+      "predicted_price": 366.39
     }
   ],
-  "BKR": [
+  "OXY": [
     {
-      "date": "2026-07-26",
-      "predicted_price": 96.38
+      "date": "2026-08-02",
+      "predicted_price": 89.23
     }
   ],
-  "ETR": [
+  "CF": [
     {
-      "date": "2026-07-26",
-      "predicted_price": 156.64
+      "date": "2026-08-02",
+      "predicted_price": 185.39
     }
   ],
-  "CNP": [
+  "TDY": [
     {
-      "date": "2026-07-26",
-      "predicted_price": 54.34
-    }
-  ],
-  "VRSN": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 307.38
-    }
-  ],
-  "IVZ": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 31.88
-    }
-  ],
-  "6770.T": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 3547.17
-    }
-  ],
-  "8306.T": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 6115.1
-    }
-  ],
-  "6724.T": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 4406.21
-    }
-  ],
-  "8697.T": [
-    {
-      "date": "2026-07-26",
-      "predicted_price": 2586.63
+      "date": "2026-08-02",
+      "predicted_price": 882.17
     }
   ]
 }

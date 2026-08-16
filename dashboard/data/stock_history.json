@@ -1,26 +1,44 @@
 {
-  "FANG": [
+  "GPN": [
     {
-      "date": "2026-08-02",
-      "predicted_price": 366.39
+      "date": "2026-08-16",
+      "predicted_price": 168.78
     }
   ],
-  "OXY": [
+  "NWSA": [
     {
-      "date": "2026-08-02",
-      "predicted_price": 89.23
+      "date": "2026-08-16",
+      "predicted_price": 44.45
     }
   ],
-  "CF": [
+  "ANET": [
     {
-      "date": "2026-08-02",
-      "predicted_price": 185.39
+      "date": "2026-08-16",
+      "predicted_price": 285.2
     }
   ],
-  "TDY": [
+  "WMB": [
     {
-      "date": "2026-08-02",
-      "predicted_price": 882.17
+      "date": "2026-08-16",
+      "predicted_price": 101.4
+    }
+  ],
+  "GNRC": [
+    {
+      "date": "2026-08-16",
+      "predicted_price": 293.15
+    }
+  ],
+  "3103.T": [
+    {
+      "date": "2026-08-16",
+      "predicted_price": 3117.36
+    }
+  ],
+  "5101.T": [
+    {
+      "date": "2026-08-16",
+      "predicted_price": 11245.21
     }
   ]
 }

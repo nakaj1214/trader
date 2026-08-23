@@ -1,44 +1,86 @@
 {
-  "GPN": [
+  "MRNA": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 168.78
+      "date": "2026-08-23",
+      "predicted_price": 455.32
     }
   ],
-  "NWSA": [
+  "PAYC": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 44.45
+      "date": "2026-08-23",
+      "predicted_price": 404.34
     }
   ],
-  "ANET": [
+  "LLY": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 285.2
+      "date": "2026-08-23",
+      "predicted_price": 1725.33
     }
   ],
-  "WMB": [
+  "ABNB": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 101.4
+      "date": "2026-08-23",
+      "predicted_price": 250.87
     }
   ],
-  "GNRC": [
+  "CTVA": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 293.15
+      "date": "2026-08-23",
+      "predicted_price": 104.4
     }
   ],
-  "3103.T": [
+  "BIIB": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 3117.36
+      "date": "2026-08-23",
+      "predicted_price": 231.49
     }
   ],
-  "5101.T": [
+  "7272.T": [
     {
-      "date": "2026-08-16",
-      "predicted_price": 11245.21
+      "date": "2026-08-23",
+      "predicted_price": 3714.19
+    }
+  ],
+  "5713.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 19983.2
+    }
+  ],
+  "5711.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 10180.43
+    }
+  ],
+  "5714.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 18333.64
+    }
+  ],
+  "6952.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 4050.2
+    }
+  ],
+  "6305.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 7371.1
+    }
+  ],
+  "7832.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 6820.37
+    }
+  ],
+  "7762.T": [
+    {
+      "date": "2026-08-23",
+      "predicted_price": 3054.44
     }
   ]
 }

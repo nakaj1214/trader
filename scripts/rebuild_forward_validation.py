@@ -24,6 +24,9 @@ from src.evaluation.forward_validation import (  # noqa: E402
     summarize_evaluations,
 )
 
+BENCHMARK_SYMBOL = "1306.T"
+BENCHMARK_NAME = "NF TOPIX ETF (TOPIX total-return proxy)"
+
 
 def _compact_row(row: dict, horizon: int | None = None) -> dict:
     result = {
@@ -45,11 +48,16 @@ def _compact_row(row: dict, horizon: int | None = None) -> dict:
     return result
 
 
-def _fetch_topix(predictions: list[dict]) -> object:
+def _fetch_benchmark(predictions: list[dict]) -> object:
     dates = [str(row["date"]) for row in predictions]
     start = min(dates)
-    # A broad end date is intentional: incomplete horizons remain None.
-    return yf.Ticker("^TOPX").history(start=start, period=None, auto_adjust=False, actions=False)
+    # 1306 tracks TOPIX (total return). It is used because Yahoo does not
+    # reliably expose the raw TOPIX index through yfinance.
+    return yf.Ticker(BENCHMARK_SYMBOL).history(
+        start=start,
+        auto_adjust=False,
+        actions=False,
+    )
 
 
 def main() -> int:
@@ -70,16 +78,16 @@ def main() -> int:
     histories = fetch_histories_yfinance(predictions, max_horizon=60)
     evaluated = evaluate_predictions(predictions, histories, horizons=(5, 20, 60), forecast_horizon=5)
 
-    topix_history = _fetch_topix(predictions)
+    benchmark_history = _fetch_benchmark(predictions)
     benchmark = benchmark_returns_for_dates(
-        {str(row["date"]) for row in predictions}, topix_history, horizons=(5, 20, 60)
+        {str(row["date"]) for row in predictions}, benchmark_history, horizons=(5, 20, 60)
     )
     evaluated = add_benchmark_excess_returns(evaluated, benchmark, horizons=(5, 20, 60))
 
     summary = summarize_evaluations(evaluated, horizons=(5, 20, 60))
     summary["benchmark"] = {
-        "symbol": "^TOPX",
-        "name": "TOPIX",
+        "symbol": BENCHMARK_SYMBOL,
+        "name": BENCHMARK_NAME,
         "excess_returns": summarize_excess_returns(evaluated, horizons=(5, 20, 60)),
     }
     summary["source"] = {

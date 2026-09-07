@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.data.market_calendar import expected_tse_session_date
 from src.data.snapshot_crypto import encrypt_json, key_id
 from src.screening.inflection_live import scan_japan_inflection
 
@@ -23,12 +24,13 @@ MIN_LATEST_DATE_COVERAGE = 0.80
 
 
 def validate_report(report: dict[str, Any]) -> None:
-    """Reject incomplete or inconsistent scan results before they are persisted."""
+    """Reject incomplete, stale or inconsistent scan results before they are persisted."""
     universe = int(report.get("universe_count") or 0)
     price_data = int(report.get("price_data_count") or 0)
     technical_usable = int(report.get("technical_usable_count") or 0)
     latest_date_count = int(report.get("latest_price_date_count") or 0)
     latest_price_date = report.get("latest_price_date")
+    generated_at = report.get("generated_at")
     deep_count = int(report.get("deep_candidate_count") or 0)
     candidates = report.get("candidates")
 
@@ -60,6 +62,17 @@ def validate_report(report: dict[str, Any]) -> None:
         calendar_date.fromisoformat(str(latest_price_date))
     except ValueError as exc:
         raise RuntimeError(f"DATA_HEALTH: invalid latest market date: {latest_price_date}") from exc
+    if not generated_at:
+        raise RuntimeError("DATA_HEALTH: generated_at metadata missing")
+    try:
+        expected_market_date = expected_tse_session_date(str(generated_at))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"DATA_HEALTH: invalid generated_at metadata: {generated_at}") from exc
+    if str(latest_price_date) != expected_market_date:
+        raise RuntimeError(
+            "DATA_HEALTH: market data is stale for the TSE calendar: "
+            f"latest={latest_price_date}, expected={expected_market_date}"
+        )
 
     if deep_count <= 0:
         raise RuntimeError("DATA_HEALTH: no deep candidates were produced")

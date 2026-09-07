@@ -39,7 +39,16 @@ def test_evaluate_prediction_exact_horizon_math() -> None:
     assert row["h5_direction_hit"] is True
     assert row["h5_forecast_abs_error_pct"] == 0.0
     assert row["h5_max_return_pct"] == 10.0
-    assert row["h5_max_drawdown_pct"] == 2.0
+    assert row["h5_min_return_pct"] == 2.0
+    assert row["h5_max_drawdown_pct"] == 0.0
+
+
+def test_true_drawdown_uses_intermediate_peak() -> None:
+    history = _history([100, 120, 150, 105, 130, 140])
+    prediction = {"date": "2026-01-01", "ticker": "7203.T", "current_price": 100.0, "predicted_price": 110.0}
+    row = evaluate_prediction(prediction, history, horizons=(5,))
+    assert row["h5_min_return_pct"] == 5.0
+    assert row["h5_max_drawdown_pct"] == -30.0
 
 
 def test_reference_price_mismatch_is_detected() -> None:

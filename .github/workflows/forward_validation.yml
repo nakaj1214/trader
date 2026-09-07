@@ -24,6 +24,9 @@ on:
       - "tests/test_inflection_backtest.py"
       - "tests/test_inflection_forward.py"
       - ".github/workflows/forward_validation.yml"
+  schedule:
+    # Weekly accumulation check: Sunday 09:30 JST (00:30 UTC).
+    - cron: '30 0 * * 0'
   workflow_dispatch:
 
 permissions:

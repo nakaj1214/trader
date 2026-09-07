@@ -4,10 +4,11 @@ The scanner is deliberately two-stage:
 1) scan all Prime/Standard/Growth stocks with price/volume data;
 2) enrich only the strongest early-momentum names with J-Quants fundamentals.
 
-Outputs are research candidates only.  They are not BUY recommendations.
+Outputs are research candidates only. They are not BUY recommendations.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,10 @@ JP_MARKET_CODES = {"0111", "0112", "0113"}  # Prime / Standard / Growth
 LIVE_MEASURABLE_MAX_SCORE = 58.0
 EARLY_CANDIDATE_SCORE = 70.0
 WATCH_SCORE = 52.0
+STRATEGY_VERSION = "jp-inflection-shadow-v1"
+REPORT_SCHEMA_VERSION = 2
+DEFAULT_JQUANTS_PLAN = "free"
+DEFAULT_FREE_DELAY_WEEKS = 12
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,16 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
     }
 
 
+def _latest_close_date(df: pd.DataFrame) -> str | None:
+    close = pd.to_numeric(df.get("Close"), errors="coerce").dropna()
+    if close.empty:
+        return None
+    timestamp = pd.Timestamp(close.index[-1])
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_localize(None)
+    return str(timestamp.date())
+
+
 def _pre_score(t: dict[str, Any]) -> float:
     r5 = float(t.get("return_5d_pct") or 0.0)
     r20 = float(t.get("return_20d_pct") or 0.0)
@@ -110,14 +125,53 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _row_sort_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(row.get("DiscDate") or ""),
+        str(row.get("DiscTime") or ""),
+        str(row.get("DiscNo") or ""),
+    )
+
+
+def _has_actual_financials(row: dict[str, Any]) -> bool:
+    return _to_float(row.get("Sales")) is not None or _to_float(row.get("OP")) is not None
+
+
+def _previous_comparable_actual(
+    actual_rows: list[dict[str, Any]],
+    latest: dict[str, Any],
+) -> dict[str, Any] | None:
+    period_type = str(latest.get("CurPerType") or "")
+    latest_fiscal_end = str(latest.get("CurFYEn") or "")
+    candidates = [
+        row
+        for row in actual_rows
+        if row is not latest
+        and str(row.get("CurPerType") or "") == period_type
+        and str(row.get("CurFYEn") or "")
+        and str(row.get("CurFYEn") or "") < latest_fiscal_end
+    ]
+    if candidates:
+        return candidates[-1]
+
+    # Some records can lack CurFYEn. Fall back only to an older actual row with
+    # the same period type instead of comparing against a forecast-revision row.
+    fallback = [
+        row
+        for row in actual_rows
+        if row is not latest and str(row.get("CurPerType") or "") == period_type
+    ]
+    return fallback[-1] if fallback else None
+
+
 def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    rows = sorted(rows, key=lambda r: (str(r.get("DiscDate") or ""), str(r.get("DiscTime") or "")))
-    if not rows:
+    rows = sorted(rows, key=_row_sort_key)
+    actual_rows = [row for row in rows if _has_actual_financials(row)]
+    if not actual_rows:
         return {}
-    latest = rows[-1]
-    period_type = latest.get("CurPerType")
-    same_period = [r for r in rows if r.get("CurPerType") == period_type]
-    previous = same_period[-2] if len(same_period) >= 2 else None
+
+    latest = actual_rows[-1]
+    previous = _previous_comparable_actual(actual_rows, latest)
 
     sales = _to_float(latest.get("Sales"))
     prev_sales = _to_float(previous.get("Sales")) if previous else None
@@ -127,22 +181,34 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
     revenue_growth = None
     if sales is not None and prev_sales not in (None, 0):
         revenue_growth = (sales / prev_sales - 1.0) * 100.0
+
     op_growth = None
     if op is not None and prev_op not in (None, 0) and prev_op > 0:
         op_growth = (op / prev_op - 1.0) * 100.0
 
     margin_change = None
-    if sales and prev_sales and op is not None and prev_op is not None:
+    if sales not in (None, 0) and prev_sales not in (None, 0) and op is not None and prev_op is not None:
         margin_change = (op / sales - prev_op / prev_sales) * 100.0
 
+    fiscal_end = str(latest.get("CurFYEn") or "")
+    forecast_rows = [
+        row
+        for row in rows
+        if str(row.get("CurFYEn") or "") == fiscal_end and _to_float(row.get("FOP")) is not None
+    ]
     upward_revision = None
-    fiscal_end = latest.get("CurFYEn")
-    forecast_rows = [r for r in rows if r.get("CurFYEn") == fiscal_end and _to_float(r.get("FOP")) is not None]
     if len(forecast_rows) >= 2:
         old = _to_float(forecast_rows[-2].get("FOP"))
         new = _to_float(forecast_rows[-1].get("FOP"))
         if old not in (None, 0) and new is not None:
             upward_revision = (new / old - 1.0) * 100.0
+
+    cashflow_rows = [
+        row
+        for row in actual_rows
+        if str(row.get("CurFYEn") or "") == fiscal_end and _to_float(row.get("CFO")) is not None
+    ]
+    latest_cfo = _to_float(cashflow_rows[-1].get("CFO")) if cashflow_rows else None
 
     return {
         "revenue_growth_yoy_pct": revenue_growth,
@@ -150,8 +216,9 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "operating_margin_change_pctpt": margin_change,
         "turned_profitable": bool(op is not None and prev_op is not None and op > 0 >= prev_op),
         "upward_revision_pct": upward_revision,
-        "negative_operating_cashflow": bool((_to_float(latest.get("CFO")) or 0.0) < 0),
-        "latest_disclosure_date": latest.get("DiscDate"),
+        "negative_operating_cashflow": bool(latest_cfo is not None and latest_cfo < 0),
+        "latest_actual_disclosure_date": latest.get("DiscDate"),
+        "latest_disclosure_date": rows[-1].get("DiscDate"),
     }
 
 
@@ -179,6 +246,21 @@ def _classify(score: float, tech: dict[str, Any]) -> str:
     return "NONE"
 
 
+def _data_policy() -> dict[str, Any]:
+    plan = os.getenv("JQUANTS_PLAN", DEFAULT_JQUANTS_PLAN).strip().lower() or DEFAULT_JQUANTS_PLAN
+    default_delay = DEFAULT_FREE_DELAY_WEEKS if plan == "free" else 0
+    try:
+        delay_weeks = int(os.getenv("JQUANTS_DATA_DELAY_WEEKS", str(default_delay)))
+    except ValueError:
+        delay_weeks = default_delay
+    return {
+        "jquants_plan": plan,
+        "jquants_data_delay_weeks": max(0, delay_weeks),
+        "price_source": "yfinance",
+        "fundamental_source": "J-Quants V2 financial summary",
+    }
+
+
 def scan_japan_inflection(
     *,
     client: JQuantsV2Client | None = None,
@@ -190,7 +272,7 @@ def scan_japan_inflection(
     if not client.is_available():
         raise RuntimeError("JQUANTS_API_KEY is required for the production JP universe")
 
-    master = [r for r in client.listed_issues() if str(r.get("Mkt") or "") in JP_MARKET_CODES]
+    master = [row for row in client.listed_issues() if str(row.get("Mkt") or "") in JP_MARKET_CODES]
     ticker_meta: dict[str, dict[str, Any]] = {}
     for row in master:
         code = str(row.get("Code") or "")
@@ -201,18 +283,37 @@ def scan_japan_inflection(
     tickers = sorted(ticker_meta)
     prices = _fetch_price_data(tickers, lookback_days)
     preselected: list[tuple[float, str, dict[str, Any]]] = []
+    technical_usable_count = 0
+    liquid_candidate_count = 0
+    latest_dates: list[str] = []
+
     for ticker, df in prices.items():
+        latest_date = _latest_close_date(df)
+        if latest_date:
+            latest_dates.append(latest_date)
         tech = _technical_features(df)
         if not tech:
             continue
+        technical_usable_count += 1
         turnover = tech.get("avg_turnover_20d_jpy")
         if turnover is None or float(turnover) < min_turnover_jpy:
             continue
+        liquid_candidate_count += 1
         preselected.append((_pre_score(tech), ticker, tech))
-    preselected.sort(reverse=True, key=lambda x: x[0])
+
+    preselected.sort(reverse=True, key=lambda item: item[0])
     preselected = preselected[:deep_candidates]
 
     candidates: list[LiveCandidate] = []
+    policy = _data_policy()
+    delay_weeks = int(policy["jquants_data_delay_weeks"])
+    fundamental_limitation = (
+        f"J-Quants {policy['jquants_plan']} の財務データは約{delay_weeks}週間遅延。"
+        "リアルタイム材料ではなくshadow検証用の遅延ファンダメンタルとして扱う"
+        if delay_weeks > 0
+        else "財務データの公開時点と取得可能時点を一次情報で確認する必要がある"
+    )
+
     for _, ticker, tech in preselected:
         code = str(ticker_meta[ticker].get("Code") or "")
         fins = client.financial_summary(code)
@@ -246,7 +347,6 @@ def scan_japan_inflection(
             reasons.append("出来高増加")
         if tech.get("breakout_52w"):
             reasons.append("52週高値圏")
-        limitations = ["J-Quants Freeの財務データは遅延するため、最新材料は別途一次情報確認が必要"]
         candidates.append(
             LiveCandidate(
                 ticker=ticker,
@@ -263,27 +363,49 @@ def scan_japan_inflection(
                 breakout_52w=bool(tech.get("breakout_52w")),
                 avg_turnover_20d_jpy=tech.get("avg_turnover_20d_jpy"),
                 reasons=reasons,
-                limitations=limitations,
+                limitations=[fundamental_limitation],
             )
         )
 
-    candidates.sort(key=lambda c: c.score, reverse=True)
+    candidates.sort(key=lambda candidate: candidate.score, reverse=True)
     counts: dict[str, int] = {}
     for item in candidates:
         counts[item.classification] = counts.get(item.classification, 0) + 1
 
+    latest_price_date = max(latest_dates) if latest_dates else None
+    latest_price_date_count = (
+        sum(date == latest_price_date for date in latest_dates) if latest_price_date is not None else 0
+    )
+
     return {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
+        "strategy_version": STRATEGY_VERSION,
+        "source_commit_sha": os.getenv("GITHUB_SHA") or "local-or-unknown",
         "generated_at": datetime.now(UTC).isoformat(),
         "mode": "shadow",
         "universe": "TSE Prime + Standard + Growth",
         "universe_count": len(tickers),
         "price_data_count": len(prices),
+        "technical_usable_count": technical_usable_count,
+        "liquid_candidate_count": liquid_candidate_count,
+        "latest_price_date": latest_price_date,
+        "latest_price_date_count": latest_price_date_count,
         "deep_candidate_count": len(preselected),
         "classification_counts": counts,
-        "candidates": [c.as_dict() for c in candidates],
+        "scan_parameters": {
+            "lookback_days": lookback_days,
+            "deep_candidates": deep_candidates,
+            "min_turnover_jpy": min_turnover_jpy,
+            "early_candidate_score": EARLY_CANDIDATE_SCORE,
+            "watch_score": WATCH_SCORE,
+            "measurable_max_score": LIVE_MEASURABLE_MAX_SCORE,
+        },
+        "data_policy": policy,
+        "candidates": [candidate.as_dict() for candidate in candidates],
         "notes": [
             "Known historical winners are not whitelisted or special-cased.",
             "EARLY_CANDIDATE is a research flag, not a buy signal.",
             "Catalyst/news evidence is intentionally excluded until a point-in-time-safe source is connected.",
+            "Free-tier delayed fundamentals are suitable for pipeline accumulation, not real-time edge validation.",
         ],
     }

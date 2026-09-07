@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from statistics import median
 from typing import Any
 
 import pandas as pd
@@ -20,6 +19,9 @@ from src.screening.scorer import _fetch_price_data
 from src.strategy.inflection import InflectionFeatures, score_inflection
 
 JP_MARKET_CODES = {"0111", "0112", "0113"}  # Prime / Standard / Growth
+LIVE_MEASURABLE_MAX_SCORE = 58.0
+EARLY_CANDIDATE_SCORE = 70.0
+WATCH_SCORE = 52.0
 
 
 @dataclass(frozen=True)
@@ -153,11 +155,16 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _normalize_available_score(raw: float, fundamental: float, momentum: float, risk: float) -> float:
-    # Catalyst fields are intentionally unavailable in the free deterministic pipeline.
-    # Normalize the measurable 65-point portion to 100, retaining risk penalties.
+def _normalize_available_score(fundamental: float, momentum: float, risk: float) -> float:
+    """Normalize only the inputs that the live pipeline can currently populate.
+
+    Live fundamentals can contribute at most 33 points because revenue acceleration
+    is not available yet. Momentum contributes 25, so the measurable positive
+    maximum is 58. Catalyst fields are intentionally excluded until a point-in-time
+    safe source is connected. Risk penalties still reduce the normalized score.
+    """
     measurable = fundamental + momentum + risk
-    return max(0.0, min(100.0, measurable / 65.0 * 100.0))
+    return max(0.0, min(100.0, measurable / LIVE_MEASURABLE_MAX_SCORE * 100.0))
 
 
 def _classify(score: float, tech: dict[str, Any]) -> str:
@@ -165,9 +172,9 @@ def _classify(score: float, tech: dict[str, Any]) -> str:
     r60 = float(tech.get("return_60d_pct") or 0.0)
     if r20 >= 50.0 or r60 >= 100.0:
         return "OVEREXTENDED"
-    if score >= 70.0 and r20 > 0 and float(tech.get("volume_ratio_20d") or 0.0) >= 1.25:
+    if score >= EARLY_CANDIDATE_SCORE and r20 > 0 and float(tech.get("volume_ratio_20d") or 0.0) >= 1.25:
         return "EARLY_CANDIDATE"
-    if score >= 52.0:
+    if score >= WATCH_SCORE:
         return "WATCH"
     return "NONE"
 
@@ -224,7 +231,7 @@ def scan_japan_inflection(
             negative_operating_cashflow=bool(fundamental.get("negative_operating_cashflow")),
         )
         raw = score_inflection(features)
-        score = _normalize_available_score(raw.total, raw.fundamental, raw.momentum, raw.risk_penalty)
+        score = _normalize_available_score(raw.fundamental, raw.momentum, raw.risk_penalty)
         classification = _classify(score, tech)
         reasons = []
         if (fundamental.get("revenue_growth_yoy_pct") or 0) >= 20:

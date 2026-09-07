@@ -93,16 +93,43 @@ def test_retryable_status_uses_retry_after_then_succeeds() -> None:
 
 def test_retryable_status_raises_after_retry_budget() -> None:
     failure = _response(503, {})
-    client = JQuantsV2Client(
-        api_key="secret",
-        min_interval=0,
-        max_retries=1,
-        retry_backoff=0,
-    )
+    client = JQuantsV2Client(api_key="secret", min_interval=0, max_retries=1, retry_backoff=0)
 
     with (
         patch("src.data.jquants_v2_client.requests.get", side_effect=[failure, failure]),
         patch("src.data.jquants_v2_client.time.sleep"),
         pytest.raises(requests.HTTPError),
+    ):
+        client._get("/equities/master")
+
+
+def test_transport_error_retries_then_succeeds() -> None:
+    success = _response(200, {"data": [{"Code": "11110"}]})
+    client = JQuantsV2Client(api_key="secret", min_interval=0, max_retries=2, retry_backoff=0)
+
+    with (
+        patch(
+            "src.data.jquants_v2_client.requests.get",
+            side_effect=[requests.Timeout("temporary"), success],
+        ) as get,
+        patch("src.data.jquants_v2_client.time.sleep") as sleep,
+    ):
+        rows = client._get("/equities/master")
+
+    assert rows == [{"Code": "11110"}]
+    assert get.call_count == 2
+    sleep.assert_called_once_with(0)
+
+
+def test_transport_error_raises_after_retry_budget() -> None:
+    client = JQuantsV2Client(api_key="secret", min_interval=0, max_retries=1, retry_backoff=0)
+
+    with (
+        patch(
+            "src.data.jquants_v2_client.requests.get",
+            side_effect=[requests.ConnectionError("offline"), requests.ConnectionError("offline")],
+        ),
+        patch("src.data.jquants_v2_client.time.sleep"),
+        pytest.raises(requests.ConnectionError),
     ):
         client._get("/equities/master")

@@ -41,13 +41,16 @@ jobs:
             src/evaluation/forward_validation.py \
             src/evaluation/benchmark.py \
             src/evaluation/inflection_backtest.py \
+            src/evaluation/inflection_forward.py \
             src/data/validation.py \
             src/data/point_in_time.py \
             src/data/providers/edinet_provider.py \
             src/data/jquants_v2_client.py \
+            src/data/yfinance_prices.py \
             src/screening/inflection_live.py \
             src/strategy/inflection.py \
             scripts/rebuild_forward_validation.py \
+            scripts/rebuild_inflection_forward_validation.py \
             scripts/run_inflection_shadow.py \
             tests/test_forward_validation.py \
             tests/test_benchmark.py \
@@ -55,8 +58,10 @@ jobs:
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
             tests/test_jquants_v2_client.py \
+            tests/test_yfinance_prices.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
+            tests/test_inflection_forward.py \
             tests/test_inflection_live.py \
             tests/test_shadow_health.py
 
@@ -89,17 +94,21 @@ jobs:
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
             tests/test_jquants_v2_client.py \
+            tests/test_yfinance_prices.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
+            tests/test_inflection_forward.py \
             tests/test_inflection_live.py \
             tests/test_shadow_health.py \
             --cov=src.evaluation.forward_validation \
             --cov=src.evaluation.benchmark \
             --cov=src.evaluation.inflection_backtest \
+            --cov=src.evaluation.inflection_forward \
             --cov=src.data.validation \
             --cov=src.data.point_in_time \
             --cov=src.data.providers.edinet_provider \
             --cov=src.data.jquants_v2_client \
+            --cov=src.data.yfinance_prices \
             --cov=src.screening.inflection_live \
             --cov=src.strategy.inflection \
             --cov=scripts.run_inflection_shadow \

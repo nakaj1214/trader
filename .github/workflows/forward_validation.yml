@@ -11,6 +11,7 @@ on:
       - "src/data/validation.py"
       - "src/data/point_in_time.py"
       - "src/data/providers/edinet_provider.py"
+      - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
       - "scripts/rebuild_forward_validation.py"
       - "scripts/rebuild_inflection_forward_validation.py"
@@ -20,6 +21,7 @@ on:
       - "tests/test_data_validation.py"
       - "tests/test_point_in_time.py"
       - "tests/test_edinet_provider.py"
+      - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
       - "tests/test_inflection_forward.py"
@@ -60,6 +62,7 @@ jobs:
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
+            tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
@@ -73,6 +76,7 @@ jobs:
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
+            tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
@@ -83,6 +87,7 @@ jobs:
             --cov=src.data.validation \
             --cov=src.data.point_in_time \
             --cov=src.data.providers.edinet_provider \
+            --cov=src.data.snapshot_crypto \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \
             -q --override-ini="addopts="
@@ -90,7 +95,9 @@ jobs:
       - name: Rebuild legacy committed predictions
         run: python scripts/rebuild_forward_validation.py --since 2026-02-18
 
-      - name: Validate accumulated inflection snapshots
+      - name: Validate accumulated encrypted inflection snapshots
+        env:
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY || secrets.JQUANTS_API_KEY }}
         run: python scripts/rebuild_inflection_forward_validation.py
 
       - name: Upload validation reports

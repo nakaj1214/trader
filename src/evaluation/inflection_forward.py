@@ -1,40 +1,57 @@
-"""Load immutable JP inflection snapshots into tradable forward-validation signals."""
+"""Load encrypted JP inflection snapshots and support benchmark-aware forward validation."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from statistics import mean, median
 from typing import Any
+
+import pandas as pd
+
+from src.data.snapshot_crypto import decrypt_json
+from src.evaluation.inflection_backtest import TradeResult, simulate_signal
+
+BENCHMARK_TICKER = "1306.T"  # NEXT FUNDS TOPIX ETF
 
 
 def load_inflection_signals(
     snapshot_dir: Path,
     *,
+    encryption_secret: str,
     classifications: tuple[str, ...] = ("EARLY_CANDIDATE",),
 ) -> list[dict[str, Any]]:
-    """Return one immutable signal row per snapshot date/ticker.
+    """Return one immutable signal row per market-data date/ticker.
 
-    Snapshot filenames are the signal date. Only explicitly requested
-    classifications are evaluated so WATCH/NONE rows cannot silently enter the
-    trading statistics.
+    Only encrypted ``YYYY-MM-DD.enc`` snapshots are accepted. The filename must
+    match the report's latest market-data date so holidays/reruns cannot create
+    duplicate signals from unchanged price data.
     """
     signals: dict[tuple[str, str], dict[str, Any]] = {}
     if not snapshot_dir.exists():
         return []
 
-    for path in sorted(snapshot_dir.glob("????-??-??.json")):
+    for path in sorted(snapshot_dir.glob("????-??-??.enc")):
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            payload = decrypt_json(path.read_text(encoding="utf-8"), encryption_secret)
+        except (OSError, ValueError):
             continue
-        if not isinstance(payload, dict) or payload.get("mode") != "shadow":
+        if payload.get("mode") != "shadow":
             continue
         strategy_version = str(payload.get("strategy_version") or "")
         source_commit = str(payload.get("source_commit_sha") or "")
         schema_version = payload.get("report_schema_version")
-        if not strategy_version or not source_commit or schema_version is None:
+        market_date = str(payload.get("latest_price_date") or "")
+        storage = payload.get("storage")
+        if (
+            not strategy_version
+            or not source_commit
+            or schema_version is None
+            or market_date != path.stem
+            or not isinstance(storage, dict)
+            or storage.get("encrypted") is not True
+            or storage.get("snapshot_date_basis") != "latest_price_date"
+        ):
             continue
 
-        signal_date = path.stem
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
             continue
@@ -45,13 +62,13 @@ def load_inflection_signals(
             ticker = str(candidate.get("ticker") or "")
             if classification not in classifications or not ticker:
                 continue
-            key = (signal_date, ticker)
+            key = (market_date, ticker)
             if key in signals:
                 continue
             signals[key] = {
                 "ticker": ticker,
-                "signal_date": signal_date,
-                "date": signal_date,
+                "signal_date": market_date,
+                "date": market_date,
                 "score": float(candidate.get("score") or 0.0),
                 "classification": classification,
                 "strategy_version": strategy_version,
@@ -61,6 +78,72 @@ def load_inflection_signals(
                 "jquants_data_delay_weeks": (payload.get("data_policy") or {}).get(
                     "jquants_data_delay_weeks"
                 ),
+                "runtime_versions": payload.get("runtime_versions"),
             }
 
     return sorted(signals.values(), key=lambda row: (row["signal_date"], row["ticker"]))
+
+
+def benchmark_returns_by_signal_date(
+    signal_dates: list[str],
+    benchmark_history: pd.DataFrame,
+    *,
+    holding_days: int,
+    round_trip_cost_pct: float,
+) -> dict[str, float | None]:
+    """Simulate an investable TOPIX ETF alternative using identical entry/exit rules."""
+    result: dict[str, float | None] = {}
+    for signal_date in sorted(set(signal_dates)):
+        trade = simulate_signal(
+            {"ticker": BENCHMARK_TICKER, "signal_date": signal_date, "score": 0.0},
+            benchmark_history,
+            holding_days=holding_days,
+            round_trip_cost_pct=round_trip_cost_pct,
+            apply_tax=False,
+        )
+        result[signal_date] = trade.net_return_pct
+    return result
+
+
+def enrich_trades_with_benchmark(
+    trades: list[TradeResult],
+    benchmark_returns: dict[str, float | None],
+) -> list[dict[str, Any]]:
+    """Attach TOPIX ETF return, excess return and beat flag to each trade."""
+    rows: list[dict[str, Any]] = []
+    for trade in trades:
+        row = trade.as_dict()
+        benchmark_return = benchmark_returns.get(trade.signal_date)
+        row["benchmark_ticker"] = BENCHMARK_TICKER
+        row["benchmark_net_return_pct"] = benchmark_return
+        if trade.net_return_pct is not None and benchmark_return is not None:
+            excess = float(trade.net_return_pct) - float(benchmark_return)
+            row["excess_return_pct"] = round(excess, 6)
+            row["beat_benchmark"] = excess > 0
+        else:
+            row["excess_return_pct"] = None
+            row["beat_benchmark"] = None
+        rows.append(row)
+    return rows
+
+
+def summarize_benchmark_excess(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize completed strategy-vs-TOPIX excess returns."""
+    values = [
+        float(row["excess_return_pct"])
+        for row in rows
+        if isinstance(row.get("excess_return_pct"), (int, float))
+    ]
+    if not values:
+        return {
+            "evaluated": 0,
+            "mean_excess_return_pct": None,
+            "median_excess_return_pct": None,
+            "beat_benchmark_rate_pct": None,
+        }
+    return {
+        "evaluated": len(values),
+        "mean_excess_return_pct": round(mean(values), 6),
+        "median_excess_return_pct": round(median(values), 6),
+        "beat_benchmark_rate_pct": round(sum(value > 0 for value in values) / len(values) * 100.0, 3),
+    }

@@ -11,19 +11,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.evaluation.benchmark import (  # noqa: E402
+from src.evaluation.benchmark import (
     add_benchmark_excess_returns,
     benchmark_returns_for_dates,
     summarize_excess_returns,
 )
-from src.evaluation.forward_validation import (  # noqa: E402
+from src.evaluation.forward_validation import (
     evaluate_predictions,
     fetch_histories_yfinance,
     iter_prediction_snapshots,
     reconstruct_predictions,
     summarize_evaluations,
 )
-from src.evaluation.inflection_backtest import (  # noqa: E402
+from src.evaluation.inflection_backtest import (
     simulate_signals,
     summarize_trades,
 )

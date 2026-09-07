@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date as calendar_date
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ def validate_report(report: dict[str, Any]) -> None:
         )
 
     try:
-        datetime.strptime(str(latest_price_date), "%Y-%m-%d")
+        calendar_date.fromisoformat(str(latest_price_date))
     except ValueError as exc:
         raise RuntimeError(f"DATA_HEALTH: invalid latest market date: {latest_price_date}") from exc
 

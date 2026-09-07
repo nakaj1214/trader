@@ -64,7 +64,7 @@ def fetch_price_data(
                     actions=False,
                     threads=True,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - third-party provider failures are retried uniformly
                 raw = pd.DataFrame()
 
             found = _extract_batch(raw, pending) if not raw.empty else {}

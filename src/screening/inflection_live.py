@@ -9,7 +9,7 @@ Outputs are research candidates only.  They are not BUY recommendations.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -273,7 +273,7 @@ def scan_japan_inflection(
         counts[item.classification] = counts.get(item.classification, 0) + 1
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "mode": "shadow",
         "universe": "TSE Prime + Standard + Growth",
         "universe_count": len(tickers),

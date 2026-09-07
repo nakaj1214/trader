@@ -60,11 +60,32 @@ def test_explosive_label_uses_intraperiod_peak() -> None:
     assert trade.max_return_pct == 60.0
 
 
+def test_drawdown_is_peak_to_trough_not_entry_to_low() -> None:
+    history = _history([100, 100, 100, 100, 100], [100, 120, 150, 105, 130])
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=4,
+        round_trip_cost_pct=0.0,
+    )
+    assert trade.max_drawdown_pct == -30.0
+
+
 def test_summary_reports_outlier_sensitive_metrics() -> None:
     history_a = _history([100, 100, 100], [100, 120, 120])
     history_b = _history([100, 100, 100], [100, 90, 90])
-    a = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-01", "score": 80}, history_a, holding_days=2, round_trip_cost_pct=0)
-    b = simulate_signal({"ticker": "B.T", "signal_date": "2026-01-01", "score": 80}, history_b, holding_days=2, round_trip_cost_pct=0)
+    a = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history_a,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+    b = simulate_signal(
+        {"ticker": "B.T", "signal_date": "2026-01-01", "score": 80},
+        history_b,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
     summary = summarize_trades([a, b])
     assert summary["completed"] == 2
     assert summary["win_rate_pct"] == 50.0

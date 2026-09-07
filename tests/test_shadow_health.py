@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
-from scripts.run_inflection_shadow import validate_report
+from scripts.run_inflection_shadow import snapshot_date, validate_report
 
 
 def _healthy_report() -> dict:
@@ -37,3 +39,9 @@ def test_validate_report_rejects_duplicate_candidates() -> None:
     report["candidates"] = [{"ticker": "1111.T"}, {"ticker": "1111.T"}]
     with pytest.raises(RuntimeError, match="duplicate candidate"):
         validate_report(report)
+
+
+def test_snapshot_date_uses_japan_calendar_date() -> None:
+    # 15:30 UTC is already the next calendar day in Japan.
+    now = datetime(2026, 9, 7, 15, 30, tzinfo=timezone.utc)
+    assert snapshot_date(now) == "2026-09-08"

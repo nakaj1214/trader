@@ -7,11 +7,14 @@ on:
       - "src/evaluation/forward_validation.py"
       - "src/evaluation/benchmark.py"
       - "src/evaluation/inflection_backtest.py"
+      - "src/evaluation/inflection_forward.py"
       - "src/data/validation.py"
       - "src/data/point_in_time.py"
       - "src/data/providers/edinet_provider.py"
       - "src/strategy/**"
       - "scripts/rebuild_forward_validation.py"
+      - "scripts/rebuild_inflection_forward_validation.py"
+      - "dashboard/data/inflection/**"
       - "tests/test_forward_validation.py"
       - "tests/test_benchmark.py"
       - "tests/test_data_validation.py"
@@ -19,6 +22,7 @@ on:
       - "tests/test_edinet_provider.py"
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
+      - "tests/test_inflection_forward.py"
       - ".github/workflows/forward_validation.yml"
   workflow_dispatch:
 
@@ -55,6 +59,7 @@ jobs:
             tests/test_edinet_provider.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
+            tests/test_inflection_forward.py \
             -q --override-ini="addopts="
 
       - name: Core coverage
@@ -67,9 +72,11 @@ jobs:
             tests/test_edinet_provider.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
+            tests/test_inflection_forward.py \
             --cov=src.evaluation.forward_validation \
             --cov=src.evaluation.benchmark \
             --cov=src.evaluation.inflection_backtest \
+            --cov=src.evaluation.inflection_forward \
             --cov=src.data.validation \
             --cov=src.data.point_in_time \
             --cov=src.data.providers.edinet_provider \
@@ -77,14 +84,19 @@ jobs:
             --cov-fail-under=80 \
             -q --override-ini="addopts="
 
-      - name: Rebuild committed predictions and validate against market prices
+      - name: Rebuild legacy committed predictions
         run: python scripts/rebuild_forward_validation.py --since 2026-02-18
+
+      - name: Validate accumulated inflection snapshots
+        run: python scripts/rebuild_inflection_forward_validation.py
 
       - name: Upload validation reports
         uses: actions/upload-artifact@v4
         with:
           name: forward-validation-report
+          if-no-files-found: warn
           path: |
             artifacts/forward_validation.json
             artifacts/forward_validation_summary.json
+            artifacts/inflection_forward_validation.json
           retention-days: 30

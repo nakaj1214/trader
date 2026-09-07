@@ -1,0 +1,63 @@
+"""Minimal J-Quants V2 client used by the live Japanese-stock scanner.
+
+This intentionally does not reuse the legacy V1-compatible provider.  V2 uses
+static x-api-key authentication and renamed endpoints/fields.
+"""
+from __future__ import annotations
+
+import os
+import time
+from typing import Any
+
+import requests
+
+BASE_URL = "https://api.jquants.com/v2"
+
+
+class JQuantsV2Client:
+    def __init__(self, api_key: str | None = None, timeout: float = 30.0, min_interval: float = 12.2) -> None:
+        self.api_key = api_key or os.getenv("JQUANTS_API_KEY")
+        self.timeout = timeout
+        self.min_interval = min_interval
+        self._last_call = 0.0
+
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
+    def _headers(self) -> dict[str, str]:
+        if not self.api_key:
+            raise RuntimeError("JQUANTS_API_KEY is not configured")
+        return {"x-api-key": self.api_key}
+
+    def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+        elapsed = time.monotonic() - self._last_call
+        if self._last_call and elapsed < self.min_interval:
+            time.sleep(self.min_interval - elapsed)
+
+        rows: list[dict[str, Any]] = []
+        query = dict(params or {})
+        while True:
+            response = requests.get(
+                f"{BASE_URL}{path}",
+                params=query,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            self._last_call = time.monotonic()
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") or []
+            if isinstance(data, list):
+                rows.extend(item for item in data if isinstance(item, dict))
+            cursor = payload.get("pagination_key") or payload.get("cursor")
+            if not cursor:
+                break
+            query["pagination_key"] = str(cursor)
+        return rows
+
+    def listed_issues(self, date: str | None = None) -> list[dict[str, Any]]:
+        params = {"date": date} if date else None
+        return self._get("/equities/master", params)
+
+    def financial_summary(self, code: str) -> list[dict[str, Any]]:
+        return self._get("/fins/summary", {"code": code})

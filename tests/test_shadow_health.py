@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -43,5 +43,5 @@ def test_validate_report_rejects_duplicate_candidates() -> None:
 
 def test_snapshot_date_uses_japan_calendar_date() -> None:
     # 15:30 UTC is already the next calendar day in Japan.
-    now = datetime(2026, 9, 7, 15, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 7, 15, 30, tzinfo=UTC)
     assert snapshot_date(now) == "2026-09-08"

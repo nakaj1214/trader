@@ -74,7 +74,7 @@ def compare_close_series(
 
     diff = ((joined["a"] / joined["b"]) - 1.0).abs() * 100.0
     return {
-        "overlap": int(len(diff)),
+        "overlap": len(diff),
         "match_rate_pct": round(float((diff <= tolerance_pct).mean() * 100.0), 3),
         "median_abs_diff_pct": round(float(diff.median()), 6),
         "max_abs_diff_pct": round(float(diff.max()), 6),

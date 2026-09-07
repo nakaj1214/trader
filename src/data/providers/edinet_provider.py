@@ -27,7 +27,7 @@ class EdinetDocument:
     doc_description: str | None
 
     @classmethod
-    def from_api(cls, row: dict[str, Any]) -> "EdinetDocument":
+    def from_api(cls, row: dict[str, Any]) -> EdinetDocument:
         return cls(
             doc_id=str(row.get("docID") or ""),
             edinet_code=row.get("edinetCode"),

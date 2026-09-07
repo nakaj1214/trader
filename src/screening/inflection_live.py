@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import pandas as pd
@@ -24,7 +25,7 @@ LIVE_MEASURABLE_MAX_SCORE = 58.0
 EARLY_CANDIDATE_SCORE = 70.0
 WATCH_SCORE = 52.0
 STRATEGY_VERSION = "jp-inflection-shadow-v1"
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 DEFAULT_JQUANTS_PLAN = "free"
 DEFAULT_FREE_DELAY_WEEKS = 12
 
@@ -106,7 +107,7 @@ def _pre_score(t: dict[str, Any]) -> float:
     r5 = float(t.get("return_5d_pct") or 0.0)
     r20 = float(t.get("return_20d_pct") or 0.0)
     vr = float(t.get("volume_ratio_20d") or 1.0)
-    score = max(0.0, min(r5, 12.0)) * 1.0
+    score = max(0.0, min(r5, 12.0))
     score += max(0.0, min(r20, 30.0)) * 0.7
     score += max(0.0, min(vr - 1.0, 3.0)) * 8.0
     if t.get("breakout_52w"):
@@ -141,8 +142,11 @@ def _previous_comparable_actual(
     actual_rows: list[dict[str, Any]],
     latest: dict[str, Any],
 ) -> dict[str, Any] | None:
+    """Return a prior-fiscal-year actual for the same period, never a same-year correction."""
     period_type = str(latest.get("CurPerType") or "")
     latest_fiscal_end = str(latest.get("CurFYEn") or "")
+    if not period_type or not latest_fiscal_end:
+        return None
     candidates = [
         row
         for row in actual_rows
@@ -151,15 +155,7 @@ def _previous_comparable_actual(
         and str(row.get("CurFYEn") or "")
         and str(row.get("CurFYEn") or "") < latest_fiscal_end
     ]
-    if candidates:
-        return candidates[-1]
-
-    fallback = [
-        row
-        for row in actual_rows
-        if row is not latest and str(row.get("CurPerType") or "") == period_type
-    ]
-    return fallback[-1] if fallback else None
+    return candidates[-1] if candidates else None
 
 
 def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -221,7 +217,6 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _normalize_available_score(fundamental: float, momentum: float, risk: float) -> float:
-    """Normalize only the inputs that the live pipeline can currently populate."""
     measurable = fundamental + momentum + risk
     return max(0.0, min(100.0, measurable / LIVE_MEASURABLE_MAX_SCORE * 100.0))
 
@@ -251,6 +246,16 @@ def _data_policy() -> dict[str, Any]:
         "price_source": "yfinance",
         "fundamental_source": "J-Quants V2 financial summary",
     }
+
+
+def _package_versions() -> dict[str, str]:
+    result: dict[str, str] = {}
+    for package in ("yfinance", "pandas", "requests", "cryptography"):
+        try:
+            result[package] = version(package)
+        except PackageNotFoundError:
+            result[package] = "not-installed"
+    return result
 
 
 def scan_japan_inflection(
@@ -391,6 +396,7 @@ def scan_japan_inflection(
             "measurable_max_score": LIVE_MEASURABLE_MAX_SCORE,
         },
         "data_policy": policy,
+        "runtime_versions": _package_versions(),
         "candidates": [candidate.as_dict() for candidate in candidates],
         "notes": [
             "Known historical winners are not whitelisted or special-cased.",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from src.data.jquants_v2_client import JQuantsV2Client
 
@@ -34,16 +35,21 @@ def test_financial_summary_uses_summary_endpoint() -> None:
     get.assert_called_once_with("/fins/summary", {"code": "72030"})
 
 
+def _response(status: int, payload: dict, headers: dict[str, str] | None = None) -> Mock:
+    response = Mock(spec=requests.Response)
+    response.status_code = status
+    response.headers = headers or {}
+    response.json.return_value = payload
+    if status >= 400:
+        response.raise_for_status.side_effect = requests.HTTPError(str(status))
+    else:
+        response.raise_for_status.return_value = None
+    return response
+
+
 def test_get_collects_paginated_data() -> None:
-    first = Mock()
-    first.raise_for_status.return_value = None
-    first.json.return_value = {
-        "data": [{"Code": "11110"}],
-        "pagination_key": "next-page",
-    }
-    second = Mock()
-    second.raise_for_status.return_value = None
-    second.json.return_value = {"data": [{"Code": "22220"}]}
+    first = _response(200, {"data": [{"Code": "11110"}], "pagination_key": "next-page"})
+    second = _response(200, {"data": [{"Code": "22220"}]})
 
     client = JQuantsV2Client(api_key="secret", min_interval=0)
     with patch("src.data.jquants_v2_client.requests.get", side_effect=[first, second]) as get:
@@ -53,3 +59,50 @@ def test_get_collects_paginated_data() -> None:
     assert get.call_count == 2
     assert get.call_args_list[0].kwargs["headers"] == {"x-api-key": "secret"}
     assert get.call_args_list[1].kwargs["params"]["pagination_key"] == "next-page"
+
+
+def test_each_paginated_request_checks_rate_limit_slot() -> None:
+    first = _response(200, {"data": [], "pagination_key": "next-page"})
+    second = _response(200, {"data": []})
+    client = JQuantsV2Client(api_key="secret", min_interval=0)
+
+    with (
+        patch.object(client, "_wait_for_slot") as wait,
+        patch("src.data.jquants_v2_client.requests.get", side_effect=[first, second]),
+    ):
+        client._get("/equities/master")
+
+    assert wait.call_count == 2
+
+
+def test_retryable_status_uses_retry_after_then_succeeds() -> None:
+    limited = _response(429, {}, {"Retry-After": "1.5"})
+    success = _response(200, {"data": [{"Code": "11110"}]})
+    client = JQuantsV2Client(api_key="secret", min_interval=0, max_retries=2)
+
+    with (
+        patch("src.data.jquants_v2_client.requests.get", side_effect=[limited, success]) as get,
+        patch("src.data.jquants_v2_client.time.sleep") as sleep,
+    ):
+        rows = client._get("/equities/master")
+
+    assert rows == [{"Code": "11110"}]
+    assert get.call_count == 2
+    sleep.assert_called_once_with(1.5)
+
+
+def test_retryable_status_raises_after_retry_budget() -> None:
+    failure = _response(503, {})
+    client = JQuantsV2Client(
+        api_key="secret",
+        min_interval=0,
+        max_retries=1,
+        retry_backoff=0,
+    )
+
+    with (
+        patch("src.data.jquants_v2_client.requests.get", side_effect=[failure, failure]),
+        patch("src.data.jquants_v2_client.time.sleep"),
+        pytest.raises(requests.HTTPError),
+    ):
+        client._get("/equities/master")

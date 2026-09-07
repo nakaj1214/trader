@@ -1,159 +1,115 @@
-# AI Stock Predictor
+# Trader
 
-週次の株式スクリーニング、価格予測、実績追跡、通知、ダッシュボード用データ出力をまとめた Python プロジェクトです。
-米国株（S&P500・NASDAQ100）と日本株（日経225）に対応しています。
+日本株の短期変化点（inflection）候補を日次で抽出し、将来検証できる形でスナップショットを保存する Python プロジェクトです。
 
-## 1. アーキテクチャ
+現在の本番経路は **TSE Prime / Standard / Growth の日次 inflection shadow scan** です。旧 Prophet / LightGBM の週次予測パイプラインはコードとして残していますが、本番スケジュールでは実行しません。
+
+## 現在の本番フロー
+
+GitHub Actions の `.github/workflows/inflection_shadow.yml` が平日 16:40 JST に実行されます。
+
+1. J-Quants V2 から Prime / Standard / Growth の上場銘柄を取得
+2. yfinance から価格・出来高を取得
+3. 流動性と短期モメンタムで全銘柄を一次選別
+4. 上位候補のみ J-Quants 財務データで深掘り
+5. `EARLY_CANDIDATE` / `WATCH` / `OVEREXTENDED` / `NONE` に分類
+6. データ健全性を検証
+7. 日次スナップショットと最新候補を保存
+8. 失敗時のみ Slack 通知
+
+出力:
 
 ```text
-trader/
-  src/
-    cli.py                # Typer CLI エントリーポイント
-    orchestrator.py       # パイプラインオーケストレーター
-    core/                 # 設定・モデル・メタデータ・例外
-    screening/            # 銘柄スクリーニング（US/JP対応）
-    prediction/           # 価格予測（Prophet + LightGBM アンサンブル）
-    evaluation/           # 実績追跡・バックテスト・ウォークフォワード・アルファサーベイ
-    enrichment/           # リスク指標・イベント・エビデンス・センチメント・ポジションサイジング
-    export/               # JSON/Sheets エクスポーター
-    notification/         # Slack/LINE 通知
-    analysis/             # LLM 駆動の財務分析
-    data/                 # データリポジトリ・外部プロバイダー
-  config/
-    default.yaml          # デフォルト設定
-  dashboard/              # 静的 GUI（HTML/JS/CSS）
-  dashboard-v2/           # 次世代ダッシュボード（SvelteKit）
-  data/                   # 銘柄リスト CSV・用語辞書
-  tests/                  # テストスイート
-  .github/workflows/
-    weekly_run_v2.yml     # 週次パイプライン実行
-    deploy_dashboard.yml  # Cloudflare Pages デプロイ
-    test.yml              # CI テスト・lint
+dashboard/data/inflection/YYYY-MM-DD.json   # immutable daily snapshot
+dashboard/data/inflection_candidates.json   # latest snapshot
 ```
 
-## 2. 実行フロー（`python -m src.cli run`）
+`EARLY_CANDIDATE` は調査候補であり、売買推奨や自動発注シグナルではありません。
 
-1. 米国株スクリーニング（S&P500・NASDAQ100）
-2. 日本株スクリーニング（nikkei225）
-3. 価格予測（Prophet + LightGBM アンサンブル）
-4. 前週分の実績追跡と的中率計算
-5. DB / Google Sheets への記録
-6. 予測補強（リスク・イベント・エビデンス・センチメント・ポジションサイジング）
-7. Slack / LINE 通知
-8. ダッシュボード JSON 出力
-9. ウォークフォワード・アルファサーベイ・マクロ指標エクスポート
+## スコアリング
 
-## 3. セットアップ
+本番 scanner は、現時点で point-in-time に取得できる以下の情報だけを使用します。
+
+- 売上成長
+- 営業利益成長
+- 営業利益率改善
+- 黒字転換
+- 業績予想上方修正
+- 20日 / 60日リターン
+- 出来高増加
+- 52週高値圏
+- 極端な上昇や営業CF悪化のリスクペナルティ
+
+ニュース、提携、大口受注、新規事業などの catalyst は、point-in-time-safe な取得経路が接続されるまで本番スコアから除外しています。
+
+## データソース
+
+| データ | 本番利用 | 用途 |
+|---|---:|---|
+| J-Quants V2 | Yes | 日本株ユニバース、財務情報 |
+| yfinance | Yes | 価格・出来高 |
+| EDINET API v2 | No | point-in-time 検証用ユーティリティ。live scan には未接続 |
+| Finnhub / FMP / FRED | No | 旧パイプライン向け補完機能 |
+
+本番実行に必要な GitHub Secret は `JQUANTS_API_KEY` です。Slack失敗通知を使う場合は `SLACK_WEBHOOK_URL` も設定します。
+
+## 検証
+
+`src/evaluation/` には以下を用意しています。
+
+- immutable signal を使う inflection backtest
+- 翌営業日始値での約定シミュレーション
+- TOPIX proxy との benchmark 比較
+- 取引コスト、税引き、最大上昇率、最大ドローダウン
+- 旧予測データの git 履歴からの forward validation
+- point-in-time filtering / OHLCV validation
+
+新しい inflection 戦略については、日次スナップショットが蓄積した後に forward validation を行う前提です。過去の旧予測パイプラインの成績を、新戦略の実績として扱わないでください。
+
+## セットアップ
 
 ```bash
-cd trader
 python -m venv .venv
-# Windows:
+# Windows
 .venv\Scripts\activate
-# macOS/Linux:
+# macOS / Linux
 # source .venv/bin/activate
 
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
-ML 機能（Prophet / LightGBM）を使う場合:
+`.env.example` を参考に環境変数を設定します。
+
+ローカルで本番 scanner を実行する場合:
 
 ```bash
-pip install -e ".[dev,ml]"
+python scripts/run_inflection_shadow.py
 ```
 
-## 4. 環境変数
-
-`.env.example` をコピーして `.env` を作成します。
-
-| 変数 | 用途 | 必須条件 |
-|---|---|---|
-| `GOOGLE_CREDENTIALS_JSON` | Google Sheets 認証 | Sheets 記録時は必須 |
-| `SLACK_WEBHOOK_URL` | Slack 通知 | Slack 通知有効時は必須 |
-| `LINE_CHANNEL_ACCESS_TOKEN` | LINE 通知 | LINE 通知有効時のみ |
-| `LINE_USER_ID` | LINE 送信先 | LINE 通知有効時のみ |
-| `FRED_API_KEY` | マクロ指標取得（FRED API） | 任意 |
-| `JQUANTS_API_KEY` | 日本株財務データ（J-Quants API） | 任意 |
-| `FINNHUB_API_KEY` | US株ニュース・センチメント | 任意 |
-| `FMP_API_KEY` | 財務データフォールバック | 任意 |
-| `OPENAI_API_KEY` | LLM 分析（analysis コマンド） | analysis 使用時のみ |
-
-## 5. 設定ファイル（`config/default.yaml`）
-
-主要セクション:
-
-- `screening`: 市場・上位件数・フィルタ・スコアリング重み
-- `prediction`: history_days / forecast_days / Prophet / LightGBM パラメータ
-- `evaluation`: バックテスト・ウォークフォワード設定
-- `enrichment`: リスク・イベント・エビデンス・センチメント・サイジング
-- `export`: JSON 出力パス
-- `notification`: Slack / LINE 設定
-- `providers`: 外部 API 設定（FRED / J-Quants / Finnhub / FMP）
-- `analysis`: LLM 分析設定
-
-## 6. コマンド
-
-```bash
-# 全体パイプライン実行
-python -m src.cli run --market all
-
-# スクリーニングのみ
-python -m src.cli screen --market us
-
-# 予測のみ（スクリーニング含む）
-python -m src.cli predict --market us
-
-# ダッシュボード JSON 再生成
-python -m src.cli export
-
-# LLM 財務分析
-python -m src.cli analyze --ticker AAPL,MSFT --type dcf
-
-# バージョン表示
-python -m src.cli version
-```
-
-## 7. テスト
+## テスト
 
 ```bash
 python -m pytest tests/
+ruff check src scripts tests
 ```
 
-主なテスト:
+GitHub Actions の `test.yml` では、全 regression suite に加えて、本番 inflection 経路・J-Quants client・point-in-time / validation / evaluation の coverage を確認します。
 
-- `tests/test_config.py` — 設定ロード・バリデーション
-- `tests/test_orchestrator.py` — パイプラインオーケストレーター
-- `tests/test_screening_new.py` — スクリーニング
-- `tests/test_prediction_new.py` — 予測
-- `tests/test_evaluation.py` — 実績追跡・バックテスト
-- `tests/test_json_exporter.py` — JSON エクスポーター
-- `tests/test_repository.py` — データリポジトリ
-- `tests/test_analysis_*.py` — LLM 分析モジュール
-- `tests/test_dashboard_html.py` — ダッシュボード HTML 構造
+## 旧パイプライン
 
-## 8. GitHub Actions
+以下は既存機能との比較・調査用途としてリポジトリに残っています。
 
-### weekly_run_v2.yml（週次実行 — 毎週日曜 JST 09:00）
+- `python -m src.cli run`
+- US / Nikkei225 screening
+- Prophet / LightGBM prediction
+- enrichment / notification / Google Sheets
+- legacy dashboard data
+- `config/default.yaml` の多くの設定
 
-1. `python -m src.cli run --market all` 実行
-2. `dashboard/data/*.json` をコミット・push
+これらは現在の日次 JP inflection production workflow からは呼ばれません。
 
-### deploy_dashboard.yml（ダッシュボードデプロイ）
+## Dashboard
 
-- `dashboard-v2` をビルドし Cloudflare Pages へデプロイ
-- `dashboard/data/*.json` を静的アセットとして配信
+`dashboard-v2` は SvelteKit でビルドされます。Cloudflare Pages への公開は GitHub Actions 内の明示的 deploy step ではなく、リポジトリ連携側の設定に依存します。
 
-### test.yml（CI）
-
-- ruff lint
-- pytest（カバレッジ 80% 目標）
-
-必要な GitHub Secrets:
-
-- `GOOGLE_CREDENTIALS_JSON`
-- `SLACK_WEBHOOK_URL`
-- （任意）`FRED_API_KEY`, `JQUANTS_API_KEY`, `FINNHUB_API_KEY`, `FMP_API_KEY`
-
-## 9. ユーザーガイド
-
-利用手順は `docs/guide/USER_GUIDE.md` を参照してください。
+現時点では `inflection_candidates.json` を表示・通知へ接続する consumer は本番経路に含めていません。shadow scan の目的はまずデータを蓄積し、再現可能な forward validation を成立させることです。

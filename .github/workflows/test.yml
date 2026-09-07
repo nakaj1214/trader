@@ -35,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruff
 
-      - name: Lint short-term trading core
+      - name: Lint production trading core
         run: |
           ruff check \
             src/evaluation/forward_validation.py \
@@ -44,15 +44,21 @@ jobs:
             src/data/validation.py \
             src/data/point_in_time.py \
             src/data/providers/edinet_provider.py \
+            src/data/jquants_v2_client.py \
+            src/screening/inflection_live.py \
             src/strategy/inflection.py \
             scripts/rebuild_forward_validation.py \
+            scripts/run_inflection_shadow.py \
             tests/test_forward_validation.py \
             tests/test_benchmark.py \
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
+            tests/test_jquants_v2_client.py \
             tests/test_inflection_strategy.py \
-            tests/test_inflection_backtest.py
+            tests/test_inflection_backtest.py \
+            tests/test_inflection_live.py \
+            tests/test_shadow_health.py
 
   test:
     runs-on: ubuntu-latest
@@ -74,7 +80,7 @@ jobs:
       - name: Run full regression suite
         run: python -m pytest tests/ -q --override-ini="addopts="
 
-      - name: Enforce core coverage threshold
+      - name: Enforce production-core coverage threshold
         run: |
           python -m pytest \
             tests/test_forward_validation.py \
@@ -82,14 +88,20 @@ jobs:
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
             tests/test_edinet_provider.py \
+            tests/test_jquants_v2_client.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
+            tests/test_inflection_live.py \
+            tests/test_shadow_health.py \
             --cov=src.evaluation.forward_validation \
             --cov=src.evaluation.benchmark \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.data.validation \
             --cov=src.data.point_in_time \
             --cov=src.data.providers.edinet_provider \
+            --cov=src.data.jquants_v2_client \
+            --cov=src.screening.inflection_live \
             --cov=src.strategy.inflection \
+            --cov=scripts.run_inflection_shadow \
             --cov-fail-under=80 \
             -q --override-ini="addopts="

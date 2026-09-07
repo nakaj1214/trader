@@ -1,4 +1,5 @@
-# Trader v2 - Default Configuration
+# Trader v2 - Legacy CLI / comparison pipeline configuration
+# The scheduled JP inflection shadow scan does not currently read this file.
 
 screening:
   markets:

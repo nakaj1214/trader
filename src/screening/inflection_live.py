@@ -16,7 +16,7 @@ from typing import Any
 import pandas as pd
 
 from src.data.jquants_v2_client import JQuantsV2Client
-from src.screening.scorer import _fetch_price_data
+from src.data.yfinance_prices import fetch_price_data
 from src.strategy.inflection import InflectionFeatures, score_inflection
 
 JP_MARKET_CODES = {"0111", "0112", "0113"}  # Prime / Standard / Growth
@@ -154,8 +154,6 @@ def _previous_comparable_actual(
     if candidates:
         return candidates[-1]
 
-    # Some records can lack CurFYEn. Fall back only to an older actual row with
-    # the same period type instead of comparing against a forecast-revision row.
     fallback = [
         row
         for row in actual_rows
@@ -223,13 +221,7 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _normalize_available_score(fundamental: float, momentum: float, risk: float) -> float:
-    """Normalize only the inputs that the live pipeline can currently populate.
-
-    Live fundamentals can contribute at most 33 points because revenue acceleration
-    is not available yet. Momentum contributes 25, so the measurable positive
-    maximum is 58. Catalyst fields are intentionally excluded until a point-in-time
-    safe source is connected. Risk penalties still reduce the normalized score.
-    """
+    """Normalize only the inputs that the live pipeline can currently populate."""
     measurable = fundamental + momentum + risk
     return max(0.0, min(100.0, measurable / LIVE_MEASURABLE_MAX_SCORE * 100.0))
 
@@ -281,7 +273,7 @@ def scan_japan_inflection(
         ticker_meta[_ticker_from_code(code)] = row
 
     tickers = sorted(ticker_meta)
-    prices = _fetch_price_data(tickers, lookback_days)
+    prices = fetch_price_data(tickers, lookback_days)
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable_count = 0
     liquid_candidate_count = 0
@@ -373,9 +365,7 @@ def scan_japan_inflection(
         counts[item.classification] = counts.get(item.classification, 0) + 1
 
     latest_price_date = max(latest_dates) if latest_dates else None
-    latest_price_date_count = (
-        sum(date == latest_price_date for date in latest_dates) if latest_price_date is not None else 0
-    )
+    latest_price_date_count = sum(date == latest_price_date for date in latest_dates) if latest_price_date else 0
 
     return {
         "report_schema_version": REPORT_SCHEMA_VERSION,

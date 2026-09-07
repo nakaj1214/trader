@@ -16,25 +16,42 @@ JST = ZoneInfo("Asia/Tokyo")
 
 MIN_UNIVERSE_COUNT = 3000
 MIN_PRICE_COVERAGE = 0.70
+MIN_TECHNICAL_COVERAGE = 0.60
+MIN_LATEST_DATE_COVERAGE = 0.80
 
 
 def validate_report(report: dict[str, Any]) -> None:
     """Reject incomplete or inconsistent scan results before they are persisted."""
     universe = int(report.get("universe_count") or 0)
     price_data = int(report.get("price_data_count") or 0)
+    technical_usable = int(report.get("technical_usable_count") or 0)
+    latest_date_count = int(report.get("latest_price_date_count") or 0)
+    latest_price_date = report.get("latest_price_date")
     deep_count = int(report.get("deep_candidate_count") or 0)
     candidates = report.get("candidates")
 
     if universe < MIN_UNIVERSE_COUNT:
-        raise RuntimeError(
-            f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}"
-        )
+        raise RuntimeError(f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}")
 
-    if universe <= 0 or price_data / universe < MIN_PRICE_COVERAGE:
-        coverage = (price_data / universe) if universe > 0 else 0.0
+    price_coverage = (price_data / universe) if universe > 0 else 0.0
+    if price_coverage < MIN_PRICE_COVERAGE:
         raise RuntimeError(
             "DATA_HEALTH: price coverage too low: "
-            f"{price_data}/{universe} ({coverage:.1%})"
+            f"{price_data}/{universe} ({price_coverage:.1%})"
+        )
+
+    technical_coverage = (technical_usable / universe) if universe > 0 else 0.0
+    if technical_coverage < MIN_TECHNICAL_COVERAGE:
+        raise RuntimeError(
+            "DATA_HEALTH: technical coverage too low: "
+            f"{technical_usable}/{universe} ({technical_coverage:.1%})"
+        )
+
+    latest_date_coverage = (latest_date_count / price_data) if price_data > 0 else 0.0
+    if not latest_price_date or latest_date_coverage < MIN_LATEST_DATE_COVERAGE:
+        raise RuntimeError(
+            "DATA_HEALTH: latest market-date coverage too low: "
+            f"date={latest_price_date}, {latest_date_count}/{price_data} ({latest_date_coverage:.1%})"
         )
 
     if deep_count <= 0:
@@ -47,15 +64,16 @@ def validate_report(report: dict[str, Any]) -> None:
             f"deep_candidate_count={deep_count}, candidates={actual}"
         )
 
-    tickers = [
-        str(row.get("ticker") or "")
-        for row in candidates
-        if isinstance(row, dict)
-    ]
+    tickers = [str(row.get("ticker") or "") for row in candidates if isinstance(row, dict)]
     if len(tickers) != len(candidates) or any(not ticker for ticker in tickers):
         raise RuntimeError("DATA_HEALTH: candidate ticker missing or invalid")
     if len(tickers) != len(set(tickers)):
         raise RuntimeError("DATA_HEALTH: duplicate candidate tickers detected")
+
+    if not report.get("strategy_version") or not report.get("report_schema_version"):
+        raise RuntimeError("DATA_HEALTH: strategy/schema version metadata missing")
+    if not report.get("source_commit_sha"):
+        raise RuntimeError("DATA_HEALTH: source commit metadata missing")
 
 
 def snapshot_date(now: datetime | None = None) -> str:
@@ -66,24 +84,45 @@ def snapshot_date(now: datetime | None = None) -> str:
     return current.astimezone(JST).strftime("%Y-%m-%d")
 
 
+def persist_report(
+    report: dict[str, Any],
+    *,
+    out_dir: Path = OUT_DIR,
+    latest_path: Path = LATEST,
+    date: str | None = None,
+) -> tuple[Path, bool]:
+    """Persist latest output and create the daily immutable snapshot only once."""
+    validate_report(report)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = out_dir / f"{date or snapshot_date()}.json"
+    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+
+    snapshot_created = False
+    if not snapshot.exists():
+        snapshot.write_text(payload, encoding="utf-8")
+        snapshot_created = True
+
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text(payload, encoding="utf-8")
+    return snapshot, snapshot_created
+
+
 def main() -> None:
     report = scan_japan_inflection()
-    validate_report(report)
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    snapshot = OUT_DIR / f"{snapshot_date()}.json"
-    payload = json.dumps(report, ensure_ascii=False, indent=2)
-    snapshot.write_text(payload + "\n", encoding="utf-8")
-    LATEST.write_text(payload + "\n", encoding="utf-8")
+    snapshot, snapshot_created = persist_report(report)
 
     counts = report.get("classification_counts", {})
     print(
         "inflection shadow scan complete: "
         f"universe={report.get('universe_count')} "
         f"price_data={report.get('price_data_count')} "
+        f"technical={report.get('technical_usable_count')} "
+        f"market_date={report.get('latest_price_date')} "
         f"early={counts.get('EARLY_CANDIDATE', 0)} "
         f"watch={counts.get('WATCH', 0)} "
-        f"overextended={counts.get('OVEREXTENDED', 0)}"
+        f"overextended={counts.get('OVEREXTENDED', 0)} "
+        f"snapshot={snapshot.name} "
+        f"snapshot_created={snapshot_created}"
     )
 
 

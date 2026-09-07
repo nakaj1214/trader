@@ -6,7 +6,7 @@ for point-in-time backtests where every input must have been public at signal ti
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 

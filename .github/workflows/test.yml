@@ -48,6 +48,7 @@ jobs:
             src/data/jquants_v2_client.py \
             src/data/yfinance_prices.py \
             src/data/snapshot_crypto.py \
+            src/data/market_calendar.py \
             src/screening/inflection_live.py \
             src/strategy/inflection.py \
             scripts/rebuild_forward_validation.py \
@@ -73,6 +74,7 @@ jobs:
             src/data/jquants_v2_client.py \
             src/data/yfinance_prices.py \
             src/data/snapshot_crypto.py \
+            src/data/market_calendar.py \
             src/evaluation/inflection_forward.py \
             src/screening/inflection_live.py \
             scripts/run_inflection_shadow.py
@@ -123,6 +125,7 @@ jobs:
             --cov=src.data.jquants_v2_client \
             --cov=src.data.yfinance_prices \
             --cov=src.data.snapshot_crypto \
+            --cov=src.data.market_calendar \
             --cov=src.screening.inflection_live \
             --cov=src.strategy.inflection \
             --cov=scripts.run_inflection_shadow \

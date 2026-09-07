@@ -1,17 +1,18 @@
 """Run the production Japanese inflection scanner and persist an immutable daily snapshot."""
 from __future__ import annotations
 
-import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.data.snapshot_crypto import encrypt_json, key_id
 from src.screening.inflection_live import scan_japan_inflection
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "dashboard" / "data" / "inflection"
-LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.json"
+LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.enc"
 JST = ZoneInfo("Asia/Tokyo")
 
 MIN_UNIVERSE_COUNT = 3000
@@ -54,6 +55,11 @@ def validate_report(report: dict[str, Any]) -> None:
             f"date={latest_price_date}, {latest_date_count}/{price_data} ({latest_date_coverage:.1%})"
         )
 
+    try:
+        datetime.strptime(str(latest_price_date), "%Y-%m-%d")
+    except ValueError as exc:
+        raise RuntimeError(f"DATA_HEALTH: invalid latest market date: {latest_price_date}") from exc
+
     if deep_count <= 0:
         raise RuntimeError("DATA_HEALTH: no deep candidates were produced")
 
@@ -74,28 +80,56 @@ def validate_report(report: dict[str, Any]) -> None:
         raise RuntimeError("DATA_HEALTH: strategy/schema version metadata missing")
     if not report.get("source_commit_sha"):
         raise RuntimeError("DATA_HEALTH: source commit metadata missing")
+    runtime_versions = report.get("runtime_versions")
+    if not isinstance(runtime_versions, dict) or not runtime_versions.get("yfinance") or not runtime_versions.get("pandas"):
+        raise RuntimeError("DATA_HEALTH: runtime dependency metadata missing")
 
 
 def snapshot_date(now: datetime | None = None) -> str:
-    """Return the calendar date in Japan used for the immutable snapshot filename."""
+    """Return the current Japan calendar date for diagnostics and tests."""
     current = now or datetime.now(JST)
     if current.tzinfo is None:
         current = current.replace(tzinfo=JST)
     return current.astimezone(JST).strftime("%Y-%m-%d")
 
 
+def snapshot_secret() -> str:
+    """Use a dedicated storage key when present, otherwise the already-required J-Quants key.
+
+    The fallback keeps the first scheduled run self-contained. Set SNAPSHOT_ENCRYPTION_KEY
+    before rotating JQUANTS_API_KEY so historical snapshots remain decryptable.
+    """
+    secret = os.getenv("SNAPSHOT_ENCRYPTION_KEY") or os.getenv("JQUANTS_API_KEY")
+    if not secret:
+        raise RuntimeError("SNAPSHOT_ENCRYPTION_KEY or JQUANTS_API_KEY is required for encrypted snapshot storage")
+    return secret
+
+
 def persist_report(
     report: dict[str, Any],
     *,
+    encryption_secret: str,
     out_dir: Path = OUT_DIR,
     latest_path: Path = LATEST,
     date: str | None = None,
 ) -> tuple[Path, bool]:
-    """Persist latest output and create the daily immutable snapshot only once."""
+    """Persist encrypted latest output and create one immutable snapshot per market-data date."""
     validate_report(report)
+    market_date = str(report["latest_price_date"])
+    snapshot_key = date or market_date
+    if date is not None and date != market_date:
+        raise ValueError(f"snapshot date must match latest_price_date: {date} != {market_date}")
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    snapshot = out_dir / f"{date or snapshot_date()}.json"
-    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    snapshot = out_dir / f"{snapshot_key}.enc"
+    stored_report = dict(report)
+    stored_report["storage"] = {
+        "format": "fernet-v1",
+        "encrypted": True,
+        "key_id": key_id(encryption_secret),
+        "snapshot_date_basis": "latest_price_date",
+    }
+    payload = encrypt_json(stored_report, encryption_secret)
 
     snapshot_created = False
     if not snapshot.exists():
@@ -109,7 +143,7 @@ def persist_report(
 
 def main() -> None:
     report = scan_japan_inflection()
-    snapshot, snapshot_created = persist_report(report)
+    snapshot, snapshot_created = persist_report(report, encryption_secret=snapshot_secret())
 
     counts = report.get("classification_counts", {})
     print(

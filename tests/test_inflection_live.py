@@ -90,7 +90,7 @@ def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
     assert result["upward_revision_pct"] == pytest.approx(20.0)
 
 
-def test_fundamentals_do_not_compare_same_fiscal_year_correction_as_yoy() -> None:
+def test_fundamentals_use_prior_fiscal_year_instead_of_same_year_correction() -> None:
     rows = [
         {
             "DiscDate": "2025-08-01",
@@ -122,6 +122,31 @@ def test_fundamentals_do_not_compare_same_fiscal_year_correction_as_yoy() -> Non
     assert result["operating_profit_growth_yoy_pct"] == pytest.approx(150.0)
 
 
+def test_fundamentals_return_none_when_only_same_year_correction_exists() -> None:
+    rows = [
+        {
+            "DiscDate": "2026-08-01",
+            "DiscTime": "15:00",
+            "CurPerType": "Q1",
+            "CurFYEn": "2027-03-31",
+            "Sales": 140.0,
+            "OP": 20.0,
+        },
+        {
+            "DiscDate": "2026-08-02",
+            "DiscTime": "15:00",
+            "CurPerType": "Q1",
+            "CurFYEn": "2027-03-31",
+            "Sales": 150.0,
+            "OP": 25.0,
+        },
+    ]
+    result = _fundamental_features(rows)
+    assert result["revenue_growth_yoy_pct"] is None
+    assert result["operating_profit_growth_yoy_pct"] is None
+    assert result["operating_margin_change_pctpt"] is None
+
+
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     prices = {"1111.T": _price_frame()}
     with (
@@ -145,6 +170,8 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     assert report["source_commit_sha"] == "abc123"
     assert report["data_policy"]["jquants_plan"] == "free"
     assert report["data_policy"]["jquants_data_delay_weeks"] == 12
+    assert report["runtime_versions"]["yfinance"]
+    assert report["runtime_versions"]["pandas"]
     assert len(report["candidates"]) == 1
     candidate = report["candidates"][0]
     assert candidate["ticker"] == "1111.T"

@@ -13,6 +13,7 @@ import requests
 
 BASE_URL = "https://api.jquants.com/v2"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+RETRYABLE_EXCEPTIONS = (requests.ConnectionError, requests.Timeout)
 
 
 class JQuantsV2Client:
@@ -44,26 +45,35 @@ class JQuantsV2Client:
         if self._last_call and elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)
 
-    def _retry_delay(self, response: requests.Response, attempt: int) -> float:
-        retry_after = response.headers.get("Retry-After")
+    def _retry_delay(self, response: requests.Response | None, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After") if response is not None else None
         if retry_after:
             try:
                 return max(0.0, float(retry_after))
             except ValueError:
                 pass
-        return self.retry_backoff * (2 ** attempt)
+        return self.retry_backoff * (2**attempt)
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:
+        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             self._wait_for_slot()
-            response = requests.get(
-                f"{BASE_URL}{path}",
-                params=query,
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            self._last_call = time.monotonic()
+            try:
+                response = requests.get(
+                    f"{BASE_URL}{path}",
+                    params=query,
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
+            except RETRYABLE_EXCEPTIONS as exc:
+                self._last_call = time.monotonic()
+                last_error = exc
+                if attempt >= self.max_retries:
+                    raise
+                time.sleep(self._retry_delay(None, attempt))
+                continue
 
+            self._last_call = time.monotonic()
             if response.status_code not in RETRYABLE_STATUS_CODES:
                 response.raise_for_status()
                 return response
@@ -72,6 +82,8 @@ class JQuantsV2Client:
                 response.raise_for_status()
             time.sleep(self._retry_delay(response, attempt))
 
+        if last_error is not None:
+            raise last_error
         raise RuntimeError("unreachable")
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:

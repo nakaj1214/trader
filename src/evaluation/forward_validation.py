@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from statistics import mean, median
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
@@ -22,8 +23,10 @@ class GitSnapshot:
 
 def _git(repo_root: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo_root), *args], check=True,
-        capture_output=True, text=True,
+        ["git", "-C", str(repo_root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
 
 
@@ -96,12 +99,7 @@ def _infer_corporate_action_scale(
     historical_price: float | None,
     tolerance_pct: float = 1.0,
 ) -> float:
-    """Infer common split ratios when a provider retrospectively adjusts history.
-
-    Returns a multiplier to put historical prices back into the price unit that
-    was stored at prediction time. Only common integer/fractional split ratios
-    are accepted; arbitrary mismatches remain unmodified and are reported.
-    """
+    """Infer common split ratios when a provider retrospectively adjusts history."""
     if not stored_price or not historical_price:
         return 1.0
     ratio = stored_price / historical_price
@@ -110,6 +108,18 @@ def _infer_corporate_action_scale(
         if abs(ratio / candidate - 1.0) * 100.0 <= tolerance_pct:
             return candidate
     return 1.0
+
+
+def _max_drawdown_pct(entry_price: float, closes: pd.Series) -> float | None:
+    """Return true peak-to-trough drawdown, including entry as the initial peak."""
+    if entry_price <= 0 or closes.empty:
+        return None
+    values = pd.concat(
+        [pd.Series([entry_price], index=[closes.index[0] - pd.Timedelta(microseconds=1)]), closes]
+    ).astype(float)
+    running_peak = values.cummax()
+    drawdowns = (values / running_peak - 1.0) * 100.0
+    return float(drawdowns.min())
 
 
 def evaluate_prediction(
@@ -147,8 +157,13 @@ def evaluate_prediction(
     for horizon in horizons:
         prefix = f"h{horizon}"
         for suffix in (
-            "close", "return_pct", "direction_hit", "forecast_abs_error_pct",
-            "max_return_pct", "max_drawdown_pct",
+            "close",
+            "return_pct",
+            "direction_hit",
+            "forecast_abs_error_pct",
+            "max_return_pct",
+            "min_return_pct",
+            "max_drawdown_pct",
         ):
             result[f"{prefix}_{suffix}"] = None
         if len(after) < horizon:
@@ -158,10 +173,20 @@ def evaluate_prediction(
         result[f"{prefix}_close"] = actual_close
         if current_price:
             result[f"{prefix}_return_pct"] = round((actual_close / current_price - 1.0) * 100.0, 6)
-            result[f"{prefix}_max_return_pct"] = round((float(window.max()) / current_price - 1.0) * 100.0, 6)
-            result[f"{prefix}_max_drawdown_pct"] = round((float(window.min()) / current_price - 1.0) * 100.0, 6)
+            result[f"{prefix}_max_return_pct"] = round(
+                (float(window.max()) / current_price - 1.0) * 100.0, 6
+            )
+            result[f"{prefix}_min_return_pct"] = round(
+                (float(window.min()) / current_price - 1.0) * 100.0, 6
+            )
+            max_drawdown = _max_drawdown_pct(current_price, window)
+            result[f"{prefix}_max_drawdown_pct"] = (
+                round(max_drawdown, 6) if max_drawdown is not None else None
+            )
         if horizon == forecast_horizon and current_price and predicted_price is not None:
-            result[f"{prefix}_direction_hit"] = (predicted_price > current_price) == (actual_close > current_price)
+            result[f"{prefix}_direction_hit"] = (predicted_price > current_price) == (
+                actual_close > current_price
+            )
             result[f"{prefix}_forecast_abs_error_pct"] = round(
                 abs(predicted_price - actual_close) / actual_close * 100.0, 6
             )
@@ -172,6 +197,7 @@ def fetch_histories_yfinance(
     predictions: Iterable[dict[str, Any]], max_horizon: int = 60
 ) -> dict[str, pd.DataFrame]:
     import yfinance as yf
+
     rows = list(predictions)
     by_ticker: dict[str, list[pd.Timestamp]] = {}
     for row in rows:
@@ -182,10 +208,12 @@ def fetch_histories_yfinance(
         end = max(dates) + timedelta(days=max_horizon * 2 + 30)
         try:
             histories[ticker] = yf.Ticker(ticker).history(
-                start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"),
-                auto_adjust=False, actions=False,
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                auto_adjust=False,
+                actions=False,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider failures are isolated per ticker
             histories[ticker] = pd.DataFrame()
     return histories
 
@@ -199,9 +227,13 @@ def evaluate_predictions(
 ) -> list[dict[str, Any]]:
     return [
         evaluate_prediction(
-            row, histories.get(str(row["ticker"]), pd.DataFrame()), horizons,
-            reference_tolerance_pct, forecast_horizon,
-        ) for row in predictions
+            row,
+            histories.get(str(row["ticker"]), pd.DataFrame()),
+            horizons,
+            reference_tolerance_pct,
+            forecast_horizon,
+        )
+        for row in predictions
     ]
 
 
@@ -231,7 +263,11 @@ def summarize_evaluations(
     }
     n, rate = _bool_rate(rows, "reference_price_match")
     diffs = [abs(v) for v in _metric_values(rows, "reference_price_diff_pct")]
-    scaled = [r for r in rows if _safe_float(r.get("corporate_action_scale")) not in (None, 1.0)]
+    scaled = [
+        r
+        for r in rows
+        if _safe_float(r.get("corporate_action_scale")) not in (None, 1.0)
+    ]
     summary["data_quality"] = {
         "reference_price_checked": n,
         "reference_price_match_rate_pct": round(rate, 3) if rate is not None else None,
@@ -253,7 +289,11 @@ def summarize_evaluations(
             "direction_hit_rate_pct": round(drate, 3) if drate is not None else None,
             "mean_return_pct": round(mean(returns), 6) if returns else None,
             "median_return_pct": round(median(returns), 6) if returns else None,
-            "win_rate_pct": round(sum(v > 0 for v in returns) / len(returns) * 100.0, 3) if returns else None,
+            "win_rate_pct": (
+                round(sum(v > 0 for v in returns) / len(returns) * 100.0, 3)
+                if returns
+                else None
+            ),
             "median_forecast_abs_error_pct": round(median(errors), 6) if errors else None,
             "mean_max_return_pct": round(mean(maxima), 6) if maxima else None,
             "median_max_drawdown_pct": round(median(drawdowns), 6) if drawdowns else None,
@@ -266,7 +306,8 @@ def summarize_evaluations(
         ndir, drate = _bool_rate(mrows, "h5_direction_hit")
         returns = _metric_values(mrows, "h5_return_pct")
         monthly[month] = {
-            "predictions": len(mrows), "evaluated": len(returns),
+            "predictions": len(mrows),
+            "evaluated": len(returns),
             "direction_checked": ndir,
             "direction_hit_rate_pct": round(drate, 3) if drate is not None else None,
             "mean_return_pct": round(mean(returns), 6) if returns else None,

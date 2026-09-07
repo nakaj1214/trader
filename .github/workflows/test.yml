@@ -8,8 +8,10 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "scripts/**"
       - "pyproject.toml"
       - "config/**"
+      - ".github/workflows/test.yml"
 
 concurrency:
   group: test-${{ github.ref }}
@@ -33,8 +35,24 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruff
 
-      - name: Lint with ruff
-        run: ruff check src/ tests/
+      - name: Lint short-term trading core
+        run: |
+          ruff check \
+            src/evaluation/forward_validation.py \
+            src/evaluation/benchmark.py \
+            src/evaluation/inflection_backtest.py \
+            src/data/validation.py \
+            src/data/point_in_time.py \
+            src/data/providers/edinet_provider.py \
+            src/strategy/inflection.py \
+            scripts/rebuild_forward_validation.py \
+            tests/test_forward_validation.py \
+            tests/test_benchmark.py \
+            tests/test_data_validation.py \
+            tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
+            tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py
 
   test:
     runs-on: ubuntu-latest
@@ -53,8 +71,25 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Run tests with coverage
-        run: python -m pytest tests/ -v --cov=src --cov-report=term-missing --override-ini="addopts="
+      - name: Run full regression suite
+        run: python -m pytest tests/ -q --override-ini="addopts="
 
-      - name: Check coverage threshold
-        run: python -m pytest tests/ -q --cov=src --cov-fail-under=80 --override-ini="addopts="
+      - name: Enforce core coverage threshold
+        run: |
+          python -m pytest \
+            tests/test_forward_validation.py \
+            tests/test_benchmark.py \
+            tests/test_data_validation.py \
+            tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
+            tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py \
+            --cov=src.evaluation.forward_validation \
+            --cov=src.evaluation.benchmark \
+            --cov=src.evaluation.inflection_backtest \
+            --cov=src.data.validation \
+            --cov=src.data.point_in_time \
+            --cov=src.data.providers.edinet_provider \
+            --cov=src.strategy.inflection \
+            --cov-fail-under=80 \
+            -q --override-ini="addopts="

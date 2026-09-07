@@ -1,0 +1,90 @@
+name: Forward Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/evaluation/forward_validation.py"
+      - "src/evaluation/benchmark.py"
+      - "src/evaluation/inflection_backtest.py"
+      - "src/data/validation.py"
+      - "src/data/point_in_time.py"
+      - "src/data/providers/edinet_provider.py"
+      - "src/strategy/**"
+      - "scripts/rebuild_forward_validation.py"
+      - "tests/test_forward_validation.py"
+      - "tests/test_benchmark.py"
+      - "tests/test_data_validation.py"
+      - "tests/test_point_in_time.py"
+      - "tests/test_edinet_provider.py"
+      - "tests/test_inflection_strategy.py"
+      - "tests/test_inflection_backtest.py"
+      - ".github/workflows/forward_validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Core unit tests
+        run: |
+          python -m pytest \
+            tests/test_forward_validation.py \
+            tests/test_benchmark.py \
+            tests/test_data_validation.py \
+            tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
+            tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py \
+            -q --override-ini="addopts="
+
+      - name: Core coverage
+        run: |
+          python -m pytest \
+            tests/test_forward_validation.py \
+            tests/test_benchmark.py \
+            tests/test_data_validation.py \
+            tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
+            tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py \
+            --cov=src.evaluation.forward_validation \
+            --cov=src.evaluation.benchmark \
+            --cov=src.evaluation.inflection_backtest \
+            --cov=src.data.validation \
+            --cov=src.data.point_in_time \
+            --cov=src.data.providers.edinet_provider \
+            --cov=src.strategy.inflection \
+            --cov-fail-under=80 \
+            -q --override-ini="addopts="
+
+      - name: Rebuild committed predictions and validate against market prices
+        run: python scripts/rebuild_forward_validation.py --since 2026-02-18
+
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: forward-validation-report
+          path: |
+            artifacts/forward_validation.json
+            artifacts/forward_validation_summary.json
+          retention-days: 30

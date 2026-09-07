@@ -1,6 +1,6 @@
 """Minimal J-Quants V2 client used by the live Japanese-stock scanner.
 
-This intentionally does not reuse the legacy V1-compatible provider.  V2 uses
+This intentionally does not reuse the legacy V1-compatible provider. V2 uses
 static x-api-key authentication and renamed endpoints/fields.
 """
 from __future__ import annotations
@@ -12,13 +12,23 @@ from typing import Any
 import requests
 
 BASE_URL = "https://api.jquants.com/v2"
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class JQuantsV2Client:
-    def __init__(self, api_key: str | None = None, timeout: float = 30.0, min_interval: float = 12.2) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        min_interval: float = 12.2,
+        max_retries: int = 3,
+        retry_backoff: float = 2.0,
+    ) -> None:
         self.api_key = api_key or os.getenv("JQUANTS_API_KEY")
         self.timeout = timeout
         self.min_interval = min_interval
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
         self._last_call = 0.0
 
     def is_available(self) -> bool:
@@ -29,14 +39,23 @@ class JQuantsV2Client:
             raise RuntimeError("JQUANTS_API_KEY is not configured")
         return {"x-api-key": self.api_key}
 
-    def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    def _wait_for_slot(self) -> None:
         elapsed = time.monotonic() - self._last_call
         if self._last_call and elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)
 
-        rows: list[dict[str, Any]] = []
-        query = dict(params or {})
-        while True:
+    def _retry_delay(self, response: requests.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass
+        return self.retry_backoff * (2 ** attempt)
+
+    def _request(self, path: str, query: dict[str, str]) -> requests.Response:
+        for attempt in range(self.max_retries + 1):
+            self._wait_for_slot()
             response = requests.get(
                 f"{BASE_URL}{path}",
                 params=query,
@@ -44,7 +63,22 @@ class JQuantsV2Client:
                 timeout=self.timeout,
             )
             self._last_call = time.monotonic()
-            response.raise_for_status()
+
+            if response.status_code not in RETRYABLE_STATUS_CODES:
+                response.raise_for_status()
+                return response
+
+            if attempt >= self.max_retries:
+                response.raise_for_status()
+            time.sleep(self._retry_delay(response, attempt))
+
+        raise RuntimeError("unreachable")
+
+    def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        query = dict(params or {})
+        while True:
+            response = self._request(path, query)
             payload = response.json()
             data = payload.get("data") or []
             if isinstance(data, list):

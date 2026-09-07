@@ -5,10 +5,17 @@ import json
 import sys
 from pathlib import Path
 
+import yfinance as yf
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.evaluation.benchmark import (  # noqa: E402
+    add_benchmark_excess_returns,
+    benchmark_returns_for_dates,
+    summarize_excess_returns,
+)
 from src.evaluation.forward_validation import (  # noqa: E402
     evaluate_predictions,
     fetch_histories_yfinance,
@@ -32,8 +39,17 @@ def _compact_row(row: dict, horizon: int | None = None) -> dict:
             f"h{horizon}_return_pct": row.get(f"h{horizon}_return_pct"),
             f"h{horizon}_max_return_pct": row.get(f"h{horizon}_max_return_pct"),
             f"h{horizon}_max_drawdown_pct": row.get(f"h{horizon}_max_drawdown_pct"),
+            f"h{horizon}_benchmark_return_pct": row.get(f"h{horizon}_benchmark_return_pct"),
+            f"h{horizon}_excess_return_pct": row.get(f"h{horizon}_excess_return_pct"),
         })
     return result
+
+
+def _fetch_topix(predictions: list[dict]) -> object:
+    dates = [str(row["date"]) for row in predictions]
+    start = min(dates)
+    # A broad end date is intentional: incomplete horizons remain None.
+    return yf.Ticker("^TOPX").history(start=start, period=None, auto_adjust=False, actions=False)
 
 
 def main() -> int:
@@ -53,7 +69,19 @@ def main() -> int:
 
     histories = fetch_histories_yfinance(predictions, max_horizon=60)
     evaluated = evaluate_predictions(predictions, histories, horizons=(5, 20, 60), forecast_horizon=5)
+
+    topix_history = _fetch_topix(predictions)
+    benchmark = benchmark_returns_for_dates(
+        {str(row["date"]) for row in predictions}, topix_history, horizons=(5, 20, 60)
+    )
+    evaluated = add_benchmark_excess_returns(evaluated, benchmark, horizons=(5, 20, 60))
+
     summary = summarize_evaluations(evaluated, horizons=(5, 20, 60))
+    summary["benchmark"] = {
+        "symbol": "^TOPX",
+        "name": "TOPIX",
+        "excess_returns": summarize_excess_returns(evaluated, horizons=(5, 20, 60)),
+    }
     summary["source"] = {
         "repository": "nakaj1214/trader",
         "source_path": "dashboard/data/predictions_jp.json",

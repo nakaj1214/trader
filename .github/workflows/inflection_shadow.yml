@@ -41,7 +41,6 @@ jobs:
       - name: Run JP inflection shadow scan
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
-          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
         run: python scripts/run_inflection_shadow.py
 
       - name: Commit immutable daily snapshot

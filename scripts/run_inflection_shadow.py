@@ -5,12 +5,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.screening.inflection_live import scan_japan_inflection
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "dashboard" / "data" / "inflection"
 LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.json"
+JST = ZoneInfo("Asia/Tokyo")
 
 MIN_UNIVERSE_COUNT = 3000
 MIN_PRICE_COVERAGE = 0.70
@@ -56,13 +58,20 @@ def validate_report(report: dict[str, Any]) -> None:
         raise RuntimeError("DATA_HEALTH: duplicate candidate tickers detected")
 
 
+def snapshot_date(now: datetime | None = None) -> str:
+    """Return the calendar date in Japan used for the immutable snapshot filename."""
+    current = now or datetime.now(JST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=JST)
+    return current.astimezone(JST).strftime("%Y-%m-%d")
+
+
 def main() -> None:
     report = scan_japan_inflection()
     validate_report(report)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d")
-    snapshot = OUT_DIR / f"{stamp}.json"
+    snapshot = OUT_DIR / f"{snapshot_date()}.json"
     payload = json.dumps(report, ensure_ascii=False, indent=2)
     snapshot.write_text(payload + "\n", encoding="utf-8")
     LATEST.write_text(payload + "\n", encoding="utf-8")

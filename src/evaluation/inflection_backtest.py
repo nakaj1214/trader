@@ -45,6 +45,18 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
     return result.sort_index()
 
 
+def _true_max_drawdown_pct(entry_price: float, closes: pd.Series) -> float | None:
+    """Return the maximum peak-to-trough drawdown after entry."""
+    if entry_price <= 0 or closes.empty:
+        return None
+    values = pd.concat(
+        [pd.Series([entry_price], index=[closes.index[0] - pd.Timedelta(microseconds=1)]), closes]
+    ).astype(float)
+    running_peak = values.cummax()
+    drawdowns = (values / running_peak - 1.0) * 100.0
+    return float(drawdowns.min())
+
+
 def simulate_signal(
     signal: dict[str, Any],
     history: pd.DataFrame,
@@ -71,9 +83,18 @@ def simulate_signal(
     future_closes = closes[closes.index >= entry_date]
     if len(future_closes) < holding_days or entry_price <= 0:
         return TradeResult(
-            ticker, str(signal_date.date()), score,
-            str(entry_date.date()), entry_price,
-            None, None, None, None, None, None, None,
+            ticker,
+            str(signal_date.date()),
+            score,
+            str(entry_date.date()),
+            entry_price,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
 
     window = future_closes.iloc[:holding_days]
@@ -81,7 +102,7 @@ def simulate_signal(
     exit_price = float(window.iloc[-1])
     gross = (exit_price / entry_price - 1.0) * 100.0
     max_return = (float(window.max()) / entry_price - 1.0) * 100.0
-    max_drawdown = (float(window.min()) / entry_price - 1.0) * 100.0
+    max_drawdown = _true_max_drawdown_pct(entry_price, window)
     net = gross - round_trip_cost_pct
     if apply_tax and net > 0:
         net *= 1.0 - tax_rate_pct / 100.0
@@ -97,7 +118,7 @@ def simulate_signal(
         gross_return_pct=round(gross, 6),
         net_return_pct=round(net, 6),
         max_return_pct=round(max_return, 6),
-        max_drawdown_pct=round(max_drawdown, 6),
+        max_drawdown_pct=round(max_drawdown, 6) if max_drawdown is not None else None,
         explosive_50pct=max_return >= 50.0,
     )
 
@@ -133,6 +154,10 @@ def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
         "median_net_return_pct": round(median(returns), 6) if returns else None,
         "profit_factor": round(gross_profit / gross_loss, 6) if gross_loss > 0 else None,
         "explosive_50pct_count": sum(value >= 50.0 for value in max_returns),
-        "explosive_50pct_rate_pct": round(sum(value >= 50.0 for value in max_returns) / len(max_returns) * 100.0, 3) if max_returns else None,
+        "explosive_50pct_rate_pct": (
+            round(sum(value >= 50.0 for value in max_returns) / len(max_returns) * 100.0, 3)
+            if max_returns
+            else None
+        ),
         "median_max_drawdown_pct": round(median(drawdowns), 6) if drawdowns else None,
     }

@@ -46,13 +46,14 @@ class JQuantsV2Client:
             time.sleep(self.min_interval - elapsed)
 
     def _retry_delay(self, response: requests.Response | None, attempt: int) -> float:
-        retry_after = response.headers.get("Retry-After") if response is not None else None
-        if retry_after:
+        retry_after_raw = response.headers.get("Retry-After") if response is not None else None
+        if retry_after_raw is not None:
             try:
-                return max(0.0, float(retry_after))
+                retry_after = float(str(retry_after_raw))
+                return max(0.0, retry_after)
             except ValueError:
                 pass
-        return self.retry_backoff * (2**attempt)
+        return float(self.retry_backoff * (2**attempt))
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:
         last_error: Exception | None = None

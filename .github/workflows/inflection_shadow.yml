@@ -20,6 +20,8 @@ jobs:
 
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      JQUANTS_PLAN: free
+      JQUANTS_DATA_DELAY_WEEKS: '12'
 
     steps:
       - name: Checkout repository

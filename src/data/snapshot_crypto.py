@@ -44,5 +44,5 @@ def decrypt_json(text: str, secret: str) -> dict[str, Any]:
         raise ValueError("snapshot decryption failed; wrong key or corrupted data") from exc
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("decrypted snapshot must contain a JSON object")
+        raise TypeError("decrypted snapshot must contain a JSON object")
     return payload

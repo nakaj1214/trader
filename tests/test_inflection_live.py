@@ -125,7 +125,7 @@ def test_fundamentals_do_not_compare_same_fiscal_year_correction_as_yoy() -> Non
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     prices = {"1111.T": _price_frame()}
     with (
-        patch("src.screening.inflection_live._fetch_price_data", return_value=prices) as fetch,
+        patch("src.screening.inflection_live.fetch_price_data", return_value=prices) as fetch,
         patch.dict("os.environ", {"GITHUB_SHA": "abc123", "JQUANTS_PLAN": "free"}),
     ):
         report = scan_japan_inflection(

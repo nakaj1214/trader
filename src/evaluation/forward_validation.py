@@ -1,7 +1,7 @@
 """Forward validation of historical prediction snapshots.
 
 This module reconstructs predictions exactly as they were committed to Git and
-compares them with prices observed later.  It is intentionally independent from
+compares them with prices observed later. It is intentionally independent from
 the current prediction code so changes to the model cannot rewrite history.
 """
 
@@ -110,8 +110,14 @@ def evaluate_prediction(
     history: pd.DataFrame,
     horizons: tuple[int, ...] = (5, 20, 60),
     reference_tolerance_pct: float = 1.0,
+    forecast_horizon: int = 5,
 ) -> dict[str, Any]:
-    """Compare one immutable historical prediction with later market prices."""
+    """Compare one immutable historical prediction with later market prices.
+
+    Forecast-direction and forecast-price accuracy are evaluated only at the
+    model's original forecast horizon. Longer horizons are candidate-outcome
+    measurements, not forecast-accuracy measurements.
+    """
     result = dict(prediction)
     pred_date = pd.Timestamp(str(prediction["date"]))
     current_price = _safe_float(prediction.get("current_price"))
@@ -151,24 +157,21 @@ def evaluate_prediction(
             result[f"{prefix}_return_pct"] = round(actual_return, 6)
             result[f"{prefix}_max_return_pct"] = round((float(window.max()) / current_price - 1.0) * 100.0, 6)
             result[f"{prefix}_max_drawdown_pct"] = round((float(window.min()) / current_price - 1.0) * 100.0, 6)
-            if predicted_price is not None:
-                predicted_direction = predicted_price > current_price
-                actual_direction = actual_close > current_price
-                result[f"{prefix}_direction_hit"] = predicted_direction == actual_direction
-            else:
-                result[f"{prefix}_direction_hit"] = None
         else:
             result[f"{prefix}_return_pct"] = None
             result[f"{prefix}_max_return_pct"] = None
             result[f"{prefix}_max_drawdown_pct"] = None
-            result[f"{prefix}_direction_hit"] = None
 
-        if predicted_price is not None and actual_close:
+        if horizon == forecast_horizon and current_price and predicted_price is not None:
+            predicted_direction = predicted_price > current_price
+            actual_direction = actual_close > current_price
+            result[f"{prefix}_direction_hit"] = predicted_direction == actual_direction
             result[f"{prefix}_forecast_abs_error_pct"] = round(
                 abs(predicted_price - actual_close) / actual_close * 100.0,
                 6,
             )
         else:
+            result[f"{prefix}_direction_hit"] = None
             result[f"{prefix}_forecast_abs_error_pct"] = None
 
     return result
@@ -208,6 +211,7 @@ def evaluate_predictions(
     histories: dict[str, pd.DataFrame],
     horizons: tuple[int, ...] = (5, 20, 60),
     reference_tolerance_pct: float = 1.0,
+    forecast_horizon: int = 5,
 ) -> list[dict[str, Any]]:
     return [
         evaluate_prediction(
@@ -215,6 +219,7 @@ def evaluate_predictions(
             history=histories.get(str(row["ticker"]), pd.DataFrame()),
             horizons=horizons,
             reference_tolerance_pct=reference_tolerance_pct,
+            forecast_horizon=forecast_horizon,
         )
         for row in predictions
     ]

@@ -6,15 +6,19 @@ on:
     paths:
       - "src/evaluation/forward_validation.py"
       - "src/evaluation/benchmark.py"
+      - "src/evaluation/inflection_backtest.py"
       - "src/data/validation.py"
       - "src/data/point_in_time.py"
+      - "src/data/providers/edinet_provider.py"
       - "src/strategy/**"
       - "scripts/rebuild_forward_validation.py"
       - "tests/test_forward_validation.py"
       - "tests/test_benchmark.py"
       - "tests/test_data_validation.py"
       - "tests/test_point_in_time.py"
+      - "tests/test_edinet_provider.py"
       - "tests/test_inflection_strategy.py"
+      - "tests/test_inflection_backtest.py"
       - ".github/workflows/forward_validation.yml"
   workflow_dispatch:
 
@@ -48,7 +52,9 @@ jobs:
             tests/test_benchmark.py \
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
             tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py \
             -q --override-ini="addopts="
 
       - name: Core coverage
@@ -58,11 +64,15 @@ jobs:
             tests/test_benchmark.py \
             tests/test_data_validation.py \
             tests/test_point_in_time.py \
+            tests/test_edinet_provider.py \
             tests/test_inflection_strategy.py \
+            tests/test_inflection_backtest.py \
             --cov=src.evaluation.forward_validation \
             --cov=src.evaluation.benchmark \
+            --cov=src.evaluation.inflection_backtest \
             --cov=src.data.validation \
             --cov=src.data.point_in_time \
+            --cov=src.data.providers.edinet_provider \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \
             -q --override-ini="addopts="

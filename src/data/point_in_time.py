@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 
 def _as_aware_utc(value: str | datetime) -> datetime:
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    dt = datetime.fromisoformat(value) if isinstance(value, str) else value
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def is_available_at(disclosed_at: str | datetime, signal_at: str | datetime) -> bool:
@@ -27,9 +28,7 @@ def filter_available_records(
     available: list[dict[str, Any]] = []
     for record in records:
         disclosed_at = record.get(disclosure_field)
-        if disclosed_at is None:
-            continue
-        if is_available_at(disclosed_at, signal_at):
+        if disclosed_at is not None and is_available_at(disclosed_at, signal_at):
             available.append(record)
     return available
 

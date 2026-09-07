@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from src.evaluation.forward_validation import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.evaluation.forward_validation import (  # noqa: E402
     evaluate_predictions,
     fetch_histories_yfinance,
     iter_prediction_snapshots,
@@ -15,7 +20,7 @@ from src.evaluation.forward_validation import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rebuild committed JP predictions and compare them with later prices.")
-    parser.add_argument("--repo-root", default=".")
+    parser.add_argument("--repo-root", default=str(REPO_ROOT))
     parser.add_argument("--since", default="2026-02-18")
     parser.add_argument("--until", default=None)
     parser.add_argument("--output", default="artifacts/forward_validation.json")

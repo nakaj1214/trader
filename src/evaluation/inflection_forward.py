@@ -32,7 +32,7 @@ def load_inflection_signals(
     for path in sorted(snapshot_dir.glob("????-??-??.enc")):
         try:
             payload = decrypt_json(path.read_text(encoding="utf-8"), encryption_secret)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             continue
         if payload.get("mode") != "shadow":
             continue

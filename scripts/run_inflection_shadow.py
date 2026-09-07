@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from src.screening.inflection_live import scan_japan_inflection
 
@@ -11,9 +12,54 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "dashboard" / "data" / "inflection"
 LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.json"
 
+MIN_UNIVERSE_COUNT = 3000
+MIN_PRICE_COVERAGE = 0.70
+
+
+def validate_report(report: dict[str, Any]) -> None:
+    """Reject incomplete or inconsistent scan results before they are persisted."""
+    universe = int(report.get("universe_count") or 0)
+    price_data = int(report.get("price_data_count") or 0)
+    deep_count = int(report.get("deep_candidate_count") or 0)
+    candidates = report.get("candidates")
+
+    if universe < MIN_UNIVERSE_COUNT:
+        raise RuntimeError(
+            f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}"
+        )
+
+    if universe <= 0 or price_data / universe < MIN_PRICE_COVERAGE:
+        coverage = (price_data / universe) if universe > 0 else 0.0
+        raise RuntimeError(
+            "DATA_HEALTH: price coverage too low: "
+            f"{price_data}/{universe} ({coverage:.1%})"
+        )
+
+    if deep_count <= 0:
+        raise RuntimeError("DATA_HEALTH: no deep candidates were produced")
+
+    if not isinstance(candidates, list) or len(candidates) != deep_count:
+        actual = len(candidates) if isinstance(candidates, list) else "invalid"
+        raise RuntimeError(
+            "DATA_HEALTH: candidate count mismatch: "
+            f"deep_candidate_count={deep_count}, candidates={actual}"
+        )
+
+    tickers = [
+        str(row.get("ticker") or "")
+        for row in candidates
+        if isinstance(row, dict)
+    ]
+    if len(tickers) != len(candidates) or any(not ticker for ticker in tickers):
+        raise RuntimeError("DATA_HEALTH: candidate ticker missing or invalid")
+    if len(tickers) != len(set(tickers)):
+        raise RuntimeError("DATA_HEALTH: duplicate candidate tickers detected")
+
 
 def main() -> None:
     report = scan_japan_inflection()
+    validate_report(report)
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d")
     snapshot = OUT_DIR / f"{stamp}.json"

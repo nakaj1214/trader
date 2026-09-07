@@ -15,6 +15,7 @@ def _healthy_report() -> dict:
         "strategy_version": "jp-inflection-shadow-v1",
         "report_schema_version": 3,
         "source_commit_sha": "abc123",
+        "generated_at": "2026-09-07T08:00:00+00:00",
         "universe_count": 3700,
         "price_data_count": 3500,
         "technical_usable_count": 3300,
@@ -63,6 +64,20 @@ def test_validate_report_rejects_invalid_market_date() -> None:
     report["latest_price_date"] = "not-a-date"
     with pytest.raises(RuntimeError, match="invalid latest market date"):
         validate_report(report)
+
+
+def test_validate_report_rejects_stale_data_on_normal_tse_session() -> None:
+    report = _healthy_report()
+    report["latest_price_date"] = "2026-09-04"
+    with pytest.raises(RuntimeError, match="market data is stale"):
+        validate_report(report)
+
+
+def test_validate_report_accepts_previous_session_on_weekend() -> None:
+    report = _healthy_report()
+    report["generated_at"] = "2026-09-12T08:00:00+00:00"
+    report["latest_price_date"] = "2026-09-11"
+    validate_report(report)
 
 
 def test_validate_report_rejects_duplicate_candidates() -> None:

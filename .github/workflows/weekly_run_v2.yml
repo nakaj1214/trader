@@ -1,8 +1,9 @@
-name: Weekly Stock Analysis v2
+name: Legacy Weekly Stock Analysis v2
 
+# Legacy Prophet/LightGBM pipeline retained for comparison only.
+# It is no longer scheduled because production screening has moved to the
+# Japanese inflection shadow scanner.
 on:
-  schedule:
-    - cron: '0 0 * * 0'  # Every Sunday UTC 00:00 (JST 09:00)
   workflow_dispatch:
 
 concurrency:
@@ -42,7 +43,7 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -q --override-ini="addopts="
 
-      - name: Run stock analysis (new pipeline)
+      - name: Run legacy stock analysis
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
@@ -57,10 +58,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add dashboard/data/
-          git diff --staged --quiet || git commit -m "chore: update dashboard data [skip ci]"
-
+          git diff --staged --quiet || git commit -m "chore: update legacy dashboard data [skip ci]"
           git pull --rebase --autostash origin "${{ github.ref_name }}"
           git push
 
@@ -68,5 +67,5 @@ jobs:
         if: always() && env.SLACK_WEBHOOK_URL != ''
         run: |
           curl -sS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"Weekly Stock Analysis v2: ${{ job.status }}\nref=${{ github.ref_name }}\nrun=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            --data "{\"text\":\"Legacy Weekly Stock Analysis v2: ${{ job.status }}\nref=${{ github.ref_name }}\nrun=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "${SLACK_WEBHOOK_URL}"

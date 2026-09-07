@@ -21,8 +21,9 @@ def expected_tse_session_date(generated_at: str | datetime) -> str:
     timestamp = pd.Timestamp(generated_at)
     if timestamp.tzinfo is None:
         raise ValueError("generated_at must include a timezone")
-    japan_date = timestamp.tz_convert(JST).date().isoformat()
+    japan_date = str(timestamp.tz_convert(JST).date().isoformat())
     calendar = xcals.get_calendar(TSE_CALENDAR)
-    if calendar.is_session(japan_date):
+    if bool(calendar.is_session(japan_date)):
         return japan_date
-    return calendar.date_to_session(japan_date, direction="previous").date().isoformat()
+    previous_session = calendar.date_to_session(japan_date, direction="previous")
+    return str(previous_session.date().isoformat())

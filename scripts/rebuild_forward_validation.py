@@ -18,6 +18,24 @@ from src.evaluation.forward_validation import (  # noqa: E402
 )
 
 
+def _compact_row(row: dict, horizon: int | None = None) -> dict:
+    result = {
+        "date": row.get("date"),
+        "ticker": row.get("ticker"),
+        "current_price": row.get("current_price"),
+        "reference_close": row.get("reference_close"),
+        "reference_price_diff_pct": row.get("reference_price_diff_pct"),
+        "source_commit": row.get("source_commit"),
+    }
+    if horizon is not None:
+        result.update({
+            f"h{horizon}_return_pct": row.get(f"h{horizon}_return_pct"),
+            f"h{horizon}_max_return_pct": row.get(f"h{horizon}_max_return_pct"),
+            f"h{horizon}_max_drawdown_pct": row.get(f"h{horizon}_max_drawdown_pct"),
+        })
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rebuild committed JP predictions and compare them with later prices.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
@@ -34,7 +52,7 @@ def main() -> int:
         raise SystemExit("No committed predictions found")
 
     histories = fetch_histories_yfinance(predictions, max_horizon=60)
-    evaluated = evaluate_predictions(predictions, histories, horizons=(5, 20, 60))
+    evaluated = evaluate_predictions(predictions, histories, horizons=(5, 20, 60), forecast_horizon=5)
     summary = summarize_evaluations(evaluated, horizons=(5, 20, 60))
     summary["source"] = {
         "repository": "nakaj1214/trader",
@@ -43,6 +61,31 @@ def main() -> int:
         "until": args.until,
         "snapshot_count": len(snapshots),
     }
+
+    mismatches = [row for row in evaluated if row.get("reference_price_match") is False]
+    mismatches.sort(key=lambda row: abs(float(row.get("reference_price_diff_pct") or 0.0)), reverse=True)
+    summary["data_quality"]["reference_price_mismatches"] = [_compact_row(row) for row in mismatches]
+
+    for horizon in (20, 60):
+        explosive = [
+            row for row in evaluated
+            if isinstance(row.get(f"h{horizon}_max_return_pct"), (int, float))
+            and float(row[f"h{horizon}_max_return_pct"]) >= 50.0
+        ]
+        explosive.sort(key=lambda row: float(row[f"h{horizon}_max_return_pct"]), reverse=True)
+        summary["performance"][f"h{horizon}"]["explosive_candidates"] = [
+            _compact_row(row, horizon=horizon) for row in explosive
+        ]
+
+    h5_rows = [row for row in evaluated if isinstance(row.get("h5_return_pct"), (int, float))]
+    summary["performance"]["h5"]["best_candidates"] = [
+        _compact_row(row, horizon=5)
+        for row in sorted(h5_rows, key=lambda row: float(row["h5_return_pct"]), reverse=True)[:10]
+    ]
+    summary["performance"]["h5"]["worst_candidates"] = [
+        _compact_row(row, horizon=5)
+        for row in sorted(h5_rows, key=lambda row: float(row["h5_return_pct"]))[:10]
+    ]
 
     output_path = repo_root / args.output
     summary_path = repo_root / args.summary

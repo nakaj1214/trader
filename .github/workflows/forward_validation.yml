@@ -80,11 +80,5 @@ jobs:
       - name: Rebuild committed predictions and validate against market prices
         run: python scripts/rebuild_forward_validation.py --since 2026-02-18
 
-      - name: Upload validation reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: forward-validation-report
-          path: |
-            artifacts/forward_validation.json
-            artifacts/forward_validation_summary.json
-          retention-days: 30
+      # Reports intentionally remain on the ephemeral runner. Prediction-level
+      # data must not be published as a plaintext Actions artifact.

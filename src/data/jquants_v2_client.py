@@ -3,6 +3,7 @@
 This intentionally does not reuse the legacy V1-compatible provider. V2 uses
 static x-api-key authentication and renamed endpoints/fields.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,14 @@ class JQuantsV2Client:
         max_retries: int = 3,
         retry_backoff: float = 2.0,
     ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if min_interval < 0:
+            raise ValueError("min_interval cannot be negative")
+        if max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if retry_backoff < 0:
+            raise ValueError("retry_backoff cannot be negative")
         self.api_key = api_key or os.getenv("JQUANTS_API_KEY")
         self.timeout = timeout
         self.min_interval = min_interval
@@ -51,18 +60,28 @@ class JQuantsV2Client:
                 return max(0.0, float(retry_after))
             except ValueError:
                 pass
-        return self.retry_backoff * (2 ** attempt)
+        return self.retry_backoff * (2**attempt)
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:
         for attempt in range(self.max_retries + 1):
             self._wait_for_slot()
-            response = requests.get(
-                f"{BASE_URL}{path}",
-                params=query,
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            self._last_call = time.monotonic()
+            try:
+                response = requests.get(
+                    f"{BASE_URL}{path}",
+                    params=query,
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
+            except requests.RequestException:
+                # A failed connection still consumed an attempt. Record it so a
+                # reconnect cannot bypass the client-side rate limiter.
+                self._last_call = time.monotonic()
+                if attempt >= self.max_retries:
+                    raise
+                time.sleep(self.retry_backoff * (2**attempt))
+                continue
+            else:
+                self._last_call = time.monotonic()
 
             if response.status_code not in RETRYABLE_STATUS_CODES:
                 response.raise_for_status()
@@ -77,16 +96,24 @@ class JQuantsV2Client:
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         query = dict(params or {})
+        seen_cursors: set[str] = set()
         while True:
             response = self._request(path, query)
             payload = response.json()
-            data = payload.get("data") or []
-            if isinstance(data, list):
-                rows.extend(item for item in data if isinstance(item, dict))
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"Invalid J-Quants response for {path}: expected an object")
+            data = payload.get("data", [])
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise RuntimeError(f"Invalid J-Quants response for {path}: data must be a list of objects")
+            rows.extend(data)
             cursor = payload.get("pagination_key") or payload.get("cursor")
             if not cursor:
                 break
-            query["pagination_key"] = str(cursor)
+            cursor = str(cursor)
+            if cursor in seen_cursors:
+                raise RuntimeError(f"Invalid J-Quants response for {path}: repeated pagination cursor")
+            seen_cursors.add(cursor)
+            query["pagination_key"] = cursor
         return rows
 
     def listed_issues(self, date: str | None = None) -> list[dict[str, Any]]:

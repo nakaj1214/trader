@@ -11,19 +11,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.evaluation.benchmark import (
+from src.evaluation.benchmark import (  # noqa: E402
     add_benchmark_excess_returns,
     benchmark_returns_for_dates,
     summarize_excess_returns,
 )
-from src.evaluation.forward_validation import (
+from src.evaluation.forward_validation import (  # noqa: E402
     evaluate_predictions,
     fetch_histories_yfinance,
     iter_prediction_snapshots,
     reconstruct_predictions,
     summarize_evaluations,
 )
-from src.evaluation.inflection_backtest import (
+from src.evaluation.inflection_backtest import (  # noqa: E402
     simulate_signals,
     summarize_trades,
 )
@@ -206,7 +206,11 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print(
+        "forward validation complete: "
+        f"snapshots={len(snapshots)} predictions={len(evaluated)} "
+        f"output={output_path} summary={summary_path}"
+    )
     return 0
 
 

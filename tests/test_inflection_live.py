@@ -8,6 +8,7 @@ import pytest
 from src.screening.inflection_live import (
     LIVE_MEASURABLE_MAX_SCORE,
     _classify,
+    _fundamental_features,
     _normalize_available_score,
     scan_japan_inflection,
 )
@@ -27,10 +28,10 @@ class FakeJQuantsClient:
         assert code == "11110"
         return [
             {
-                "DiscDate": "2026-05-01",
+                "DiscDate": "2025-08-01",
                 "DiscTime": "15:00",
                 "CurPerType": "Q1",
-                "CurFYEn": "2027-03-31",
+                "CurFYEn": "2026-03-31",
                 "Sales": 100.0,
                 "OP": 10.0,
                 "FOP": 20.0,
@@ -66,6 +67,20 @@ def test_classify_marks_overextended_before_candidate_thresholds() -> None:
     assert _classify(100.0, {"return_20d_pct": 55.0, "return_60d_pct": 60.0}) == "OVEREXTENDED"
 
 
+def test_fundamentals_use_prior_fiscal_year_for_yoy_and_revision_for_forecast() -> None:
+    rows = [
+        {"DiscDate": "2025-08-01", "CurPerType": "Q1", "CurFYEn": "2026-03-31", "Sales": 100, "OP": 10},
+        {"DiscDate": "2026-05-01", "CurPerType": "Q1", "CurFYEn": "2027-03-31", "Sales": 120, "OP": 15, "FOP": 20},
+        {"DiscDate": "2026-08-01", "CurPerType": "Q1", "CurFYEn": "2027-03-31", "Sales": 140, "OP": 25, "FOP": 25},
+    ]
+
+    features = _fundamental_features(rows)
+
+    assert features["revenue_growth_yoy_pct"] == pytest.approx(40.0)
+    assert features["operating_profit_growth_yoy_pct"] == pytest.approx(150.0)
+    assert features["upward_revision_pct"] == pytest.approx(25.0)
+
+
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     prices = {"1111.T": _price_frame()}
     with patch("src.screening.inflection_live._fetch_price_data", return_value=prices) as fetch:
@@ -75,7 +90,7 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
             min_turnover_jpy=0,
         )
 
-    fetch.assert_called_once_with(["1111.T"], 252)
+    fetch.assert_called_once_with(["1111.T"], 252, auto_adjust=True)
     assert report["universe_count"] == 1
     assert report["price_data_count"] == 1
     assert report["deep_candidate_count"] == 1

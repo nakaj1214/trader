@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 
-from scripts.run_inflection_shadow import snapshot_date, validate_report
+from scripts import run_inflection_shadow
+from scripts.run_inflection_shadow import persist_report, snapshot_date, validate_report
 
 
 def _healthy_report() -> dict:
@@ -45,3 +47,16 @@ def test_snapshot_date_uses_japan_calendar_date() -> None:
     # 15:30 UTC is already the next calendar day in Japan.
     now = datetime(2026, 9, 7, 15, 30, tzinfo=UTC)
     assert snapshot_date(now) == "2026-09-08"
+
+
+def test_persist_report_does_not_replace_daily_snapshot(tmp_path, monkeypatch) -> None:
+    out_dir = tmp_path / "inflection"
+    latest = tmp_path / "latest.json"
+    monkeypatch.setattr(run_inflection_shadow, "OUT_DIR", out_dir)
+    monkeypatch.setattr(run_inflection_shadow, "LATEST", latest)
+
+    snapshot = persist_report({"run": 1}, date="2026-09-07")
+    persist_report({"run": 2}, date="2026-09-07")
+
+    assert json.loads(snapshot.read_text(encoding="utf-8")) == {"run": 1}
+    assert json.loads(latest.read_text(encoding="utf-8")) == {"run": 2}

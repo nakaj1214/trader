@@ -20,7 +20,7 @@ from src.screening.indicators import (
     calc_rsi,
     calc_volume_trend,
 )
-from src.screening.scorer import score_stocks, select_top_n
+from src.screening.scorer import _extract_ticker_frame, score_stocks, select_top_n
 from src.screening.universe import load_universe
 
 
@@ -164,6 +164,16 @@ class TestIndicators:
 
 
 class TestScorer:
+
+    def test_extracts_singleton_ticker_multiindex(self) -> None:
+        columns = pd.MultiIndex.from_tuples(
+            [("Close", "7203.T"), ("Volume", "7203.T")],
+            names=["Price", "Ticker"],
+        )
+        raw = pd.DataFrame([[100.0, 1_000.0]], columns=columns)
+        result = _extract_ticker_frame(raw, "7203.T", batch_size=1)
+        assert list(result.columns) == ["Close", "Volume"]
+        assert result.iloc[0]["Close"] == 100.0
 
     def test_score_stocks(self) -> None:
         indicators = pd.DataFrame({

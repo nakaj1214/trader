@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import Mock, patch
+
 import pandas as pd
+import pytest
 
 from src.evaluation.forward_validation import (
     GitSnapshot,
+    MarketDataFetchError,
+    SnapshotLoadError,
     evaluate_prediction,
+    fetch_histories_yfinance,
+    iter_prediction_snapshots,
     reconstruct_predictions,
     summarize_evaluations,
 )
@@ -70,6 +78,29 @@ def test_retrospective_ten_for_one_split_is_normalized() -> None:
     assert round(row["h5_return_pct"], 3) == round((38000 / 35800 - 1) * 100, 3)
 
 
+def test_split_during_forward_window_uses_adjusted_close() -> None:
+    index = pd.bdate_range("2026-01-01", periods=6)
+    history = pd.DataFrame({
+        "Close": [100, 102, 52, 53, 54, 55],
+        "Adj Close": [50, 51, 52, 53, 54, 55],
+    }, index=index)
+    prediction = {"date": "2026-01-01", "ticker": "7203.T",
+                  "current_price": 100.0, "predicted_price": 110.0}
+    row = evaluate_prediction(prediction, history, horizons=(5,))
+    assert row["corporate_action_scale"] == 2.0
+    assert row["reference_close"] == 100.0
+    assert row["h5_close"] == 110.0
+    assert row["h5_return_pct"] == 10.0
+
+
+def test_three_for_one_split_scale_is_recognized() -> None:
+    prediction = {"date": "2026-01-01", "ticker": "7203.T",
+                  "current_price": 300.0, "predicted_price": 330.0}
+    row = evaluate_prediction(prediction, _history([100, 101, 102, 103, 104, 105]), horizons=(5,))
+    assert row["corporate_action_scale"] == 3.0
+    assert row["h5_return_pct"] == 5.0
+
+
 def test_direction_hit_can_be_false_even_when_forecast_is_high() -> None:
     history = _history([100, 99, 98, 97, 96, 95])
     prediction = {"date": "2026-01-01", "ticker": "7203.T", "current_price": 100.0, "predicted_price": 120.0}
@@ -104,3 +135,20 @@ def test_summary_separates_data_quality_and_performance() -> None:
     assert summary["data_quality"]["reference_price_match_rate_pct"] == 50.0
     assert summary["performance"]["h5"]["direction_hit_rate_pct"] == 50.0
     assert summary["performance"]["h5"]["mean_return_pct"] == 3.0
+
+
+def test_snapshot_decode_failure_is_not_silently_skipped() -> None:
+    log = "a" * 40 + "\t2026-01-01T00:00:00Z\n"
+    with patch("src.evaluation.forward_validation._git", side_effect=[log, "not-json"]), \
+            pytest.raises(SnapshotLoadError, match="Could not decode"):
+        iter_prediction_snapshots(Path("."))
+
+
+@pytest.mark.parametrize("history", [pd.DataFrame(), pd.DataFrame({"Volume": [1]})])
+def test_forward_price_fetch_failure_is_not_silently_excluded(history: pd.DataFrame) -> None:
+    ticker = Mock()
+    ticker.history.return_value = history
+    predictions = [{"date": "2026-01-01", "ticker": "7203.T"}]
+    with patch("yfinance.Ticker", return_value=ticker), \
+            pytest.raises(MarketDataFetchError, match="7203.T"):
+        fetch_histories_yfinance(predictions)

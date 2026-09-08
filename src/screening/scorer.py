@@ -161,7 +161,19 @@ def _resolve_markets(market: str, cfg: dict) -> list[str]:
     return [market]
 
 
-def _fetch_price_data(tickers: list[str], lookback_days: int) -> dict[str, pd.DataFrame]:
+def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, batch_size: int) -> pd.DataFrame:
+    """Extract one ticker from flat or singleton/multi-ticker MultiIndex data."""
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw.copy() if batch_size == 1 else pd.DataFrame()
+    for level in range(raw.columns.nlevels):
+        if ticker in raw.columns.get_level_values(level):
+            return raw.xs(ticker, axis=1, level=level, drop_level=True).copy()
+    return pd.DataFrame()
+
+
+def _fetch_price_data(
+    tickers: list[str], lookback_days: int, *, auto_adjust: bool = False
+) -> dict[str, pd.DataFrame]:
     """Fetch OHLCV data in batches via yfinance."""
     period = f"{int(lookback_days * CALENDAR_DAY_FACTOR)}d"
     data: dict[str, pd.DataFrame] = {}
@@ -172,14 +184,17 @@ def _fetch_price_data(tickers: list[str], lookback_days: int) -> dict[str, pd.Da
         logger.info("fetching_batch", progress=f"{min(i + BATCH_SIZE, len(tickers))}/{len(tickers)}")
 
         try:
-            raw = yf.download(batch_str, period=period, group_by="ticker", progress=False)
+            raw = yf.download(
+                batch_str, period=period, group_by="ticker", progress=False,
+                auto_adjust=auto_adjust,
+            )
         except Exception as exc:
             logger.warning("batch_error", start=i, error=str(exc))
             continue
 
         for ticker in batch:
             try:
-                df = raw.copy() if len(batch) == 1 else raw[ticker].copy()
+                df = _extract_ticker_frame(raw, ticker, len(batch))
                 if df.empty or df["Close"].dropna().empty:
                     continue
                 data[ticker] = df.dropna(subset=["Close"])

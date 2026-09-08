@@ -21,6 +21,14 @@ class GitSnapshot:
     payload: dict[str, Any]
 
 
+class SnapshotLoadError(RuntimeError):
+    """Raised when a committed prediction snapshot cannot be decoded safely."""
+
+
+class MarketDataFetchError(RuntimeError):
+    """Raised when forward-validation prices are unavailable for any ticker."""
+
+
 def _git(repo_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo_root), *args],
@@ -49,10 +57,13 @@ def iter_prediction_snapshots(
         sha, committed_at = line.split("\t", 1)
         try:
             payload = json.loads(_git(repo_root, "show", f"{sha}:{source_path}"))
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get("predictions"), list):
-            snapshots.append(GitSnapshot(sha, committed_at, payload))
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+            raise SnapshotLoadError(
+                f"Could not decode prediction snapshot {sha}:{source_path}"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("predictions"), list):
+            raise SnapshotLoadError(f"Invalid prediction snapshot schema {sha}:{source_path}")
+        snapshots.append(GitSnapshot(sha, committed_at, payload))
     return snapshots
 
 
@@ -84,9 +95,14 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _close_series(history: pd.DataFrame) -> pd.Series:
-    if history.empty or "Close" not in history.columns:
+    if history.empty:
         return pd.Series(dtype=float)
-    close = history["Close"]
+    # Adj Close stays continuous across splits. The caller anchors it back to
+    # the prediction-time price scale before computing forward returns.
+    price_column = "Adj Close" if "Adj Close" in history.columns else "Close"
+    if price_column not in history.columns:
+        return pd.Series(dtype=float)
+    close = history[price_column]
     if isinstance(close, pd.DataFrame):
         close = close.iloc[:, 0]
     close = pd.to_numeric(close, errors="coerce").dropna()
@@ -103,7 +119,10 @@ def _infer_corporate_action_scale(
     if not stored_price or not historical_price:
         return 1.0
     ratio = stored_price / historical_price
-    common = (0.1, 0.2, 0.25, 0.5, 2.0, 4.0, 5.0, 10.0)
+    common = (
+        0.1, 0.2, 0.25, 1.0 / 3.0, 0.4, 0.5, 2.0 / 3.0,
+        1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0,
+    )
     for candidate in common:
         if abs(ratio / candidate - 1.0) * 100.0 <= tolerance_pct:
             return candidate
@@ -203,18 +222,26 @@ def fetch_histories_yfinance(
     for row in rows:
         by_ticker.setdefault(str(row["ticker"]), []).append(pd.Timestamp(str(row["date"])))
     histories: dict[str, pd.DataFrame] = {}
+    failures: dict[str, str] = {}
     for ticker, dates in sorted(by_ticker.items()):
         start = min(dates) - timedelta(days=10)
         end = max(dates) + timedelta(days=max_horizon * 2 + 30)
         try:
-            histories[ticker] = yf.Ticker(ticker).history(
+            history = yf.Ticker(ticker).history(
                 start=start.strftime("%Y-%m-%d"),
                 end=end.strftime("%Y-%m-%d"),
                 auto_adjust=False,
                 actions=False,
             )
-        except Exception:  # noqa: BLE001 - provider failures are isolated per ticker
-            histories[ticker] = pd.DataFrame()
+            if _close_series(history).empty:
+                failures[ticker] = "empty or missing adjusted/close prices"
+            else:
+                histories[ticker] = history
+        except Exception as exc:  # noqa: BLE001 - reported together after all fetches
+            failures[ticker] = f"{type(exc).__name__}: {exc}"
+    if failures:
+        details = "; ".join(f"{ticker} ({reason})" for ticker, reason in failures.items())
+        raise MarketDataFetchError(f"Forward price retrieval failed: {details}")
     return histories
 
 

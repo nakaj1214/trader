@@ -1,4 +1,5 @@
 """Run the production Japanese inflection scanner and persist an immutable daily snapshot."""
+
 from __future__ import annotations
 
 import json
@@ -26,16 +27,11 @@ def validate_report(report: dict[str, Any]) -> None:
     candidates = report.get("candidates")
 
     if universe < MIN_UNIVERSE_COUNT:
-        raise RuntimeError(
-            f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}"
-        )
+        raise RuntimeError(f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}")
 
     if universe <= 0 or price_data / universe < MIN_PRICE_COVERAGE:
         coverage = (price_data / universe) if universe > 0 else 0.0
-        raise RuntimeError(
-            "DATA_HEALTH: price coverage too low: "
-            f"{price_data}/{universe} ({coverage:.1%})"
-        )
+        raise RuntimeError(f"DATA_HEALTH: price coverage too low: {price_data}/{universe} ({coverage:.1%})")
 
     if deep_count <= 0:
         raise RuntimeError("DATA_HEALTH: no deep candidates were produced")
@@ -43,15 +39,10 @@ def validate_report(report: dict[str, Any]) -> None:
     if not isinstance(candidates, list) or len(candidates) != deep_count:
         actual = len(candidates) if isinstance(candidates, list) else "invalid"
         raise RuntimeError(
-            "DATA_HEALTH: candidate count mismatch: "
-            f"deep_candidate_count={deep_count}, candidates={actual}"
+            f"DATA_HEALTH: candidate count mismatch: deep_candidate_count={deep_count}, candidates={actual}"
         )
 
-    tickers = [
-        str(row.get("ticker") or "")
-        for row in candidates
-        if isinstance(row, dict)
-    ]
+    tickers = [str(row.get("ticker") or "") for row in candidates if isinstance(row, dict)]
     if len(tickers) != len(candidates) or any(not ticker for ticker in tickers):
         raise RuntimeError("DATA_HEALTH: candidate ticker missing or invalid")
     if len(tickers) != len(set(tickers)):
@@ -66,15 +57,30 @@ def snapshot_date(now: datetime | None = None) -> str:
     return current.astimezone(JST).strftime("%Y-%m-%d")
 
 
+def persist_report(report: dict[str, Any], *, date: str | None = None) -> Path:
+    """Persist the latest report without ever replacing a dated snapshot."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    snapshot = OUT_DIR / f"{date or snapshot_date()}.json"
+    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+
+    try:
+        # ``x`` makes the immutability guarantee hold even if two runs race.
+        with snapshot.open("x", encoding="utf-8", newline="") as handle:
+            handle.write(payload)
+    except FileExistsError:
+        # A retry may refresh the moving "latest" file, but a historical daily
+        # observation must never be rewritten with later market/API data.
+        pass
+
+    LATEST.write_text(payload, encoding="utf-8")
+    return snapshot
+
+
 def main() -> None:
     report = scan_japan_inflection()
     validate_report(report)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    snapshot = OUT_DIR / f"{snapshot_date()}.json"
-    payload = json.dumps(report, ensure_ascii=False, indent=2)
-    snapshot.write_text(payload + "\n", encoding="utf-8")
-    LATEST.write_text(payload + "\n", encoding="utf-8")
+    persist_report(report)
 
     counts = report.get("classification_counts", {})
     print(

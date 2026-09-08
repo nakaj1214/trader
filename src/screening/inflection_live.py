@@ -6,6 +6,7 @@ The scanner is deliberately two-stage:
 
 Outputs are research candidates only.  They are not BUY recommendations.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -116,8 +117,11 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         return {}
     latest = rows[-1]
     period_type = latest.get("CurPerType")
-    same_period = [r for r in rows if r.get("CurPerType") == period_type]
-    previous = same_period[-2] if len(same_period) >= 2 else None
+    fiscal_end = latest.get("CurFYEn")
+    # YoY means the same reporting period in a different fiscal year. Multiple
+    # disclosures for the current fiscal year are revisions, not a YoY base.
+    comparable = [row for row in rows[:-1] if row.get("CurPerType") == period_type and row.get("CurFYEn") != fiscal_end]
+    previous = comparable[-1] if comparable else None
 
     sales = _to_float(latest.get("Sales"))
     prev_sales = _to_float(previous.get("Sales")) if previous else None
@@ -136,12 +140,11 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         margin_change = (op / sales - prev_op / prev_sales) * 100.0
 
     upward_revision = None
-    fiscal_end = latest.get("CurFYEn")
     forecast_rows = [r for r in rows if r.get("CurFYEn") == fiscal_end and _to_float(r.get("FOP")) is not None]
     if len(forecast_rows) >= 2:
         old = _to_float(forecast_rows[-2].get("FOP"))
         new = _to_float(forecast_rows[-1].get("FOP"))
-        if old not in (None, 0) and new is not None:
+        if old is not None and old > 0 and new is not None:
             upward_revision = (new / old - 1.0) * 100.0
 
     return {
@@ -199,7 +202,9 @@ def scan_japan_inflection(
         ticker_meta[_ticker_from_code(code)] = row
 
     tickers = sorted(ticker_meta)
-    prices = _fetch_price_data(tickers, lookback_days)
+    # Adjusted OHLC prevents a split inside the lookback window from appearing
+    # as a momentum crash or breakout. Volume remains provider-reported volume.
+    prices = _fetch_price_data(tickers, lookback_days, auto_adjust=True)
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     for ticker, df in prices.items():
         tech = _technical_features(df)

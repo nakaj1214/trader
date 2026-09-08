@@ -182,7 +182,7 @@ def _fetch_price_data(
                 progress=False,
                 auto_adjust=auto_adjust,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - yfinance provider failures are isolated per batch
             logger.warning("batch_error", start=i, error=str(exc))
             continue
 

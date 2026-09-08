@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from scripts.rebuild_inflection_learning import _fetch_learning_histories
 from src.data.snapshot_crypto import encrypt_json
 from src.evaluation.inflection_learning import (
+    _independent_rows,
     build_learning_report,
     evaluate_learning_observations,
     load_learning_observations,
@@ -111,6 +113,70 @@ def test_learning_survives_strategy_and_schema_upgrades(tmp_path: Path) -> None:
     assert report["strategy_versions"] == ["jp-inflection-shadow-v2", "jp-inflection-shadow-v3"]
     assert report["promotion_scope_strategy_version"] == "jp-inflection-shadow-v3"
     assert report["promotion_gate"]["scope"] == "latest_strategy_version_only"
+
+
+def test_independent_rows_allows_signal_on_previous_exit_date() -> None:
+    rows = [
+        {
+            "ticker": "1111.T",
+            "signal_date": "2026-01-05",
+            "horizons": {"h5": {"completed": True, "exit_date": "2026-01-10"}},
+        },
+        {
+            "ticker": "1111.T",
+            "signal_date": "2026-01-09",
+            "horizons": {"h5": {"completed": True, "exit_date": "2026-01-15"}},
+        },
+        {
+            "ticker": "1111.T",
+            "signal_date": "2026-01-10",
+            "horizons": {"h5": {"completed": True, "exit_date": "2026-01-16"}},
+        },
+    ]
+
+    selected = _independent_rows(rows, 5)
+
+    assert [row["signal_date"] for row in selected] == ["2026-01-05", "2026-01-10"]
+
+
+def test_learning_price_fetcher_batches_tickers(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    index = pd.date_range("2026-01-02", periods=10, freq="B")
+
+    def fake_download(tickers: str, **kwargs) -> pd.DataFrame:
+        del kwargs
+        names = tickers.split()
+        calls.append(names)
+        values: dict[tuple[str, str], list[float]] = {}
+        for ticker in names:
+            values[(ticker, "Open")] = [100.0] * len(index)
+            values[(ticker, "High")] = [101.0] * len(index)
+            values[(ticker, "Low")] = [99.0] * len(index)
+            values[(ticker, "Close")] = [100.0] * len(index)
+        frame = pd.DataFrame(values, index=index)
+        frame.columns = pd.MultiIndex.from_tuples(frame.columns)
+        return frame
+
+    import yfinance as yf
+
+    monkeypatch.setattr(yf, "download", fake_download)
+    rows = [
+        {"ticker": "1111.T", "date": "2026-01-05"},
+        {"ticker": "2222.T", "date": "2026-01-05"},
+        {"ticker": "3333.T", "date": "2026-01-05"},
+    ]
+
+    histories = _fetch_learning_histories(
+        rows,
+        max_horizon=5,
+        batch_size=2,
+        max_retries=0,
+        batch_interval_seconds=0.0,
+        sleep=lambda _: None,
+    )
+
+    assert set(histories) == {"1111.T", "2222.T", "3333.T"}
+    assert calls == [["1111.T", "2222.T"], ["3333.T"]]
 
 
 def test_evaluation_records_prediction_miss_and_missed_explosion() -> None:

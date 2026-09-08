@@ -100,13 +100,5 @@ jobs:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY || secrets.JQUANTS_API_KEY }}
         run: python scripts/rebuild_inflection_forward_validation.py
 
-      - name: Upload validation reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: forward-validation-report
-          if-no-files-found: warn
-          path: |
-            artifacts/forward_validation.json
-            artifacts/forward_validation_summary.json
-            artifacts/inflection_forward_validation.json
-          retention-days: 30
+      # Prediction-level validation output intentionally remains on the ephemeral
+      # runner. It must not be published as a plaintext Actions artifact.

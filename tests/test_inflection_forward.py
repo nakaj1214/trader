@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.data.snapshot_crypto import encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
+    SnapshotLoadError,
     benchmark_returns_by_signal_date,
     enrich_trades_with_benchmark,
     load_inflection_signals,
@@ -68,7 +70,18 @@ def test_load_inflection_signals_rejects_filename_market_date_mismatch(tmp_path)
     payload = _payload()
     (snapshot_dir / "2026-09-09.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
 
-    assert load_inflection_signals(snapshot_dir, encryption_secret=SECRET) == []
+    with pytest.raises(SnapshotLoadError, match="metadata/schema"):
+        load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
+
+
+def test_load_inflection_signals_fails_on_wrong_key(tmp_path) -> None:
+    snapshot_dir = tmp_path / "inflection"
+    snapshot_dir.mkdir()
+    payload = _payload()
+    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+
+    with pytest.raises(SnapshotLoadError, match="decrypt or decode"):
+        load_inflection_signals(snapshot_dir, encryption_secret="wrong-secret")
 
 
 def test_load_inflection_signals_ignores_plaintext_json(tmp_path) -> None:

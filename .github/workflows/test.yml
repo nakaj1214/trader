@@ -50,6 +50,7 @@ jobs:
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
             src/screening/inflection_live.py \
+            src/screening/scorer.py \
             src/strategy/inflection.py \
             scripts/rebuild_forward_validation.py \
             scripts/rebuild_inflection_forward_validation.py \
@@ -66,6 +67,7 @@ jobs:
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
             tests/test_inflection_live.py \
+            tests/test_screening_new.py \
             tests/test_shadow_health.py
 
       - name: Type-check production inflection path

@@ -30,6 +30,29 @@ def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, batch_size: int) -> pd
     return pd.DataFrame()
 
 
+def _normalize_for_scanner(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make Close/Volume split-aware while preserving raw yen turnover.
+
+    yfinance ``Adj Close`` is continuous across splits. Scaling Volume by the
+    inverse price-adjustment factor makes ``Close * Volume`` equal the original
+    raw ``Close * Volume`` while preventing a split from looking like a momentum
+    crash or an artificial volume spike.
+    """
+    if "Adj Close" not in frame.columns:
+        return frame
+    raw_close = pd.to_numeric(frame["Close"], errors="coerce")
+    adjusted_close = pd.to_numeric(frame["Adj Close"], errors="coerce")
+    raw_volume = pd.to_numeric(frame["Volume"], errors="coerce")
+    valid = (raw_close > 0) & (adjusted_close > 0)
+    if not bool(valid.any()):
+        return frame
+    normalized = frame.copy()
+    factor = (raw_close / adjusted_close).where(valid, 1.0)
+    normalized["Close"] = adjusted_close
+    normalized["Volume"] = raw_volume * factor
+    return normalized
+
+
 def _extract_batch(raw: pd.DataFrame, batch: list[str]) -> dict[str, pd.DataFrame]:
     result: dict[str, pd.DataFrame] = {}
     for ticker in batch:
@@ -39,7 +62,7 @@ def _extract_batch(raw: pd.DataFrame, batch: list[str]) -> dict[str, pd.DataFram
         frame = frame.dropna(subset=["Close"])
         if validate_ohlcv(frame):
             continue
-        result[ticker] = frame
+        result[ticker] = _normalize_for_scanner(frame)
     return result
 
 
@@ -52,11 +75,7 @@ def fetch_price_data(
     retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, pd.DataFrame]:
-    """Fetch raw OHLCV plus ``Adj Close`` and retry missing/invalid symbols.
-
-    ``auto_adjust=False`` is deliberate: raw Close/Volume are needed for turnover,
-    while the scanner uses Adj Close for split-aware momentum and breakout.
-    """
+    """Fetch raw OHLCV plus ``Adj Close`` and retry missing/invalid symbols."""
     if not tickers:
         return {}
 

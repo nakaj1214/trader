@@ -8,10 +8,11 @@ adjustments as *proposals* for a future strategy version.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 

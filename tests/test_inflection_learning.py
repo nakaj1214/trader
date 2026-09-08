@@ -67,6 +67,52 @@ def test_load_learning_observations_uses_all_deep_candidates(tmp_path: Path) -> 
     assert observations[0]["reasons"] == ["売上成長", "出来高増加"]
 
 
+def test_learning_survives_strategy_and_schema_upgrades(tmp_path: Path) -> None:
+    secret = "test-learning-key"
+    snapshots = [
+        ("2026-01-05", "jp-inflection-shadow-v2", 3, "1111.T"),
+        ("2026-01-06", "jp-inflection-shadow-v3", 4, "2222.T"),
+    ]
+    for market_date, strategy_version, schema_version, ticker in snapshots:
+        payload = {
+            "mode": "shadow",
+            "strategy_version": strategy_version,
+            "report_schema_version": schema_version,
+            "latest_price_date": market_date,
+            "candidates": [
+                {
+                    "ticker": ticker,
+                    "classification": "WATCH",
+                    "score": 60.0,
+                    "return_20d_pct": 8.0,
+                    "return_60d_pct": 12.0,
+                    "volume_ratio_20d": 1.2,
+                    "breakout_52w": False,
+                    "reasons": [],
+                }
+            ],
+        }
+        (tmp_path / f"{market_date}.enc").write_text(
+            encrypt_json(payload, secret),
+            encoding="utf-8",
+        )
+
+    observations = load_learning_observations(tmp_path, encryption_secret=secret)
+    report = build_learning_report(
+        observations,
+        {"1111.T": _history([100.0] * 150), "2222.T": _history([100.0] * 150)},
+        _history([100.0] * 150),
+    )
+
+    assert [row["strategy_version"] for row in observations] == [
+        "jp-inflection-shadow-v2",
+        "jp-inflection-shadow-v3",
+    ]
+    assert report["strategy_versions"] == ["jp-inflection-shadow-v2", "jp-inflection-shadow-v3"]
+    assert report["promotion_scope_strategy_version"] == "jp-inflection-shadow-v3"
+    assert report["promotion_gate"]["scope"] == "latest_strategy_version_only"
+
+
 def test_evaluation_records_prediction_miss_and_missed_explosion() -> None:
     observations = [
         {

@@ -13,6 +13,10 @@ from src.evaluation.inflection_backtest import TradeResult, simulate_signal
 BENCHMARK_TICKER = "1306.T"  # NEXT FUNDS TOPIX ETF
 
 
+class SnapshotLoadError(RuntimeError):
+    """Raised when an encrypted inflection snapshot cannot be trusted."""
+
+
 def load_inflection_signals(
     snapshot_dir: Path,
     *,
@@ -21,9 +25,9 @@ def load_inflection_signals(
 ) -> list[dict[str, Any]]:
     """Return one immutable signal row per market-data date/ticker.
 
-    Only encrypted ``YYYY-MM-DD.enc`` snapshots are accepted. The filename must
-    match the report's latest market-data date so holidays/reruns cannot create
-    duplicate signals from unchanged price data.
+    Only encrypted ``YYYY-MM-DD.enc`` snapshots are accepted. Any encrypted
+    snapshot that cannot be decrypted or does not satisfy the expected schema
+    aborts validation instead of being silently skipped.
     """
     signals: dict[tuple[str, str], dict[str, Any]] = {}
     if not snapshot_dir.exists():
@@ -32,10 +36,11 @@ def load_inflection_signals(
     for path in sorted(snapshot_dir.glob("????-??-??.enc")):
         try:
             payload = decrypt_json(path.read_text(encoding="utf-8"), encryption_secret)
-        except (OSError, TypeError, ValueError):
-            continue
+        except (OSError, TypeError, ValueError) as exc:
+            raise SnapshotLoadError(f"Could not decrypt or decode snapshot: {path.name}") from exc
         if payload.get("mode") != "shadow":
-            continue
+            raise SnapshotLoadError(f"Invalid snapshot mode: {path.name}")
+
         strategy_version = str(payload.get("strategy_version") or "")
         source_commit = str(payload.get("source_commit_sha") or "")
         schema_version = payload.get("report_schema_version")
@@ -50,26 +55,32 @@ def load_inflection_signals(
             or storage.get("encrypted") is not True
             or storage.get("snapshot_date_basis") != "latest_price_date"
         ):
-            continue
+            raise SnapshotLoadError(f"Invalid snapshot metadata/schema: {path.name}")
 
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
-            continue
+            raise SnapshotLoadError(f"Invalid candidates payload: {path.name}")
         for candidate in candidates:
             if not isinstance(candidate, dict):
-                continue
+                raise SnapshotLoadError(f"Invalid candidate row: {path.name}")
             classification = str(candidate.get("classification") or "")
             ticker = str(candidate.get("ticker") or "")
-            if classification not in classifications or not ticker:
+            if not ticker:
+                raise SnapshotLoadError(f"Candidate ticker missing: {path.name}")
+            if classification not in classifications:
                 continue
             key = (market_date, ticker)
             if key in signals:
                 continue
+            try:
+                score = float(candidate.get("score") or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}") from exc
             signals[key] = {
                 "ticker": ticker,
                 "signal_date": market_date,
                 "date": market_date,
-                "score": float(candidate.get("score") or 0.0),
+                "score": score,
                 "classification": classification,
                 "strategy_version": strategy_version,
                 "report_schema_version": schema_version,

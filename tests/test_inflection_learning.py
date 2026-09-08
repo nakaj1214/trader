@@ -137,7 +137,7 @@ def test_learning_report_promotes_only_aggregate_evidence_and_public_summary_has
                 "strategy_version": "jp-inflection-shadow-v2",
             }
         )
-        histories[ticker] = _history([100.0 + day * 0.8 for day in range(150)])
+        histories[ticker] = _history([100.0 + day * 2.0 for day in range(150)])
     for index in range(30):
         ticker = f"N{index:03d}.T"
         observations.append(

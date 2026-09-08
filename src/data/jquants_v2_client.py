@@ -100,10 +100,10 @@ class JQuantsV2Client:
             response = self._request(path, query)
             payload = response.json()
             if not isinstance(payload, dict):
-                raise ValueError(f"Invalid J-Quants response for {path}: expected an object")
+                raise TypeError(f"Invalid J-Quants response for {path}: expected an object")
             data = payload.get("data", [])
             if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
-                raise ValueError(f"Invalid J-Quants response for {path}: data must be a list of objects")
+                raise TypeError(f"Invalid J-Quants response for {path}: data must be a list of objects")
             rows.extend(data)
             cursor_raw = payload.get("pagination_key") or payload.get("cursor")
             if not cursor_raw:

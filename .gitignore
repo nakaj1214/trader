@@ -17,7 +17,8 @@ credentials.json
 .data/
 !dashboard/data/*.json
 !dashboard/data/inflection/
-!dashboard/data/inflection/*.json
+!dashboard/data/inflection/*.enc
+!dashboard/data/inflection_candidates.enc
 !dashboard-v2/package.json
 !dashboard-v2/package-lock.json
 !dashboard-v2/tsconfig.json

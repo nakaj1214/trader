@@ -24,6 +24,14 @@ class JQuantsV2Client:
         max_retries: int = 3,
         retry_backoff: float = 2.0,
     ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if min_interval < 0:
+            raise ValueError("min_interval cannot be negative")
+        if max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if retry_backoff < 0:
+            raise ValueError("retry_backoff cannot be negative")
         self.api_key = api_key or os.getenv("JQUANTS_API_KEY")
         self.timeout = timeout
         self.min_interval = min_interval
@@ -44,26 +52,36 @@ class JQuantsV2Client:
         if self._last_call and elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)
 
-    def _retry_delay(self, response: requests.Response, attempt: int) -> float:
-        retry_after = response.headers.get("Retry-After")
-        if retry_after:
+    def _retry_delay(self, response: requests.Response | None, attempt: int) -> float:
+        retry_after_raw = response.headers.get("Retry-After") if response is not None else None
+        if retry_after_raw is not None:
             try:
-                return max(0.0, float(retry_after))
+                retry_after = float(str(retry_after_raw))
+                return max(0.0, retry_after)
             except ValueError:
                 pass
-        return self.retry_backoff * (2 ** attempt)
+        return float(self.retry_backoff * (2**attempt))
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:
         for attempt in range(self.max_retries + 1):
             self._wait_for_slot()
-            response = requests.get(
-                f"{BASE_URL}{path}",
-                params=query,
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            self._last_call = time.monotonic()
+            try:
+                response = requests.get(
+                    f"{BASE_URL}{path}",
+                    params=query,
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
+            except requests.RequestException:
+                # Even a failed transport attempt counts against the local pacing
+                # budget so reconnects cannot accidentally exceed the plan limit.
+                self._last_call = time.monotonic()
+                if attempt >= self.max_retries:
+                    raise
+                time.sleep(self._retry_delay(None, attempt))
+                continue
 
+            self._last_call = time.monotonic()
             if response.status_code not in RETRYABLE_STATUS_CODES:
                 response.raise_for_status()
                 return response
@@ -77,16 +95,24 @@ class JQuantsV2Client:
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         query = dict(params or {})
+        seen_cursors: set[str] = set()
         while True:
             response = self._request(path, query)
             payload = response.json()
-            data = payload.get("data") or []
-            if isinstance(data, list):
-                rows.extend(item for item in data if isinstance(item, dict))
-            cursor = payload.get("pagination_key") or payload.get("cursor")
-            if not cursor:
+            if not isinstance(payload, dict):
+                raise TypeError(f"Invalid J-Quants response for {path}: expected an object")
+            data = payload.get("data", [])
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise TypeError(f"Invalid J-Quants response for {path}: data must be a list of objects")
+            rows.extend(data)
+            cursor_raw = payload.get("pagination_key") or payload.get("cursor")
+            if not cursor_raw:
                 break
-            query["pagination_key"] = str(cursor)
+            cursor = str(cursor_raw)
+            if cursor in seen_cursors:
+                raise ValueError(f"Invalid J-Quants response for {path}: repeated pagination cursor")
+            seen_cursors.add(cursor)
+            query["pagination_key"] = cursor
         return rows
 
     def listed_issues(self, date: str | None = None) -> list[dict[str, Any]]:

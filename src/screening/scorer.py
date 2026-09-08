@@ -76,15 +76,7 @@ def select_top_n(scores: pd.Series, n: int) -> list[str]:
 
 
 def screen(config: dict, market: str = "us") -> pd.DataFrame:
-    """Full screening pipeline: universe -> filter -> indicators -> score -> top-N.
-
-    Args:
-        config: Full application config dict.
-        market: Market to screen, or "us" for all configured markets.
-
-    Returns:
-        DataFrame of top-N stocks with indicator columns and scores.
-    """
+    """Full screening pipeline: universe -> filter -> indicators -> score -> top-N."""
     screening_cfg = config.get("screening", {})
     markets = _resolve_markets(market, screening_cfg)
     top_n: int = screening_cfg.get("top_n", 10)
@@ -132,7 +124,6 @@ def screen(config: dict, market: str = "us") -> pd.DataFrame:
         return pd.DataFrame()
 
     indicators_df = pd.DataFrame(rows).set_index("ticker")
-
     weights = (
         screening_cfg.get("scoring", {}).get("weights")
         or screening_cfg.get("weights")
@@ -161,7 +152,19 @@ def _resolve_markets(market: str, cfg: dict) -> list[str]:
     return [market]
 
 
-def _fetch_price_data(tickers: list[str], lookback_days: int) -> dict[str, pd.DataFrame]:
+def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, batch_size: int) -> pd.DataFrame:
+    """Extract one ticker from flat or singleton/multi-ticker MultiIndex data."""
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw.copy() if batch_size == 1 else pd.DataFrame()
+    for level in range(raw.columns.nlevels):
+        if ticker in raw.columns.get_level_values(level):
+            return raw.xs(ticker, axis=1, level=level, drop_level=True).copy()
+    return pd.DataFrame()
+
+
+def _fetch_price_data(
+    tickers: list[str], lookback_days: int, *, auto_adjust: bool = False
+) -> dict[str, pd.DataFrame]:
     """Fetch OHLCV data in batches via yfinance."""
     period = f"{int(lookback_days * CALENDAR_DAY_FACTOR)}d"
     data: dict[str, pd.DataFrame] = {}
@@ -172,14 +175,20 @@ def _fetch_price_data(tickers: list[str], lookback_days: int) -> dict[str, pd.Da
         logger.info("fetching_batch", progress=f"{min(i + BATCH_SIZE, len(tickers))}/{len(tickers)}")
 
         try:
-            raw = yf.download(batch_str, period=period, group_by="ticker", progress=False)
-        except Exception as exc:
+            raw = yf.download(
+                batch_str,
+                period=period,
+                group_by="ticker",
+                progress=False,
+                auto_adjust=auto_adjust,
+            )
+        except Exception as exc:  # noqa: BLE001 - yfinance provider failures are isolated per batch
             logger.warning("batch_error", start=i, error=str(exc))
             continue
 
         for ticker in batch:
             try:
-                df = raw.copy() if len(batch) == 1 else raw[ticker].copy()
+                df = _extract_ticker_frame(raw, ticker, len(batch))
                 if df.empty or df["Close"].dropna().empty:
                     continue
                 data[ticker] = df.dropna(subset=["Close"])
@@ -194,7 +203,6 @@ def _fetch_price_data(tickers: list[str], lookback_days: int) -> dict[str, pd.Da
 
 
 def _build_filter_dataframe(stock_data: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Build DataFrame with filter columns for each ticker."""
     rows: list[dict] = []
     for ticker, df in stock_data.items():
         close = df["Close"].squeeze()
@@ -208,18 +216,19 @@ def _build_filter_dataframe(stock_data: dict[str, pd.DataFrame]) -> pd.DataFrame
             if not (pd.isna(sma50) or pd.isna(sma200)):
                 golden_cross = 1.0 if float(sma50) > float(sma200) else 0.0
 
-        rows.append({
-            "ticker": ticker,
-            "avg_dollar_volume": addv,
-            "golden_cross": golden_cross,
-            "market_cap": None,
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "avg_dollar_volume": addv,
+                "golden_cross": golden_cross,
+                "market_cap": None,
+            }
+        )
 
     return pd.DataFrame(rows)
 
 
 def _compute_indicator_row(ticker: str, prices: pd.DataFrame) -> dict:
-    """Compute all indicators for a single ticker."""
     close = prices["Close"].squeeze()
     if close.dropna().shape[0] < 14:
         return {}
@@ -254,7 +263,6 @@ def _compute_indicator_row(ticker: str, prices: pd.DataFrame) -> dict:
 
 
 def _rsi_to_score(rsi: pd.Series) -> pd.Series:
-    """Convert RSI to [0, 1] score: 1.0 for 40-60, 0.5 for 30-70, else 0."""
     score = pd.Series(0.0, index=rsi.index)
     score[(rsi >= 30) & (rsi <= 70)] = 0.5
     score[(rsi >= 40) & (rsi <= 60)] = 1.0

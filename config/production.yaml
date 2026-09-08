@@ -1,6 +1,0 @@
-# Production overrides (merged on top of default.yaml)
-# Only include values that differ from defaults
-
-prediction:
-  prophet:
-    uncertainty_samples: 1000

@@ -1,0 +1,7 @@
+sandbox_mode = "read-only"
+developer_instructions = """
+Stay read-only. Inspect only the narrow file/symbol/workstream assigned by the parent.
+Use exact searches and targeted ranges; do not scan the whole repository unless the assigned question cannot be answered otherwise and evidence justifies expansion.
+Return compact findings: paths, symbols, behavior, mismatches, risks, and unknowns. Do not paste source dumps.
+Do not redesign or edit.
+"""

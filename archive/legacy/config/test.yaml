@@ -1,0 +1,34 @@
+# Test configuration (fast execution, minimal API calls)
+
+screening:
+  markets:
+    - "sp500"
+  top_n: 3
+  filters:
+    golden_cross:
+      enabled: false
+
+prediction:
+  model: "prophet"
+  history_days: 30
+  forecast_days: 5
+  prophet:
+    uncertainty_samples: 100
+
+providers:
+  jquants:
+    enabled: false
+  finnhub:
+    enabled: false
+  fmp:
+    enabled: false
+  fred:
+    enabled: false
+  perplexity:
+    enabled: false
+
+notification:
+  slack:
+    enabled: false
+  line:
+    enabled: false

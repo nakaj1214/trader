@@ -1,0 +1,27 @@
+{
+  "as_of_utc": "2026-08-23T01:19:04.495118+00:00",
+  "anomalies": [
+    {
+      "name": "short_interest_effect",
+      "label": "Short Interest Effect",
+      "n_observations": 0,
+      "t_stat": null,
+      "p_value": null,
+      "sharpe": null,
+      "status": "insufficient_data",
+      "score_included": false,
+      "note": "Assumes equal-weight. Effect may be weak for cap-weighted large caps."
+    },
+    {
+      "name": "earnings_momentum",
+      "label": "Earnings Momentum Effect",
+      "n_observations": 0,
+      "t_stat": null,
+      "p_value": null,
+      "sharpe": null,
+      "status": "insufficient_data",
+      "score_included": false,
+      "note": "Based on SUE (Standardized Unexpected Earnings). Under evaluation."
+    }
+  ]
+}

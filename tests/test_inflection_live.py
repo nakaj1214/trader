@@ -147,6 +147,17 @@ def test_fundamentals_return_none_when_only_same_year_correction_exists() -> Non
     assert result["operating_margin_change_pctpt"] is None
 
 
+def test_fundamentals_do_not_treat_a_two_year_gap_as_yoy() -> None:
+    rows = [
+        {"DiscDate": "2024-08-01", "CurPerType": "Q1", "CurFYEn": "2025-03-31", "Sales": 100},
+        {"DiscDate": "2026-08-01", "CurPerType": "Q1", "CurFYEn": "2027-03-31", "Sales": 150},
+    ]
+
+    result = _fundamental_features(rows)
+
+    assert result["revenue_growth_yoy_pct"] is None
+
+
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     prices = {"1111.T": _price_frame()}
     with (

@@ -147,13 +147,16 @@ def _previous_comparable_actual(
     latest_fiscal_end = str(latest.get("CurFYEn") or "")
     if not period_type or not latest_fiscal_end:
         return None
+    try:
+        prior_fiscal_end = str((pd.Timestamp(latest_fiscal_end) - pd.DateOffset(years=1)).date())
+    except (TypeError, ValueError):
+        return None
     candidates = [
         row
         for row in actual_rows
         if row is not latest
         and str(row.get("CurPerType") or "") == period_type
-        and str(row.get("CurFYEn") or "")
-        and str(row.get("CurFYEn") or "") < latest_fiscal_end
+        and str(row.get("CurFYEn") or "") == prior_fiscal_end
     ]
     return candidates[-1] if candidates else None
 

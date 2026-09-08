@@ -1,1 +1,1 @@
-"""Data package: providers, repository, and data access utilities."""
+"""Market-data access, validation, and encrypted snapshot utilities."""

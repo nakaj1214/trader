@@ -2,7 +2,7 @@
 
 日本株の短期変化点（inflection）候補を日次で抽出し、将来検証できる形でスナップショットを保存する Python プロジェクトです。
 
-現在の本番経路は **TSE Prime / Standard / Growth の日次 inflection shadow scan** です。旧 Prophet / LightGBM の週次予測パイプラインはコードとして残していますが、本番スケジュールでは実行しません。
+現在の本番経路は **TSE Prime / Standard / Growth の日次 inflection shadow scan** です。旧 Prophet / LightGBM の週次予測パイプラインは `archive/legacy/` に隔離しています。
 
 ## 現在の本番フロー
 
@@ -26,7 +26,7 @@ dashboard/data/inflection_candidates.enc   # encrypted latest snapshot
 
 snapshot の日付は **workflow実行日ではなく `latest_price_date`** です。祝日や同日再実行で同じ市場データを再取得しても、既存snapshotは上書きせず、重複signalを作りません。
 
-公開リポジトリ上には候補銘柄やJ-Quants由来の分析結果を平文保存しません。Fernetによる認証付き暗号化を行い、`SNAPSHOT_ENCRYPTION_KEY` を設定した場合はそのキーを使用します。未設定時は、最初の定期実行を止めないため、既に必須の `JQUANTS_API_KEY` を暗号化キー素材としてフォールバック利用します。J-Quants APIキーを変更する前に専用の `SNAPSHOT_ENCRYPTION_KEY` を設定しておくことを推奨します。
+公開リポジトリ上には候補銘柄やJ-Quants由来の分析結果を平文保存しません。Fernetによる認証付き暗号化を行い、API認証情報とは独立した固定の `SNAPSHOT_ENCRYPTION_KEY` を必須とします。この値を変更すると過去snapshotを復号できなくなるため、ローテーション時は既存データの再暗号化が必要です。
 
 `EARLY_CANDIDATE` は調査候補であり、売買推奨や自動発注シグナルではありません。
 
@@ -73,10 +73,8 @@ snapshot の日付は **workflow実行日ではなく `latest_price_date`** で�
 |---|---:|---|
 | J-Quants V2 Free | Yes | 日本株ユニバース、遅延財務情報 |
 | yfinance | Yes | 価格・出来高 |
-| EDINET API v2 | No | point-in-time 検証用ユーティリティ。live scan には未接続 |
-| Finnhub / FMP / FRED | No | 旧パイプライン向け補完機能 |
 
-本番実行に必要な GitHub Secret は `JQUANTS_API_KEY` です。暗号化専用の `SNAPSHOT_ENCRYPTION_KEY` は推奨、Slack失敗通知を使う場合は `SLACK_WEBHOOK_URL` も設定します。
+本番実行に必要な GitHub Secret は `JQUANTS_API_KEY` と `SNAPSHOT_ENCRYPTION_KEY` です。Slack失敗通知を使う場合は `SLACK_WEBHOOK_URL` も設定します。
 
 ## データ健全性
 
@@ -101,14 +99,19 @@ J-Quants clientはFreeの5 calls/minを考慮した間隔制御に加えて、42
 - signal date: snapshotの `latest_price_date`
 - entry: 翌営業日始値
 - holding: 5 / 20 / 60営業日
-- round-trip cost: 0.2%
+- total execution cost: 通常0.2% / 悲観1.2%
 - benchmark: `1306.T`（NEXT FUNDS TOPIX ETF）
 - benchmarkも同じ翌営業日始値・同じholding・同じ取引コスト
+- Closeベースの最大上昇・drawdownと、High/LowベースのMFE/MAEを分離して保存
 - strategy return、TOPIX return、excess return、benchmark勝率を保存
+- 10% / 15% / 20%のTrailing Stopを、最大60営業日の固定保有と比較
+- 同一銘柄の重複signalは、`position_summary` では一つの保有が終了するまで再entryしない
+
+板厚、売買停止、制限値幅による約定確率は未モデル化のため、reportの `execution_limitations` に明記します。
+
+Trailing Stopは前日までの確定済みHigh Water Markから計算します。Stopを下回って寄り付いた場合はStop価格ではなく当日始値で退出し、同日Highを同日Lowより先に観測したと仮定しません。
 
 `.github/workflows/forward_validation.yml` は週次で蓄積snapshotを検証します。snapshotがまだ存在しない期間、または有効な `EARLY_CANDIDATE` がない期間は正常終了します。
-
-旧 `predictions_jp.json` のforward validationも比較用に残しますが、その過去成績を新inflection戦略の実績として扱いません。
 
 ## セットアップ
 
@@ -137,23 +140,10 @@ python -m pytest tests/
 ruff check src scripts tests
 ```
 
-GitHub Actions の `test.yml` では、全regression suite、本番inflection経路、J-Quants/yfinance、暗号化、point-in-time、forward validationのcoverageに加え、本番inflection経路のmypy type checkを実行します。
+GitHub Actions の `test.yml` では、全 regression suite と coverage、ruff、本番 inflection 経路の mypy type check を実行します。
 
-## 旧パイプライン
+## Archive
 
-以下は既存機能との比較・調査用途としてリポジトリに残っています。
+以前の週次予測、GUI、Docker、設定、データ、テストは `archive/legacy/` に退避しています。現行の実行・CI 対象には含めません。
 
-- `python -m src.cli run`
-- US / Nikkei225 screening
-- Prophet / LightGBM prediction
-- enrichment / notification / Google Sheets
-- legacy dashboard data
-- `config/default.yaml` の多くの設定
-
-これらは現在の日次 JP inflection production workflow からは呼ばれません。
-
-## Dashboard
-
-`dashboard-v2` は SvelteKit でビルドされます。Cloudflare Pages への公開は GitHub Actions 内の明示的 deploy step ではなく、リポジトリ連携側の設定に依存します。
-
-現時点では暗号化済み `inflection_candidates.enc` を表示・通知へ接続するconsumerは本番経路に含めていません。shadow scan の目的はまずデータを安全に蓄積し、再現可能なforward validationを成立させることです。
+現時点では暗号化済み `inflection_candidates.enc` を表示・通知へ接続する consumer はありません。shadow scan の目的は、まずデータを安全に蓄積し、再現可能な forward validation を成立させることです。

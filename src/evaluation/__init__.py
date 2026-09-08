@@ -1,1 +1,1 @@
-"""Evaluation package: backtesting and walk-forward analysis."""
+"""Inflection forward-validation utilities."""

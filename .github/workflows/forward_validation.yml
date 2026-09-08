@@ -4,30 +4,19 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "src/evaluation/forward_validation.py"
-      - "src/evaluation/benchmark.py"
       - "src/evaluation/inflection_backtest.py"
       - "src/evaluation/inflection_forward.py"
-      - "src/data/validation.py"
-      - "src/data/point_in_time.py"
-      - "src/data/providers/edinet_provider.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
-      - "scripts/rebuild_forward_validation.py"
       - "scripts/rebuild_inflection_forward_validation.py"
       - "dashboard/data/inflection/**"
-      - "tests/test_forward_validation.py"
-      - "tests/test_benchmark.py"
-      - "tests/test_data_validation.py"
-      - "tests/test_point_in_time.py"
-      - "tests/test_edinet_provider.py"
       - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
       - "tests/test_inflection_forward.py"
       - ".github/workflows/forward_validation.yml"
   schedule:
-    # Weekly accumulation check: Sunday 09:30 JST (00:30 UTC).
+    # Sunday 09:30 JST (00:30 UTC).
     - cron: '30 0 * * 0'
   workflow_dispatch:
 
@@ -54,51 +43,24 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Core unit tests
+      - name: Test forward-validation core
         run: |
           python -m pytest \
-            tests/test_forward_validation.py \
-            tests/test_benchmark.py \
-            tests/test_data_validation.py \
-            tests/test_point_in_time.py \
-            tests/test_edinet_provider.py \
             tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
-            -q --override-ini="addopts="
-
-      - name: Core coverage
-        run: |
-          python -m pytest \
-            tests/test_forward_validation.py \
-            tests/test_benchmark.py \
-            tests/test_data_validation.py \
-            tests/test_point_in_time.py \
-            tests/test_edinet_provider.py \
-            tests/test_snapshot_crypto.py \
-            tests/test_inflection_strategy.py \
-            tests/test_inflection_backtest.py \
-            tests/test_inflection_forward.py \
-            --cov=src.evaluation.forward_validation \
-            --cov=src.evaluation.benchmark \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.evaluation.inflection_forward \
-            --cov=src.data.validation \
-            --cov=src.data.point_in_time \
-            --cov=src.data.providers.edinet_provider \
             --cov=src.data.snapshot_crypto \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \
             -q --override-ini="addopts="
 
-      - name: Rebuild legacy committed predictions
-        run: python scripts/rebuild_forward_validation.py --since 2026-02-18
-
-      - name: Validate accumulated encrypted inflection snapshots
+      - name: Validate accumulated encrypted snapshots
         env:
-          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY || secrets.JQUANTS_API_KEY }}
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: python scripts/rebuild_inflection_forward_validation.py
 
-      # Prediction-level validation output intentionally remains on the ephemeral
-      # runner. It must not be published as a plaintext Actions artifact.
+      # Prediction-level output remains on the ephemeral runner and is not
+      # published as a plaintext Actions artifact.

@@ -1,9 +1,0 @@
-{
-  "generated_at": "2026-08-23T01:19:04Z",
-  "config": {
-    "train_weeks": 52,
-    "test_weeks": 13,
-    "min_train_weeks": 26
-  },
-  "windows": []
-}

@@ -4,11 +4,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
 FORMAT_HEADER = "TRADER_SNAPSHOT_V1"
+
+
+def snapshot_encryption_secret() -> str:
+    """Return the dedicated snapshot key without coupling it to API credentials."""
+    secret = os.getenv("SNAPSHOT_ENCRYPTION_KEY")
+    if not secret:
+        raise RuntimeError("SNAPSHOT_ENCRYPTION_KEY is required")
+    return secret
 
 
 def _fernet(secret: str) -> Fernet:

@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: jp-inflection-shadow
+  # A manual branch run must never cancel the scheduled main run.
+  group: jp-inflection-shadow-${{ github.ref_name }}
   cancel-in-progress: true
 
 permissions:

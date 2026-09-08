@@ -1,9 +1,9 @@
 """Auditable self-learning layer for JP inflection shadow snapshots.
 
-This module never rewrites production strategy weights by itself.  It learns from
+This module never rewrites production strategy weights by itself. It learns from
 immutable point-in-time snapshots, evaluates later outcomes, records prediction
 misses and explosive moves, and promotes only statistically supported factor
-adjustments as *proposals* for a future strategy version.
+adjustments as proposals for a future strategy version.
 """
 from __future__ import annotations
 
@@ -48,17 +48,14 @@ def load_learning_observations(
 ) -> list[dict[str, Any]]:
     """Load every deep-scan candidate, not only EARLY_CANDIDATE signals.
 
-    Older additive snapshot variants are accepted as long as the core strategy
-    and schema version remain consistent.  The learner therefore starts with the
-    history that already exists in ``dashboard/data/inflection``.
+    Strategy/schema versions are retained per observation instead of requiring a
+    single version forever. This lets the knowledge base survive future strategy
+    upgrades while keeping each observation auditable.
     """
     if not snapshot_dir.exists():
         return []
 
     observations: dict[tuple[str, str], dict[str, Any]] = {}
-    expected_strategy_version: str | None = None
-    expected_schema_version: int | None = None
-
     for path in sorted(snapshot_dir.glob("????-??-??.enc")):
         try:
             payload = decrypt_json(path.read_text(encoding="utf-8"), encryption_secret)
@@ -78,11 +75,6 @@ def load_learning_observations(
             or market_date != path.stem
         ):
             raise SnapshotLoadError(f"Invalid snapshot metadata/schema: {path.name}")
-        if expected_strategy_version is None:
-            expected_strategy_version = strategy_version
-            expected_schema_version = schema_version
-        elif strategy_version != expected_strategy_version or schema_version != expected_schema_version:
-            raise SnapshotLoadError(f"Mixed strategy/schema versions: {path.name}")
 
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
@@ -401,23 +393,45 @@ def build_learning_report(
     histories: dict[str, pd.DataFrame],
     benchmark_history: pd.DataFrame,
 ) -> dict[str, Any]:
-    """Build a cumulative knowledge report from all available immutable snapshots."""
+    """Build cumulative knowledge while gating promotions on the latest strategy."""
     evaluated = evaluate_learning_observations(observations, histories, benchmark_history)
+    strategy_versions = sorted({str(row.get("strategy_version") or "") for row in observations if row.get("strategy_version")})
+    latest_strategy_version = None
+    if observations:
+        latest_observation = max(observations, key=lambda row: str(row.get("signal_date") or ""))
+        latest_strategy_version = str(latest_observation.get("strategy_version") or "") or None
+
     baselines: dict[str, Any] = {}
     factors: dict[str, list[dict[str, Any]]] = {}
     independent_counts: dict[str, int] = {}
+    promotion_baselines: dict[str, Any] = {}
+    promotion_factors: dict[str, list[dict[str, Any]]] = {}
+    promotion_counts: dict[str, int] = {}
+    latest_rows = [row for row in evaluated if row.get("strategy_version") == latest_strategy_version]
+
     for horizon in LEARNING_HORIZONS:
-        independent = _independent_rows(evaluated, horizon)
         horizon_key = f"h{horizon}"
+        independent = _independent_rows(evaluated, horizon)
         baseline = _horizon_summary(independent, horizon)
         baselines[horizon_key] = baseline
         independent_counts[horizon_key] = len(independent)
         factors[horizon_key] = _factor_statistics(independent, horizon=horizon, baseline=baseline)
 
+        latest_independent = _independent_rows(latest_rows, horizon)
+        promotion_baseline = _horizon_summary(latest_independent, horizon)
+        promotion_baselines[horizon_key] = promotion_baseline
+        promotion_counts[horizon_key] = len(latest_independent)
+        promotion_factors[horizon_key] = _factor_statistics(
+            latest_independent,
+            horizon=horizon,
+            baseline=promotion_baseline,
+        )
+
     postmortems = [
         {
             "ticker": row["ticker"],
             "signal_date": row["signal_date"],
+            "strategy_version": row["strategy_version"],
             "classification": row["classification"],
             "prediction_miss_reasons": row["prediction_miss_reasons"],
             "missed_explosion": row["missed_explosion"],
@@ -431,7 +445,9 @@ def build_learning_report(
     return {
         "learning_version": "inflection-learning-v1",
         "generated_at": datetime.now(UTC).isoformat(),
-        "strategy_version": observations[0]["strategy_version"] if observations else None,
+        "strategy_version": latest_strategy_version,
+        "strategy_versions": strategy_versions,
+        "promotion_scope_strategy_version": latest_strategy_version,
         "observation_count": len(observations),
         "learning_unit": "same-ticker observations are de-overlapped independently per horizon",
         "horizons": list(LEARNING_HORIZONS),
@@ -441,7 +457,10 @@ def build_learning_report(
         "independent_observation_counts": independent_counts,
         "baselines": baselines,
         "factor_statistics": factors,
-        "lessons": _lessons(factors),
+        "promotion_independent_observation_counts": promotion_counts,
+        "promotion_baselines": promotion_baselines,
+        "promotion_factor_statistics": promotion_factors,
+        "lessons": _lessons(promotion_factors),
         "postmortems": postmortems,
         "observations": evaluated,
         "promotion_gate": {
@@ -449,11 +468,13 @@ def build_learning_report(
             "positive_explosion_lift": PROMOTION_POSITIVE_LIFT,
             "negative_explosion_lift": PROMOTION_NEGATIVE_LIFT,
             "automatic_production_weight_update": False,
-            "reason": "prevent small-sample overfitting and self-reinforcing strategy drift",
+            "scope": "latest_strategy_version_only",
+            "reason": "prevent small-sample overfitting, policy-confounding and self-reinforcing strategy drift",
         },
         "limitations": [
             "Learns only from the deep-scan candidates stored in historical snapshots; stocks outside that pool are invisible.",
             "Factor attribution is associative, not proof of causality.",
+            "Cumulative factor statistics may span multiple strategy versions; promotion decisions use only the latest strategy version.",
             "News/TDnet/EDINET catalyst evidence is not yet connected point-in-time, so true event-cause attribution is unavailable.",
             f"Benchmark is {BENCHMARK_TICKER}; order-book depth, halts and price-limit fill probability remain unmodeled.",
         ],
@@ -466,6 +487,8 @@ def public_learning_summary(report: dict[str, Any]) -> dict[str, Any]:
         "learning_version",
         "generated_at",
         "strategy_version",
+        "strategy_versions",
+        "promotion_scope_strategy_version",
         "observation_count",
         "learning_unit",
         "horizons",
@@ -473,6 +496,9 @@ def public_learning_summary(report: dict[str, Any]) -> dict[str, Any]:
         "independent_observation_counts",
         "baselines",
         "factor_statistics",
+        "promotion_independent_observation_counts",
+        "promotion_baselines",
+        "promotion_factor_statistics",
         "lessons",
         "promotion_gate",
         "limitations",

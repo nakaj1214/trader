@@ -1,0 +1,95 @@
+# Adaptive Codex Harness v6 safety rules.
+# These rules intentionally cover only high-impact actions.
+# Project-local rules load only when the project .codex layer is trusted.
+
+prefix_rule(
+    pattern = ["rm", "-rf", "/"],
+    decision = "forbidden",
+    justification = "Never recursively delete the filesystem root. Use a narrowly scoped path instead.",
+    match = ["rm -rf /"],
+)
+
+prefix_rule(
+    pattern = ["sudo", "rm", "-rf", "/"],
+    decision = "forbidden",
+    justification = "Never recursively delete the filesystem root. Use a narrowly scoped path instead.",
+    match = ["sudo rm -rf /"],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Pushing changes affects the remote repository; require explicit approval.",
+    match = ["git push", "git push origin main", "git push --force-with-lease"],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "prompt",
+    justification = "Hard reset can discard local work; require explicit approval.",
+    match = ["git reset --hard", "git reset --hard HEAD~1"],
+)
+
+prefix_rule(
+    pattern = ["git", "clean"],
+    decision = "prompt",
+    justification = "git clean can delete untracked files; require explicit approval.",
+    match = ["git clean -fd", "git clean -fdx"],
+)
+
+prefix_rule(
+    pattern = ["git", "restore"],
+    decision = "prompt",
+    justification = "git restore can discard working-tree changes; require explicit approval.",
+    match = ["git restore src/app.php", "git restore --source HEAD -- src/app.php"],
+)
+
+prefix_rule(
+    pattern = ["git", "branch", "-D"],
+    decision = "prompt",
+    justification = "Force-deleting a branch can remove unmerged work; require explicit approval.",
+    match = ["git branch -D feature/example"],
+)
+
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "prompt",
+    justification = "Recursive forced deletion is destructive; require explicit approval.",
+    match = ["rm -rf build", "rm -rf /tmp/example"],
+)
+
+prefix_rule(
+    pattern = ["docker", "system", "prune"],
+    decision = "prompt",
+    justification = "Docker system prune can remove shared local resources; require explicit approval.",
+    match = ["docker system prune", "docker system prune -a"],
+)
+
+prefix_rule(
+    pattern = ["docker", "volume", ["prune", "rm"]],
+    decision = "prompt",
+    justification = "Docker volume deletion can destroy persistent development data; require explicit approval.",
+    match = ["docker volume prune", "docker volume rm app_db_data"],
+)
+
+prefix_rule(
+    pattern = ["docker", "compose", "down", ["-v", "--volumes"]],
+    decision = "prompt",
+    justification = "Removing Compose volumes can destroy persistent development data; require explicit approval.",
+    match = ["docker compose down -v", "docker compose down --volumes"],
+    not_match = ["docker compose down"],
+)
+
+prefix_rule(
+    pattern = ["php", "artisan", ["migrate:fresh", "db:wipe"]],
+    decision = "prompt",
+    justification = "This database command can destroy development data; require explicit approval.",
+    match = ["php artisan migrate:fresh", "php artisan db:wipe"],
+)
+
+prefix_rule(
+    pattern = ["composer", "require"],
+    decision = "prompt",
+    justification = "Adding a new dependency changes the project supply chain; require explicit approval.",
+    match = ["composer require vendor/package"],
+)

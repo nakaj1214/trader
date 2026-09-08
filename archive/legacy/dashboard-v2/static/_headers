@@ -1,0 +1,10 @@
+# Cloudflare Pages custom headers
+#
+# Data JSON files are updated weekly by GitHub Actions; disable CDN cache.
+# SvelteKit hashed assets (_app/) are immutable and safe to cache long-term.
+
+/data/*
+  Cache-Control: no-store, must-revalidate
+
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable

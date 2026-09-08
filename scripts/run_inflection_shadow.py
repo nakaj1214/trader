@@ -1,7 +1,6 @@
 """Run the production Japanese inflection scanner and persist an immutable daily snapshot."""
 from __future__ import annotations
 
-import os
 from datetime import date as calendar_date
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.data.market_calendar import expected_tse_session_date
-from src.data.snapshot_crypto import encrypt_json, key_id
+from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
 from src.screening.inflection_live import scan_japan_inflection
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,18 +106,6 @@ def snapshot_date(now: datetime | None = None) -> str:
     return current.astimezone(JST).strftime("%Y-%m-%d")
 
 
-def snapshot_secret() -> str:
-    """Use a dedicated storage key when present, otherwise the already-required J-Quants key.
-
-    The fallback keeps the first scheduled run self-contained. Set SNAPSHOT_ENCRYPTION_KEY
-    before rotating JQUANTS_API_KEY so historical snapshots remain decryptable.
-    """
-    secret = os.getenv("SNAPSHOT_ENCRYPTION_KEY") or os.getenv("JQUANTS_API_KEY")
-    if not secret:
-        raise RuntimeError("SNAPSHOT_ENCRYPTION_KEY or JQUANTS_API_KEY is required for encrypted snapshot storage")
-    return secret
-
-
 def persist_report(
     report: dict[str, Any],
     *,
@@ -156,8 +143,9 @@ def persist_report(
 
 
 def main() -> None:
+    encryption_secret = snapshot_encryption_secret()
     report = scan_japan_inflection()
-    snapshot, snapshot_created = persist_report(report, encryption_secret=snapshot_secret())
+    snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
 
     counts = report.get("classification_counts", {})
     print(

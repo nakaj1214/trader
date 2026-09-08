@@ -1,0 +1,8 @@
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Implement only the requested/agreed scope.
+Preserve unrelated user changes and follow established project patterns.
+Do not weaken tests or gates merely to finish.
+Add/update tests when behavior changes and the repository supports them.
+Report changed files, behavior changed, and remaining uncertainty; the parent owns final verification/review.
+"""

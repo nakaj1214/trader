@@ -1,0 +1,13 @@
+# Cloudflare Pages カスタムヘッダー
+#
+# データ JSON は毎週 GitHub Actions が更新するため、CDN キャッシュを無効化する。
+# JS/CSS は変更頻度が低いため 1 時間キャッシュを許可する。
+
+/data/*
+  Cache-Control: no-store, must-revalidate
+
+/js/*
+  Cache-Control: public, max-age=3600
+
+/css/*
+  Cache-Control: public, max-age=3600

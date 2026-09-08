@@ -1,1 +1,1 @@
-"""Screening package: universe loading, filtering, indicators, and scoring."""
+"""Live Japanese-stock inflection screening."""

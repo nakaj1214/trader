@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -14,7 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.evaluation.inflection_backtest import simulate_signals, summarize_trades
+from src.data.snapshot_crypto import snapshot_encryption_secret
+from src.evaluation.inflection_backtest import (
+    select_non_overlapping_trades,
+    simulate_signals,
+    summarize_trades,
+)
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
     benchmark_returns_by_signal_date,
@@ -24,14 +28,8 @@ from src.evaluation.inflection_forward import (
 )
 
 ROUND_TRIP_COST_PCT = 0.2
+STRESS_ROUND_TRIP_COST_PCT = 1.2
 TAX_RATE_PCT = 20.315
-
-
-def _snapshot_secret() -> str:
-    secret = os.getenv("SNAPSHOT_ENCRYPTION_KEY") or os.getenv("JQUANTS_API_KEY")
-    if not secret:
-        raise RuntimeError("SNAPSHOT_ENCRYPTION_KEY or JQUANTS_API_KEY is required to decrypt snapshots")
-    return secret
 
 
 def _fetch_adjusted_histories(
@@ -62,8 +60,9 @@ def _fetch_adjusted_histories(
         except Exception as exc:  # noqa: BLE001 - all provider failures are reported together
             failures[ticker] = f"{type(exc).__name__}: {exc}"
             continue
-        if history.empty or "Open" not in history.columns or "Close" not in history.columns:
-            failures[ticker] = "empty or missing adjusted Open/Close"
+        required_columns = {"Open", "High", "Low", "Close"}
+        if history.empty or not required_columns.issubset(history.columns):
+            failures[ticker] = "empty or missing adjusted OHLC"
             continue
         histories[ticker] = history
 
@@ -87,7 +86,9 @@ def main() -> int:
         print("No encrypted immutable EARLY_CANDIDATE snapshots available yet; nothing to validate.")
         return 0
 
-    signals = load_inflection_signals(snapshot_dir, encryption_secret=_snapshot_secret())
+    signals = load_inflection_signals(
+        snapshot_dir, encryption_secret=snapshot_encryption_secret()
+    )
     if not signals:
         print("Encrypted snapshots exist but contain no EARLY_CANDIDATE signals yet.")
         return 0
@@ -106,6 +107,16 @@ def main() -> int:
         "entry_rule": "next_trading_day_open",
         "price_adjustment": "split_adjusted_ohlc",
         "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
+        "execution_cost_scenarios_pct": {
+            "base": ROUND_TRIP_COST_PCT,
+            "stress": STRESS_ROUND_TRIP_COST_PCT,
+        },
+        "execution_limitations": [
+            "order_book_depth_not_modeled",
+            "trading_halts_not_modeled",
+            "price_limit_fill_probability_not_modeled",
+        ],
+        "same_ticker_overlap_policy": "one_open_position_per_ticker",
         "benchmark": {
             "ticker": BENCHMARK_TICKER,
             "name": "NEXT FUNDS TOPIX ETF",
@@ -135,12 +146,70 @@ def main() -> int:
             round_trip_cost_pct=ROUND_TRIP_COST_PCT,
         )
         trade_rows = enrich_trades_with_benchmark(trades, benchmark_returns)
+        position_trades = select_non_overlapping_trades(trades)
+        stress_trades = simulate_signals(
+            signals,
+            histories,
+            holding_days=holding_days,
+            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+            tax_rate_pct=TAX_RATE_PCT,
+            apply_tax=False,
+        )
+        stress_benchmark_returns = benchmark_returns_by_signal_date(
+            signal_dates,
+            benchmark_history,
+            holding_days=holding_days,
+            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+        )
+        stress_trade_rows = enrich_trades_with_benchmark(stress_trades, stress_benchmark_returns)
+        stress_position_trades = select_non_overlapping_trades(stress_trades)
         horizons[f"h{holding_days}"] = {
             "summary": summarize_trades(trades),
+            "position_summary": summarize_trades(position_trades),
             "benchmark_excess": summarize_benchmark_excess(trade_rows),
             "trades": trade_rows,
+            "stress": {
+                "summary": summarize_trades(stress_trades),
+                "position_summary": summarize_trades(stress_position_trades),
+                "benchmark_excess": summarize_benchmark_excess(stress_trade_rows),
+                "trades": stress_trade_rows,
+            },
         }
     report["horizons"] = horizons
+
+    exit_strategies: dict[str, object] = {}
+    for trailing_stop_pct in (10.0, 15.0, 20.0):
+        trades = simulate_signals(
+            signals,
+            histories,
+            holding_days=60,
+            round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+            apply_tax=False,
+            trailing_stop_pct=trailing_stop_pct,
+        )
+        stress_trades = simulate_signals(
+            signals,
+            histories,
+            holding_days=60,
+            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+            apply_tax=False,
+            trailing_stop_pct=trailing_stop_pct,
+        )
+        exit_strategies[f"trailing_{int(trailing_stop_pct)}pct"] = {
+            "rule": "prior_confirmed_high_water_mark",
+            "max_holding_days": 60,
+            "summary": summarize_trades(trades),
+            "position_summary": summarize_trades(select_non_overlapping_trades(trades)),
+            "trades": [trade.as_dict() for trade in trades],
+            "stress": {
+                "summary": summarize_trades(stress_trades),
+                "position_summary": summarize_trades(
+                    select_non_overlapping_trades(stress_trades)
+                ),
+                "trades": [trade.as_dict() for trade in stress_trades],
+            },
+        }
+    report["exit_strategies"] = exit_strategies
 
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)

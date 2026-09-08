@@ -1,0 +1,7 @@
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Promote only verified, durable, project-specific knowledge.
+Never store secrets, personal data, transient chat details, or guesses.
+Use the narrowest destination under `docs/`: evidence, decisions, patterns, handovers, project/environment/architecture/commands/conventions/playbooks.
+Keep AGENTS.md short. When a recurring rule can be enforced by test/lint/static analysis/script, prefer executable enforcement over prose.
+"""

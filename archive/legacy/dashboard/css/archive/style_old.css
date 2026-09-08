@@ -1,0 +1,1231 @@
+/* AI Stock Predictions Dashboard - Mobile-first responsive CSS */
+
+:root {
+  --color-bg: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-primary: #2563eb;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  --color-text: #1e293b;
+  --color-text-muted: #64748b;
+  --color-border: #e2e8f0;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+/* Header - 2 column layout */
+header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  gap: 1rem;
+}
+
+.header-left h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.header-left .subtitle {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.header-ticker {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.header-stat {
+  text-align: center;
+}
+
+.header-stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  line-height: 1.2;
+}
+
+.header-stat-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Navigation (inside header) */
+header nav {
+  display: flex;
+  gap: 0.375rem;
+}
+
+header nav a {
+  color: var(--color-primary);
+  text-decoration: none;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+header nav a:hover {
+  background: #eff6ff;
+}
+
+header nav a.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* Main content */
+main {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Alert banner */
+.alert {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.alert-warning {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+/* Section */
+section {
+  margin-bottom: 1.5rem;
+}
+
+section h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+/* Card grid */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* Card */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.2s;
+}
+
+.card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.card .ticker {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.card .price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.card .price {
+  font-size: 0.9375rem;
+}
+
+.card .change {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.card .change.positive {
+  color: var(--color-success);
+}
+
+.card .change.negative {
+  color: var(--color-danger);
+}
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge-hit {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-miss {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-pending {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+/* Chart container */
+.chart-container {
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+/* Table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 0.875rem;
+}
+
+thead {
+  background: #f8fafc;
+}
+
+th, td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+th {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+/* Responsive table wrapper */
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Last updated */
+#last-updated {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* Loading state */
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-text-muted);
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--color-text-muted);
+}
+
+/* Cumulative stat card */
+.stat-card {
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.stat-card .stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.stat-card .stat-label {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Simulator */
+.sim-input-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1.5rem;
+}
+
+.sim-input-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.sim-input-row label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+}
+
+.sim-input-row input[type="number"] {
+  width: 180px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.sim-input-row input[type="number"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.sim-input-row button {
+  padding: 0.5rem 1.25rem;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9375rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.sim-input-row button:hover {
+  background: #1d4ed8;
+}
+
+.sim-validation-error {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+  margin-top: 0.5rem;
+  display: none;
+}
+
+.sim-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.sim-result-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.sim-result-card .sim-result-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sim-result-card .sim-result-value.positive {
+  color: var(--color-success);
+}
+
+.sim-result-card .sim-result-value.negative {
+  color: var(--color-danger);
+}
+
+.sim-result-card .sim-result-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Info panel (shared: risk, evidence, explanations) */
+.info-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.info-panel h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.panel-note {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+/* Phase 1: Risk row (card inline) */
+.risk-row {
+  background: #f8fafc;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* Phase 1: Risk metrics (detail panel) */
+.risk-metrics {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  font-size: 0.9375rem;
+}
+
+/* Phase 1: Event badges */
+.event-badges {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.event-badge {
+  display: inline-block;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
+}
+
+/* Phase 2: Evidence panel */
+.evidence-panel h3 {
+  margin-bottom: 0.5rem;
+}
+
+.evidence-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  font-size: 0.875rem;
+}
+
+.evidence-label {
+  min-width: 5rem;
+  font-weight: 500;
+}
+
+.evidence-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--color-border);
+  border-radius: 4px;
+  overflow: hidden;
+  max-width: 200px;
+}
+
+.evidence-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.evidence-bar.evidence-support {
+  background: var(--color-success);
+}
+
+.evidence-bar.evidence-oppose {
+  background: var(--color-danger);
+}
+
+.evidence-z {
+  min-width: 3rem;
+  text-align: right;
+  font-family: monospace;
+  font-size: 0.8125rem;
+}
+
+.evidence-support {
+  color: var(--color-success);
+  font-size: 0.8125rem;
+}
+
+.evidence-oppose {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
+.evidence-na {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.evidence-composite {
+  margin-top: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+/* Phase 5: Sanity badges */
+.sanity-warn {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-size: 0.6875rem;
+  padding: 0.1rem 0.375rem;
+}
+
+.sanity-clipped {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  font-size: 0.6875rem;
+  padding: 0.1rem 0.375rem;
+}
+
+.sanity-original {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-left: 0.25rem;
+}
+
+.sanity-banner {
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
+
+/* Phase 3: Explanations panel */
+.explanations-panel h3 {
+  margin-bottom: 0.25rem;
+}
+
+.explanation-intro {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.explanation-item {
+  padding: 0.25rem 0;
+  font-size: 0.9375rem;
+}
+
+.explanation-note {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Phase 6: Comparison section */
+.comparison-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-bottom: 0.75rem;
+}
+
+/* Help button */
+.help-btn {
+  background: none;
+  border: 1.5px solid var(--color-border);
+  border-radius: 50%;
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.help-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+/* Help Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: var(--color-surface);
+  border-radius: 8px;
+  max-width: 680px;
+  width: 100%;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.modal-body {
+  overflow-y: auto;
+  padding: 1.25rem;
+  flex: 1;
+}
+
+.modal-body h3 {
+  font-size: 0.9375rem;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.25rem;
+}
+
+.modal-body h3:first-child {
+  margin-top: 0;
+}
+
+.modal-body p {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin: 0.25rem 0;
+}
+
+.modal-body ul {
+  padding-left: 1.25rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.modal-body li {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin-bottom: 0.2rem;
+}
+
+.modal-body .help-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-top: 0.25rem;
+}
+
+.modal-footer {
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.modal-footer-btn {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.modal-footer-btn:hover {
+  opacity: 0.88;
+}
+
+/* Phase 7: 校正ダッシュボード */
+.calibration-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.calibration-stat-group {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.calibration-stat-group h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.calibration-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.calibration-stat-label {
+  color: var(--color-text-muted);
+}
+
+.calibration-stat-value {
+  font-weight: 600;
+}
+
+.calibration-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+/* Phase 10: マクロ環境バナー */
+.macro-banner {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: var(--radius);
+  padding: 0.625rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.macro-banner.risk-off {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.macro-banner-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.macro-banner-label {
+  font-weight: 700;
+  color: #0369a1;
+  white-space: nowrap;
+}
+
+.macro-banner.risk-off .macro-banner-label {
+  color: #c2410c;
+}
+
+.macro-banner-series {
+  font-family: monospace;
+  color: var(--color-text);
+}
+
+.macro-banner-note {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.macro-banner-asof {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+/* Phase 9: バックテスト品質開示パネル */
+.hygiene-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.hygiene-status {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.hygiene-status-insufficient_trials {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.hygiene-status-computed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.hygiene-status-partial {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.hygiene-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.hygiene-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hygiene-label {
+  color: var(--color-text-muted);
+}
+
+.hygiene-value {
+  font-weight: 600;
+}
+
+.hygiene-notes {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  margin-top: 0.5rem;
+}
+
+.hygiene-note-detail {
+  font-size: 0.8125rem;
+  color: var(--color-warning);
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
+/* Phase 8: ポジションサイジングパネル */
+.sizing-panel .sizing-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sizing-panel .sizing-row:last-of-type {
+  border-bottom: none;
+}
+
+.sizing-label {
+  color: var(--color-text-muted);
+}
+
+.sizing-value {
+  font-weight: 600;
+}
+
+.sizing-value.sizing-stop {
+  color: var(--color-danger);
+}
+
+.sizing-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
+/* Mobile adjustments */
+@media (max-width: 600px) {
+  .header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .header-stat-value {
+    font-size: 1.25rem;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  header h1,
+  .header-left h1 {
+    font-size: 1.125rem;
+  }
+
+  main {
+    padding: 0.75rem;
+  }
+
+  .sim-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sim-input-row input[type="number"] {
+    width: 100%;
+  }
+}
+
+/* Phase 11/12: 補助情報パネル共通 */
+.info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.info-label {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.info-value {
+  font-weight: 500;
+}
+
+.panel-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.5rem;
+}
+
+/* Phase 13: アルファサーベイ */
+.badge-success {
+  background: var(--color-success);
+  color: #fff;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.badge-neutral {
+  background: var(--color-text-muted);
+  color: #fff;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+/* 買い時・売り時ガイド */
+.timing-guide {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.timing-guide-title {
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+  font-size: 0.9375rem;
+}
+
+.timing-guide-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.timing-col-buy {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.timing-col-sell {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.timing-col-title {
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.timing-col-title.buy-title {
+  color: var(--color-success);
+}
+
+.timing-col-title.sell-title {
+  color: var(--color-danger);
+}
+
+.timing-col ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--color-text);
+  line-height: 1.7;
+}
+
+/* 予測カードのアクション行 */
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  margin-top: 0.4rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.action-row.action-buy {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.action-row.action-neutral {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.action-stop {
+  font-size: 0.75rem;
+  color: var(--color-danger);
+  margin-top: 0.2rem;
+  padding: 0 0.5rem;
+}
+
+/* 損切り価格強調（sizing パネル） */
+.stop-loss-highlight {
+  background: #fff1f2;
+  border: 2px solid var(--color-danger);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.stop-loss-highlight .stop-label {
+  font-size: 0.75rem;
+  color: var(--color-danger);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stop-loss-highlight .stop-price {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-danger);
+  line-height: 1.2;
+}
+
+.stop-loss-highlight .stop-desc {
+  font-size: 0.75rem;
+  color: #9f1239;
+  margin-top: 0.15rem;
+}
+
+.target-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.target-price-label {
+  font-size: 0.8125rem;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.target-price-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+@media (max-width: 600px) {
+  .timing-guide-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Phase 16: 市場選択ランディングページ
+----------------------------------------------------------------------- */
+
+.market-select-section {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.market-select-section h2 {
+  margin-bottom: 2rem;
+  color: var(--color-text);
+}
+
+.market-select {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.market-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  padding: 2rem 1.5rem;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--color-text);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.market-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+}
+
+.market-flag {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+}
+
+.market-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.market-desc {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+/* Phase 16: ヘッダーの市場ラベル */
+.market-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-left: 0.5rem;
+}

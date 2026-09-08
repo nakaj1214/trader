@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Stock Predictions Dashboard</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="header-left">
+        <h1>AI Stock Predictions</h1>
+        <div class="subtitle">市場を選択してください</div>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section class="market-select-section">
+      <h2>投資市場を選択</h2>
+      <div class="market-select">
+        <a href="us/index.html" class="market-card">
+          <div class="market-flag">🇺🇸</div>
+          <div class="market-name">米国株</div>
+          <div class="market-desc">S&amp;P500 ・ NASDAQ100</div>
+        </a>
+        <a href="jp/index.html" class="market-card">
+          <div class="market-flag">🇯🇵</div>
+          <div class="market-name">日本株</div>
+          <div class="market-desc">日経225（データ収集中）</div>
+        </a>
+      </div>
+    </section>
+    <section class="market-select-section">
+      <h2>ツール</h2>
+      <div class="market-select">
+        <a href="analysis.html" class="market-card">
+          <div class="market-flag">📊</div>
+          <div class="market-name">Financial Analysis</div>
+          <div class="market-desc">LLM生成の財務分析レポート</div>
+        </a>
+        <a href="simulator.html" class="market-card">
+          <div class="market-flag">🎮</div>
+          <div class="market-name">シミュレータ</div>
+          <div class="market-desc">投資シミュレーション</div>
+        </a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,47 @@
+name: Build Dashboard v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard-v2/**'
+      - '.github/workflows/deploy_dashboard.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-dashboard
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Verify legacy GUI data references
+        run: |
+          test -f dashboard/data/predictions_jp.json
+          test -f dashboard/data/predictions_us.json
+          test -f dashboard/data/accuracy.json
+          test -f dashboard/data/stock_history.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        working-directory: dashboard-v2
+        run: npm ci
+
+      - name: Copy legacy GUI data files
+        run: |
+          mkdir -p dashboard-v2/static/data
+          cp dashboard/data/*.json dashboard-v2/static/data/
+
+      - name: Build
+        working-directory: dashboard-v2
+        run: npm run build

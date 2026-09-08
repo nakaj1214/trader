@@ -1,0 +1,6 @@
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Verify behavior using confirmed repository commands, preferring `python3 .codex/harness/scripts/verify.py`.
+Do not change product code unless explicitly asked to fix a verification issue.
+Classify failures as product, environment, flaky, or unrelated and report exact commands/results and remaining gaps.
+"""

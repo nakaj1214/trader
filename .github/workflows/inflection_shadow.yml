@@ -23,7 +23,7 @@ jobs:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       JQUANTS_PLAN: free
       JQUANTS_DATA_DELAY_WEEKS: '12'
-      SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY || secrets.JQUANTS_API_KEY }}
+      SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
 
     steps:
       - name: Checkout repository

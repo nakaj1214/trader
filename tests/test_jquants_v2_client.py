@@ -20,6 +20,17 @@ def test_headers_use_x_api_key() -> None:
     assert client._headers() == {"x-api-key": "secret"}
 
 
+def test_constructor_rejects_invalid_retry_settings() -> None:
+    with pytest.raises(ValueError):
+        JQuantsV2Client(api_key="secret", timeout=0)
+    with pytest.raises(ValueError):
+        JQuantsV2Client(api_key="secret", min_interval=-1)
+    with pytest.raises(ValueError):
+        JQuantsV2Client(api_key="secret", max_retries=-1)
+    with pytest.raises(ValueError):
+        JQuantsV2Client(api_key="secret", retry_backoff=-1)
+
+
 def test_listed_issues_uses_master_endpoint() -> None:
     client = JQuantsV2Client(api_key="secret", min_interval=0)
     with patch.object(client, "_get", return_value=[{"Code": "72030"}]) as get:
@@ -35,7 +46,7 @@ def test_financial_summary_uses_summary_endpoint() -> None:
     get.assert_called_once_with("/fins/summary", {"code": "72030"})
 
 
-def _response(status: int, payload: dict, headers: dict[str, str] | None = None) -> Mock:
+def _response(status: int, payload: object, headers: dict[str, str] | None = None) -> Mock:
     response = Mock(spec=requests.Response)
     response.status_code = status
     response.headers = headers or {}
@@ -131,5 +142,25 @@ def test_transport_error_raises_after_retry_budget() -> None:
         ),
         patch("src.data.jquants_v2_client.time.sleep"),
         pytest.raises(requests.ConnectionError),
+    ):
+        client._get("/equities/master")
+
+
+@pytest.mark.parametrize("payload", [[], {"data": {}}, {"data": ["not-an-object"]}])
+def test_get_rejects_malformed_success_payload(payload: object) -> None:
+    client = JQuantsV2Client(api_key="secret", min_interval=0)
+    with (
+        patch("src.data.jquants_v2_client.requests.get", return_value=_response(200, payload)),
+        pytest.raises(ValueError, match="Invalid J-Quants response"),
+    ):
+        client._get("/equities/master")
+
+
+def test_get_rejects_repeated_pagination_cursor() -> None:
+    page = _response(200, {"data": [], "pagination_key": "same"})
+    client = JQuantsV2Client(api_key="secret", min_interval=0)
+    with (
+        patch("src.data.jquants_v2_client.requests.get", side_effect=[page, page]),
+        pytest.raises(ValueError, match="repeated pagination cursor"),
     ):
         client._get("/equities/master")

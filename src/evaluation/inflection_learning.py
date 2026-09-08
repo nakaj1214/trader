@@ -93,8 +93,9 @@ def load_learning_observations(
                 raise SnapshotLoadError(f"Invalid candidate row: {path.name}")
             ticker = str(candidate.get("ticker") or "")
             classification = str(candidate.get("classification") or "")
-            if not ticker or not classification:
-                raise SnapshotLoadError(f"Candidate identity missing: {path.name}")
+            score = _optional_float(candidate.get("score"))
+            if not ticker or not classification or score is None:
+                raise SnapshotLoadError(f"Candidate identity/score missing: {path.name}")
             key = (market_date, ticker)
             if key in observations:
                 continue
@@ -106,7 +107,7 @@ def load_learning_observations(
                 "strategy_version": strategy_version,
                 "report_schema_version": schema_version,
                 "classification": classification,
-                "score": _optional_float(candidate.get("score")),
+                "score": score,
                 "raw_inflection_score": _optional_float(candidate.get("raw_inflection_score")),
                 "market": str(candidate.get("market") or ""),
                 "return_5d_pct": _optional_float(candidate.get("return_5d_pct")),
@@ -231,10 +232,11 @@ def evaluate_learning_observations(
                 apply_tax=False,
             )
             benchmark_return = benchmark_by_horizon[horizon].get(str(observation["signal_date"]))
-            completed = trade.net_return_pct is not None
+            trade_return = trade.net_return_pct
+            completed = trade_return is not None
             excess_return = None
-            if completed and benchmark_return is not None:
-                excess_return = round(float(trade.net_return_pct) - float(benchmark_return), 6)
+            if trade_return is not None and benchmark_return is not None:
+                excess_return = round(float(trade_return) - float(benchmark_return), 6)
             max_return = trade.max_return_pct
             is_explosion = bool(
                 completed
@@ -247,7 +249,7 @@ def evaluate_learning_observations(
                 "completed": completed,
                 "entry_date": trade.entry_date,
                 "exit_date": trade.exit_date,
-                "net_return_pct": trade.net_return_pct,
+                "net_return_pct": trade_return,
                 "benchmark_net_return_pct": benchmark_return,
                 "excess_return_pct": excess_return,
                 "max_return_pct": max_return,

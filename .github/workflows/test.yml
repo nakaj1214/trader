@@ -47,8 +47,10 @@ jobs:
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
             src/evaluation/inflection_forward.py \
+            src/evaluation/inflection_learning.py \
             src/monitoring/position_exit.py \
             src/screening/inflection_live.py \
+            scripts/rebuild_inflection_learning.py \
             scripts/run_inflection_shadow.py \
             scripts/run_position_monitor.py
 

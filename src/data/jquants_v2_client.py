@@ -13,7 +13,6 @@ import requests
 
 BASE_URL = "https://api.jquants.com/v2"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-RETRYABLE_EXCEPTIONS = (requests.ConnectionError, requests.Timeout)
 
 
 class JQuantsV2Client:
@@ -25,6 +24,14 @@ class JQuantsV2Client:
         max_retries: int = 3,
         retry_backoff: float = 2.0,
     ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if min_interval < 0:
+            raise ValueError("min_interval cannot be negative")
+        if max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if retry_backoff < 0:
+            raise ValueError("retry_backoff cannot be negative")
         self.api_key = api_key or os.getenv("JQUANTS_API_KEY")
         self.timeout = timeout
         self.min_interval = min_interval
@@ -56,7 +63,6 @@ class JQuantsV2Client:
         return float(self.retry_backoff * (2**attempt))
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:
-        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             self._wait_for_slot()
             try:
@@ -66,9 +72,10 @@ class JQuantsV2Client:
                     headers=self._headers(),
                     timeout=self.timeout,
                 )
-            except RETRYABLE_EXCEPTIONS as exc:
+            except requests.RequestException:
+                # Even a failed transport attempt counts against the local pacing
+                # budget so reconnects cannot accidentally exceed the plan limit.
                 self._last_call = time.monotonic()
-                last_error = exc
                 if attempt >= self.max_retries:
                     raise
                 time.sleep(self._retry_delay(None, attempt))
@@ -83,23 +90,29 @@ class JQuantsV2Client:
                 response.raise_for_status()
             time.sleep(self._retry_delay(response, attempt))
 
-        if last_error is not None:
-            raise last_error
         raise RuntimeError("unreachable")
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         query = dict(params or {})
+        seen_cursors: set[str] = set()
         while True:
             response = self._request(path, query)
             payload = response.json()
-            data = payload.get("data") or []
-            if isinstance(data, list):
-                rows.extend(item for item in data if isinstance(item, dict))
-            cursor = payload.get("pagination_key") or payload.get("cursor")
-            if not cursor:
+            if not isinstance(payload, dict):
+                raise ValueError(f"Invalid J-Quants response for {path}: expected an object")
+            data = payload.get("data", [])
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise ValueError(f"Invalid J-Quants response for {path}: data must be a list of objects")
+            rows.extend(data)
+            cursor_raw = payload.get("pagination_key") or payload.get("cursor")
+            if not cursor_raw:
                 break
-            query["pagination_key"] = str(cursor)
+            cursor = str(cursor_raw)
+            if cursor in seen_cursors:
+                raise ValueError(f"Invalid J-Quants response for {path}: repeated pagination cursor")
+            seen_cursors.add(cursor)
+            query["pagination_key"] = cursor
         return rows
 
     def listed_issues(self, date: str | None = None) -> list[dict[str, Any]]:

@@ -12,6 +12,7 @@ from src.screening.inflection_live import (
     _classify,
     _fundamental_features,
     _normalize_available_score,
+    _technical_features,
     scan_japan_inflection,
 )
 
@@ -79,6 +80,16 @@ def test_classify_marks_overextended_before_candidate_thresholds() -> None:
     assert _classify(100.0, {"return_20d_pct": 55.0, "return_60d_pct": 60.0}) == "OVEREXTENDED"
 
 
+def test_technical_features_use_raw_turnover_separately_from_adjusted_close() -> None:
+    prices = _price_frame()
+    prices["Turnover"] = 123_000_000.0
+
+    result = _technical_features(prices)
+
+    assert result is not None
+    assert result["avg_turnover_20d_jpy"] == 123_000_000.0
+
+
 def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
     rows = FakeJQuantsClient().financial_summary("11110")
     result = _fundamental_features(rows)
@@ -88,6 +99,19 @@ def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
     assert result["latest_actual_disclosure_date"] == "2026-08-01"
     assert result["latest_disclosure_date"] == "2026-08-15"
     assert result["upward_revision_pct"] == pytest.approx(20.0)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [(-100.0, -200.0, -100.0), (-100.0, -50.0, 50.0), (-100.0, 50.0, 150.0), (100.0, -50.0, -150.0)],
+)
+def test_forecast_revision_preserves_improvement_direction(old: float, new: float, expected: float) -> None:
+    rows = [
+        {"DiscDate": "2026-08-01", "CurPerType": "Q1", "CurFYEn": "2027-03-31", "Sales": 1, "FOP": old},
+        {"DiscDate": "2026-08-02", "CurPerType": "Q1", "CurFYEn": "2027-03-31", "Sales": 1, "FOP": new},
+    ]
+
+    assert _fundamental_features(rows)["upward_revision_pct"] == pytest.approx(expected)
 
 
 def test_fundamentals_use_prior_fiscal_year_instead_of_same_year_correction() -> None:

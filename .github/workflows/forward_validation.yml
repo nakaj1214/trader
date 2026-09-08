@@ -62,5 +62,12 @@ jobs:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: python scripts/rebuild_inflection_forward_validation.py
 
-      # Prediction-level output remains on the ephemeral runner and is not
-      # published as a plaintext Actions artifact.
+      - name: Preserve aggregate validation summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: inflection-forward-summary
+          path: artifacts/inflection_forward_validation_summary.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Prediction-level trade rows remain on the ephemeral runner.

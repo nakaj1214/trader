@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -30,15 +32,25 @@ from src.evaluation.inflection_forward import (
 ROUND_TRIP_COST_PCT = 0.2
 STRESS_ROUND_TRIP_COST_PCT = 1.2
 TAX_RATE_PCT = 20.315
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
+DEFAULT_REQUEST_INTERVAL_SECONDS = 0.5
 
 
 def _fetch_adjusted_histories(
     rows: list[dict[str, Any]],
     *,
     max_horizon: int,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+    request_interval_seconds: float = DEFAULT_REQUEST_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, pd.DataFrame]:
-    """Fetch split-adjusted OHLC and fail loudly on missing provider data."""
+    """Fetch adjusted OHLC with bounded retries and fail on missing data."""
     import yfinance as yf
+
+    if max_retries < 0 or retry_backoff_seconds < 0 or request_interval_seconds < 0:
+        raise ValueError("retry and request timing parameters must not be negative")
 
     by_ticker: dict[str, list[pd.Timestamp]] = {}
     for row in rows:
@@ -47,29 +59,47 @@ def _fetch_adjusted_histories(
 
     histories: dict[str, pd.DataFrame] = {}
     failures: dict[str, str] = {}
-    for ticker, dates in sorted(by_ticker.items()):
+    ticker_dates = sorted(by_ticker.items())
+    required_columns = {"Open", "High", "Low", "Close"}
+    for index, (ticker, dates) in enumerate(ticker_dates):
         start = min(dates) - timedelta(days=10)
         end = max(dates) + timedelta(days=max_horizon * 2 + 30)
-        try:
-            history = yf.Ticker(ticker).history(
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                auto_adjust=True,
-                actions=False,
-            )
-        except Exception as exc:  # noqa: BLE001 - all provider failures are reported together
-            failures[ticker] = f"{type(exc).__name__}: {exc}"
-            continue
-        required_columns = {"Open", "High", "Low", "Close"}
-        if history.empty or not required_columns.issubset(history.columns):
-            failures[ticker] = "empty or missing adjusted OHLC"
-            continue
-        histories[ticker] = history
+        failure = "empty or missing adjusted OHLC"
+        for attempt in range(max_retries + 1):
+            try:
+                history = yf.Ticker(ticker).history(
+                    start=start.strftime("%Y-%m-%d"),
+                    end=end.strftime("%Y-%m-%d"),
+                    auto_adjust=True,
+                    actions=False,
+                    timeout=15,
+                )
+                if not history.empty and required_columns.issubset(history.columns):
+                    histories[ticker] = history
+                    break
+                failure = "empty or missing adjusted OHLC"
+            except Exception as exc:  # noqa: BLE001 - provider failures share retry handling
+                failure = f"{type(exc).__name__}: {exc}"
+            if attempt < max_retries:
+                sleep(retry_backoff_seconds * (2**attempt))
+        else:
+            failures[ticker] = failure
+        if index + 1 < len(ticker_dates):
+            sleep(request_interval_seconds)
 
     if failures:
         detail = "; ".join(f"{ticker} ({reason})" for ticker, reason in failures.items())
         raise RuntimeError(f"Forward price retrieval failed: {detail}")
     return histories
+
+
+def _summary_only(value: Any) -> Any:
+    """Remove prediction-level trade rows from an otherwise useful report."""
+    if isinstance(value, dict):
+        return {key: _summary_only(item) for key, item in value.items() if key != "trades"}
+    if isinstance(value, list):
+        return [_summary_only(item) for item in value]
+    return value
 
 
 def main() -> int:
@@ -102,6 +132,8 @@ def main() -> int:
 
     report: dict[str, object] = {
         "signal_count": len(signals),
+        "strategy_version": signals[0]["strategy_version"],
+        "report_schema_version": signals[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",
         "portfolio_interpretation": False,
         "entry_rule": "next_trading_day_open",
@@ -214,7 +246,17 @@ def main() -> int:
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"signal_count": len(signals), "output": str(output)}, ensure_ascii=False))
+    summary_output = output.with_name(f"{output.stem}_summary.json")
+    summary_output.write_text(
+        json.dumps(_summary_only(report), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {"signal_count": len(signals), "output": str(output), "summary_output": str(summary_output)},
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

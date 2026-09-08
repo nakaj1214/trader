@@ -31,12 +31,11 @@ def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, batch_size: int) -> pd
 
 
 def _normalize_for_scanner(frame: pd.DataFrame) -> pd.DataFrame:
-    """Make Close/Volume split-aware while preserving raw yen turnover.
+    """Use adjusted momentum prices while retaining observed share volume and yen turnover.
 
-    yfinance ``Adj Close`` is continuous across splits. Scaling Volume by the
-    inverse price-adjustment factor makes ``Close * Volume`` equal the original
-    raw ``Close * Volume`` while preventing a split from looking like a momentum
-    crash or an artificial volume spike.
+    ``Adj Close`` includes distributions as well as splits, so its adjustment
+    factor must not be applied to Volume. Store raw yen turnover separately so
+    technical features do not have to conflate the two meanings.
     """
     if "Adj Close" not in frame.columns:
         return frame
@@ -47,9 +46,8 @@ def _normalize_for_scanner(frame: pd.DataFrame) -> pd.DataFrame:
     if not bool(valid.any()):
         return frame
     normalized = frame.copy()
-    factor = (raw_close / adjusted_close).where(valid, 1.0)
+    normalized["Turnover"] = raw_close * raw_volume
     normalized["Close"] = adjusted_close
-    normalized["Volume"] = raw_volume * factor
     return normalized
 
 

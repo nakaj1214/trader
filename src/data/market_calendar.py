@@ -24,6 +24,9 @@ def expected_tse_session_date(generated_at: str | datetime) -> str:
     japan_date = str(timestamp.tz_convert(JST).date().isoformat())
     calendar = xcals.get_calendar(TSE_CALENDAR)
     if bool(calendar.is_session(japan_date)):
-        return japan_date
+        session = pd.Timestamp(japan_date)
+        if timestamp >= calendar.session_close(session):
+            return japan_date
+        return str(calendar.previous_session(session).date().isoformat())
     previous_session = calendar.date_to_session(japan_date, direction="previous")
     return str(previous_session.date().isoformat())

@@ -95,7 +95,8 @@ def simulate_signal(
     entry_price = float(after_open.iloc[0])
 
     future_closes = closes[closes.index >= entry_date]
-    if len(future_closes) < holding_days or entry_price <= 0:
+    has_full_horizon = len(future_closes) >= holding_days
+    if entry_price <= 0 or future_closes.empty or (trailing_stop_pct is None and not has_full_horizon):
         return TradeResult(
             ticker,
             str(signal_date.date()),
@@ -144,6 +145,21 @@ def simulate_signal(
             metric_highs.append(day_high)
             metric_lows.append(day_low)
             high_water = max(high_water, day_high)
+        if exit_reason == "holding_period_close" and not has_full_horizon:
+            return TradeResult(
+                ticker,
+                str(signal_date.date()),
+                score,
+                str(entry_date.date()),
+                entry_price,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
     else:
         window_highs = highs.reindex(window.index).dropna()
         window_lows = lows.reindex(window.index).dropna()
@@ -204,12 +220,18 @@ def select_non_overlapping_trades(trades: Iterable[TradeResult]) -> list[TradeRe
     """Keep at most one open position per ticker, ordered by actual entry time."""
     selected: list[TradeResult] = []
     occupied_until: dict[str, str] = {}
-    completed = sorted(
-        (trade for trade in trades if trade.entry_date and trade.exit_date),
+    open_tickers: set[str] = set()
+    entered = sorted(
+        (trade for trade in trades if trade.entry_date),
         key=lambda trade: (str(trade.entry_date), trade.ticker, trade.signal_date),
     )
-    for trade in completed:
+    for trade in entered:
+        if trade.ticker in open_tickers:
+            continue
         if str(trade.entry_date) <= occupied_until.get(trade.ticker, ""):
+            continue
+        if not trade.exit_date:
+            open_tickers.add(trade.ticker)
             continue
         selected.append(trade)
         occupied_until[trade.ticker] = str(trade.exit_date)

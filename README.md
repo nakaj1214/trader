@@ -112,6 +112,30 @@ J-Quants clientはFreeの5 calls/minを考慮した間隔制御に加えて、42
 Trailing Stopは前日までの確定済みHigh Water Markから計算します。Stopを下回って寄り付いた場合はStop価格ではなく当日始値で退出し、同日Highを同日Lowより先に観測したと仮定しません。
 
 `.github/workflows/forward_validation.yml` は週次で蓄積snapshotを検証します。snapshotがまだ存在しない期間、または有効な `EARLY_CANDIDATE` がない期間は正常終了します。
+銘柄別のtrade行を除いた集計結果は、90日間保持するGitHub Actions artifact `inflection-forward-summary` で確認できます。
+
+## Position Exit Monitor
+
+SBI証券で手動保有している銘柄をGoogle Sheetsから読み、既存backtestと同じ「前日までのHigh Water Mark・当日gap・当日Low到達」の順序でTrailing Stop条件を確認します。自動発注は行いません。
+
+平日9:03 / 12:35 / 15:35 JSTにGitHub Actionsで実行します。GitHub Actionsのscheduleはbest-effortであり、遅延・省略される可能性があるため厳密な定刻監視ではありません。TSE休場日は価格取得前に正常終了します。
+
+Googleスプレッドシートには、次の2つのタブを事前に作成し、サービスアカウントのメールアドレスへ編集権限を付与します。
+
+- `保有銘柄`（手動編集）: `ticker`, `entry_date` (`YYYY-MM-DD`), `entry_price`, `trailing_stop_pct`（任意、既定15%）
+- `状況`（システムが毎回上書き）: `ticker`, `entry_date`, `entry_price`, `current_price`, `high_water_mark`, `stop_price`, `trailing_stop_pct`, `unrealized_pct`, `distance_to_stop_pct`, `triggered`, `exit_reason`, `as_of_at`, `quote_source`, `status`, `error`
+
+必要なGitHub Secretは `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID`, `SLACK_WEBHOOK_URL` です。サービスアカウントではGoogle Sheets APIを有効化し、JSONキーの内容全体を `GOOGLE_SERVICE_ACCOUNT_JSON` に登録します。
+
+live monitorは実約定単価に合わせ、配当調整なし・株式分割のみ補正した価格を使います。forward validationは配当調整込みのため、その成績をlive monitorへ直接流用できません。既定15%は専用検証が完了するまで暫定の検証用アラートであり、確定した売買判断ではありません。
+
+一部銘柄の欠測は `状況` とSlackへ通知して残りを継続します。全銘柄の価格欠測、シート書込失敗、Slack送信失敗は監視停止としてworkflowを失敗させます。状況タブは履歴・監査ログではなく現在地を表示するダッシュボードです。
+
+Slackを送らず状況タブだけを更新するローカル確認は、次で実行します。休場日または市場時間外の手動実行は、正常skipまたはstaleエラーになります。
+
+```bash
+python scripts/run_position_monitor.py --dry-run
+```
 
 ## セットアップ
 

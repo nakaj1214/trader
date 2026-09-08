@@ -1,6 +1,7 @@
 """Load encrypted JP inflection snapshots and support benchmark-aware forward validation."""
 from __future__ import annotations
 
+from math import isfinite
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -30,6 +31,8 @@ def load_inflection_signals(
     aborts validation instead of being silently skipped.
     """
     signals: dict[tuple[str, str], dict[str, Any]] = {}
+    expected_strategy_version: str | None = None
+    expected_schema_version: int | None = None
     if not snapshot_dir.exists():
         return []
 
@@ -49,13 +52,20 @@ def load_inflection_signals(
         if (
             not strategy_version
             or not source_commit
-            or schema_version is None
+            or isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version < 1
             or market_date != path.stem
             or not isinstance(storage, dict)
             or storage.get("encrypted") is not True
             or storage.get("snapshot_date_basis") != "latest_price_date"
         ):
             raise SnapshotLoadError(f"Invalid snapshot metadata/schema: {path.name}")
+        if expected_strategy_version is None:
+            expected_strategy_version = strategy_version
+            expected_schema_version = schema_version
+        elif strategy_version != expected_strategy_version or schema_version != expected_schema_version:
+            raise SnapshotLoadError(f"Mixed strategy/schema versions: {path.name}")
 
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
@@ -72,10 +82,15 @@ def load_inflection_signals(
             key = (market_date, ticker)
             if key in signals:
                 continue
+            raw_score = candidate.get("score")
+            if isinstance(raw_score, bool) or raw_score is None:
+                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
             try:
-                score = float(candidate.get("score") or 0.0)
+                score = float(raw_score)
             except (TypeError, ValueError) as exc:
                 raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}") from exc
+            if not isfinite(score) or not 0.0 <= score <= 100.0:
+                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
             signals[key] = {
                 "ticker": ticker,
                 "signal_date": market_date,

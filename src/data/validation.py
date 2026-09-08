@@ -52,30 +52,3 @@ def validate_ohlcv(df: pd.DataFrame) -> list[ValidationIssue]:
         issues.append(ValidationIssue("NEGATIVE_VOLUME", f"{int(negative_volume)} rows"))
 
     return issues
-
-
-def compare_close_series(
-    primary: pd.DataFrame,
-    reference: pd.DataFrame,
-    tolerance_pct: float = 0.5,
-) -> dict[str, float | int | None]:
-    """Compare overlapping close prices from two providers."""
-    if "Close" not in primary.columns or "Close" not in reference.columns:
-        return {"overlap": 0, "match_rate_pct": None, "median_abs_diff_pct": None, "max_abs_diff_pct": None}
-
-    a = pd.to_numeric(primary["Close"], errors="coerce")
-    b = pd.to_numeric(reference["Close"], errors="coerce")
-    a.index = pd.to_datetime(a.index).tz_localize(None)
-    b.index = pd.to_datetime(b.index).tz_localize(None)
-    joined = pd.concat([a.rename("a"), b.rename("b")], axis=1, join="inner").dropna()
-    joined = joined[(joined["a"] > 0) & (joined["b"] > 0)]
-    if joined.empty:
-        return {"overlap": 0, "match_rate_pct": None, "median_abs_diff_pct": None, "max_abs_diff_pct": None}
-
-    diff = ((joined["a"] / joined["b"]) - 1.0).abs() * 100.0
-    return {
-        "overlap": len(diff),
-        "match_rate_pct": round(float((diff <= tolerance_pct).mean() * 100.0), 3),
-        "median_abs_diff_pct": round(float(diff.median()), 6),
-        "max_abs_diff_pct": round(float(diff.max()), 6),
-    }

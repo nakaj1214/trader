@@ -81,7 +81,7 @@ def test_singleton_multiindex_retry_is_unwrapped() -> None:
     assert float(result["2222.T"]["Close"].iloc[-1]) == 200.0
 
 
-def test_adj_close_normalizes_split_without_changing_turnover() -> None:
+def test_adjusted_close_keeps_observed_volume_and_raw_turnover_separate() -> None:
     index = pd.date_range("2026-09-01", periods=3, freq="B")
     raw = pd.DataFrame(
         {
@@ -98,6 +98,16 @@ def test_adj_close_normalizes_split_without_changing_turnover() -> None:
         result = fetch_price_data(["1111.T"], 252, max_retries=0, sleep=lambda _: None)["1111.T"]
 
     assert result["Close"].tolist() == [50.0, 50.0, 51.0]
+    assert result["Volume"].tolist() == raw["Volume"].tolist()
     raw_turnover = raw["Close"] * raw["Volume"]
-    normalized_turnover = result["Close"] * result["Volume"]
-    pd.testing.assert_series_equal(normalized_turnover, raw_turnover, check_names=False)
+    pd.testing.assert_series_equal(result["Turnover"], raw_turnover, check_names=False)
+
+
+def test_dividend_adjustment_does_not_change_volume() -> None:
+    raw = _single_frame()
+    raw["Adj Close"] = [98.0, 100.0, 100.0]
+
+    with patch("src.data.yfinance_prices.yf.download", return_value=raw):
+        result = fetch_price_data(["1111.T"], 252, max_retries=0, sleep=lambda _: None)["1111.T"]
+
+    assert result["Volume"].tolist() == [1000, 1000, 1000]

@@ -24,7 +24,7 @@ JP_MARKET_CODES = {"0111", "0112", "0113"}  # Prime / Standard / Growth
 LIVE_MEASURABLE_MAX_SCORE = 58.0
 EARLY_CANDIDATE_SCORE = 70.0
 WATCH_SCORE = 52.0
-STRATEGY_VERSION = "jp-inflection-shadow-v1"
+STRATEGY_VERSION = "jp-inflection-shadow-v2"
 REPORT_SCHEMA_VERSION = 3
 DEFAULT_JQUANTS_PLAN = "free"
 DEFAULT_FREE_DELAY_WEEKS = 12
@@ -79,9 +79,12 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
     if prev20 is not None and pd.notna(prev20) and float(prev20) > 0 and pd.notna(vol20):
         volume_ratio = float(vol20) / float(prev20)
     high52 = float(close.tail(min(252, len(close))).max())
-    turnover = None
-    if pd.notna(vol20):
-        turnover = float((close.tail(20) * volume.tail(20)).mean())
+    turnover_values = (
+        pd.to_numeric(df["Turnover"], errors="coerce").reindex(close.index)
+        if "Turnover" in df.columns
+        else close * volume
+    )
+    turnover = float(turnover_values.tail(20).mean()) if turnover_values.tail(20).notna().any() else None
     return {
         "current_price": current,
         "return_5d_pct": _pct_change(close, 5),
@@ -198,7 +201,7 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         old = _to_float(forecast_rows[-2].get("FOP"))
         new = _to_float(forecast_rows[-1].get("FOP"))
         if old not in (None, 0) and new is not None:
-            upward_revision = (new / old - 1.0) * 100.0
+            upward_revision = (new - old) / abs(old) * 100.0
 
     cashflow_rows = [
         row

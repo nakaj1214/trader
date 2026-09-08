@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 
 from src.evaluation.inflection_backtest import (
@@ -152,6 +154,50 @@ def test_trailing_stop_does_not_use_same_day_high_to_trigger_itself() -> None:
     assert trade.exit_reason == "trailing_stop"
 
 
+def test_trailing_stop_completes_before_max_horizon_is_available() -> None:
+    index = pd.bdate_range("2026-01-01", periods=4)
+    history = pd.DataFrame(
+        {
+            "Open": [100, 100, 80, 80],
+            "High": [100, 105, 85, 85],
+            "Low": [100, 95, 75, 75],
+            "Close": [100, 100, 80, 80],
+        },
+        index=index,
+    )
+
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=60,
+        round_trip_cost_pct=0,
+        trailing_stop_pct=10,
+    )
+
+    assert trade.exit_date == "2026-01-05"
+    assert trade.exit_reason == "trailing_gap"
+    assert trade.net_return_pct == -20.0
+
+
+def test_trailing_stop_without_stop_remains_incomplete_before_max_horizon() -> None:
+    index = pd.bdate_range("2026-01-01", periods=4)
+    history = pd.DataFrame(
+        {"Open": [100, 100, 105, 110], "High": [100, 105, 110, 115], "Low": [100, 95, 100, 105], "Close": [100, 104, 109, 114]},
+        index=index,
+    )
+
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=60,
+        trailing_stop_pct=10,
+    )
+
+    assert trade.entry_date == "2026-01-02"
+    assert trade.exit_date is None
+    assert trade.net_return_pct is None
+
+
 def test_non_overlapping_trades_keep_one_position_per_ticker() -> None:
     history = _history(
         [100, 100, 100, 100, 100, 100, 100],
@@ -170,6 +216,26 @@ def test_non_overlapping_trades_keep_one_position_per_ticker() -> None:
     selected = select_non_overlapping_trades(trades)
 
     assert [trade.signal_date for trade in selected] == ["2026-01-01", "2026-01-06"]
+
+
+def test_open_position_blocks_later_completed_trade_for_same_ticker() -> None:
+    history = _history([100, 100, 100], [100, 101, 102])
+    completed = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+    open_trade = replace(
+        completed,
+        signal_date="2025-12-31",
+        entry_date="2026-01-01",
+        exit_date=None,
+        exit_price=None,
+        net_return_pct=None,
+    )
+
+    assert select_non_overlapping_trades([completed, open_trade]) == []
 
 
 def test_summary_reports_outlier_sensitive_metrics() -> None:

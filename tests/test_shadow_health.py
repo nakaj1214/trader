@@ -80,6 +80,14 @@ def test_validate_report_accepts_previous_session_on_weekend() -> None:
     validate_report(report)
 
 
+def test_validate_report_accepts_previous_session_before_tse_close() -> None:
+    report = _healthy_report()
+    report["generated_at"] = "2026-09-08T05:00:00+00:00"
+    report["latest_price_date"] = "2026-09-07"
+
+    validate_report(report)
+
+
 def test_validate_report_rejects_duplicate_candidates() -> None:
     report = _healthy_report()
     report["candidates"] = [{"ticker": "1111.T"}, {"ticker": "1111.T"}]

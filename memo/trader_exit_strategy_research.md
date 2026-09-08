@@ -5,6 +5,7 @@
 - 初回調査日: 2026-09-08
 - 最終確認日: 2026-09-08
 - 今回の変更: 実コードとの照合、検証上の注意点、外部サービス、Trailing Exitの実装状況を反映
+- 追記（同日）: 証券会社（SBI証券・手動売買）、台帳（Googleスプレッドシート）、通知（Slack）、実行基盤（GitHub Actions・平日3回/日・best-effort）を決定し、実装計画 [`memo/implement/plan.md`](implement/plan.md) を作成・レビュー反映済み（未実装）。これに伴い6章・12章・13章・14章を更新した。
 
 ## 1. 結論
 
@@ -17,6 +18,7 @@
 - 終値ベース指標に加え、日中 High/Low ベースの MFE/MAE とTrailing Stopの売却結果を記録する。
 - 旧パイプラインの損切り機能は `archive/legacy/` にあり、現行経路では使われない。
 - 最初に作るべきものはリアルタイム発注ではなく、日足 High/Low を使う Exit 専用バックテストである。
+- 保有銘柄の売却タイミング通知（Position Exit Monitor）は、証券会社API連携や自動売買を行わず、Googleスプレッドシートを台帳、Slackを通知先とする構成で実装計画済みである（[`memo/implement/plan.md`](implement/plan.md)、未実装）。バックテストで検証済みのTrailing Stop判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）をライブ監視にもそのまま適用し、実勢価格と現在値の鮮度を扱う専用の取得契約を設ける設計にレビューで修正済み。
 
 ## 2. 現在の本番フロー
 
@@ -86,8 +88,8 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 |---|---|
 | 全市場から買い候補を探す | 現在の GitHub Actions 日次 scanner |
 | 日足 Exit の検証 | 既存 forward validation を拡張したローカル/CI バッチ |
-| 保有銘柄のピーク追随 | 市場時間中に常駐する保有銘柄専用プロセス |
-| 売却アラート | リアルタイム feed + 人が確認できる通知先 |
+| 保有銘柄のピーク追随 | 理想は市場時間中に常駐する保有銘柄専用プロセスだが、コスト・運用負荷を優先し GitHub Actions の平日3回/日（9:03・12:35・15:35 JST）の定期実行を採用（[`memo/implement/plan.md`](implement/plan.md)）。定刻性は保証されないbest-effortである点を明記して運用する |
+| 売却アラート | リアルタイム feed ではなく Slack Webhook（既存の `SLACK_WEBHOOK_URL` を流用）。台帳は Googleスプレッドシート。人が確認し、売買は常にユーザーが証券会社（SBI証券）で手動実行する |
 
 ## 7. Exit Strategy 候補
 
@@ -116,6 +118,8 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 ```
 
 固定率のTrailing Stopは実装済みで、売却線を前日までの確定済みHigh Water Markから計算する。当日Highで線を引き上げて同日Lowで売る未来情報混入は行わず、gap時はStop価格ではなく当日始値で退出する。ATR / Chandelierは未実装である。
+
+ライブ監視版（Position Exit Monitor、計画: [`memo/implement/plan.md`](implement/plan.md)）は、backtestと同じ判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）を無期限ポジションへ適用する設計にした。Close最大値・最新Closeだけで判定する簡易版は、backtestで検証した戦略と別物になるためレビューで却下した。既定のTrailing Stop率（15%）は、forward validationでout-of-sample優位性が確認できるまで「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
 
 ### 8.2 段階利確 + Trailing
 
@@ -163,18 +167,21 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 
 ## 12. 活用できる外部サービス
 
-2026-09-08 時点の公式情報で確認した。契約条件と価格は導入時に再確認する。
+2026-09-08 時点の公式情報で確認した。契約条件と価格は導入時に再確認する。証券会社は **SBI証券**、**自動売買は行わない（売買は常にユーザーが手動実行）**ことが決定したため、broker APIによるリアルタイム監視・発注連携は不要になった。以下は決定後の評価。
 
 | 優先 | サービス | 活用場所 | 制約と判断 |
 |---|---|---|---|
-| 1 | [J-Quants API Tick・分足アドオン](https://www.jpx.co.jp/markets/other-data-services/j-quants-api/index.html) | 日中 Exit の過去検証、日足 OHLC のバー内順序解消 | 日次配信でリアルタイムではない。まず日足検証で結果が曖昧な場合だけ追加する |
-| 2 | [kabuステーションAPI](https://kabucom.github.io/kabusapi/ptal/push.html) | 保有銘柄のリアルタイム価格監視、将来の発注連携 | WebSocket PUSH は最大50銘柄。kabuステーションを同一PCで常時起動し、毎日の再ログインが必要。Professional/Premium 条件あり（[利用条件](https://kabucom.github.io/kabusapi/ptal/howto.html)、[FAQ](https://kabucom.github.io/kabusapi/ptal/faq.html)）。Python中心の本リポジトリには最も接続しやすい候補 |
-| 3 | [TradingView Alerts / Webhook](https://www.tradingview.com/support/solutions/43000529348-how-to-configure-webhook-alerts/) | コードを増やさない価格アラートの試作、Webhook から Slack 等へ通知 | 2要素認証が必要。Webhook は3秒超でキャンセルされ、未達もあり得るため、発注の唯一の根拠にはしない |
-| 条件付き | [MARKETSPEED II RSS](https://www.rakuten-sec.co.jp/ITS/PRNT_V_TOP_Marketspeed.html) | 楽天証券利用者のリアルタイム監視・発注 | Windows + Excel/VBA 前提。リアルタイム情報と発注機能はあるが、Python経路とは別運用になるため、既に楽天証券を使う場合だけ候補 |
+| 採用 | Googleスプレッドシート | 保有銘柄の台帳（ユーザー手動編集）・判定結果の可視化 | Excel/VBAが自宅PCで使えないため採用。`gspread`+サービスアカウント経由でGitHub Actionsから読み書きする（[`memo/implement/plan.md`](implement/plan.md)） |
+| 採用（既存流用） | Slack Webhook | 売却シグナルの通知 | 既存の`SLACK_WEBHOOK_URL`をそのまま流用、追加コストなし |
+| 採用（既存流用、契約変更） | yfinance | 保有銘柄の日次価格・best-effort現在値 | 非公式ライブラリで「確実な現在値」の契約にはできないため、鮮度チェックを設け、stale/取得失敗時は判定せず監視エラー扱いにする設計にレビューで修正済み |
+| 不採用 | [kabuステーションAPI](https://kabucom.github.io/kabusapi/ptal/push.html) | （当初検討: 保有銘柄のリアルタイム価格監視、将来の発注連携） | 証券会社をSBI証券に決定し自動売買もしない方針としたため不要。SBI証券には個人向けリアルタイム/発注APIが無い |
+| 不採用 | [MARKETSPEED II RSS](https://www.rakuten-sec.co.jp/ITS/PRNT_V_TOP_Marketspeed.html) | （当初検討: 楽天証券利用者のリアルタイム監視・発注） | 楽天証券を使わない方針のため対象外。Windows + Excel/VBA前提でもあり、自宅PCの制約とも合わない |
+| 条件付き（優先度低下） | [TradingView Alerts / Webhook](https://www.tradingview.com/support/solutions/43000529348-how-to-configure-webhook-alerts/) | コードを増やさない価格アラートの試作 | Googleスプレッドシート + Slack + GitHub Actions構成を採用したため優先度は下がるが、将来の代替/補助手段として残す |
+| 後回し | [J-Quants API Tick・分足アドオン](https://www.jpx.co.jp/markets/other-data-services/j-quants-api/index.html) | 日中 Exit の過去検証、日足 OHLC のバー内順序解消 | 日次配信でリアルタイムではない。まず日足検証で結果が曖昧な場合だけ追加する |
 | 後回し | [J-Quants API TDnet 文書アドオン](https://www.jpx.co.jp/corporate/news/news-releases/6020/20260518-01.html) | 下方修正など適時開示を Exit の補助イベントにする | 日中配信だが、まず価格ベースの Exit を検証し、追加価値を分離評価してから使う |
 | 不採用 | [J-Quants Pro](https://www.jpx.co.jp/markets/other-data-services/j-quants-pro/) | 法人向けの長期・高機能データ | 法人向けで現段階の個人用 shadow 検証には過剰 |
 
-推奨する最短経路は、**既存の日足データで Exit ルールを比較 → 必要な取引だけ J-Quants 分足/Tick で再検証 → TradingView または kabuステーションAPIで人間確認付きアラート**である。証券口座が未確定なら、broker API の実装を先に始めない。
+推奨する最短経路は、**既存の日足データでExitルールを比較 → Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日3回/日、best-effort）でPosition Exit Monitorを実装 → 必要な取引だけJ-Quants分足/Tickで再検証**である。broker APIの実装は行わない（自動売買をしない方針のため）。
 
 ## 13. 推奨する調査・実装順序
 
@@ -186,8 +193,8 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 | 一部完了 | ポジション単位評価 | 同一銘柄の重複signalは統合済み。銘柄間の資金制約・資産曲線は未実装 |
 | A | out-of-sample / forward validation | パラメータ決定期間と評価期間を分離する |
 | B | 必要箇所だけ分足/Tick 再検証 | 日足で曖昧な約定と日中 Exit を確認する |
-| B | 人間確認付き売却アラート | 保有銘柄だけを監視し、欠測・再接続・重複通知を安全に扱う |
-| C | 証券API発注 | 検証環境、kill switch、発注上限、冪等性を確認した後だけ実施 |
+| 計画確定・未実装 | 人間確認付き売却アラート（Position Exit Monitor） | Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日9:03/12:35/15:35 JST、best-effort）の構成で実装計画をレビュー反映済み（[`memo/implement/plan.md`](implement/plan.md)）。実勢価格と調整後終値の尺度不一致、現在値の鮮度、backtestとの判定式一致、全銘柄失敗時のfail-open防止をレビューで修正済み。着手待ち |
+| 不採用 | 証券API発注 | SBI証券を選定し自動売買を行わない方針としたため対象外。売買は常にユーザーが手動実行する |
 
 ## 14. 残っている問題と判断
 
@@ -197,11 +204,11 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 2. MFE/MAE は実装済みで、Trailing結果と併せて比較できる。
 3. gap時の始値退出と通常・悲観の総執行コスト比較は実装済み。制限値幅、板の流動性による未約定はデータ不足のため残る。
 4. 同一銘柄の重複保有は `position_summary` で除外済み。銘柄間の資金制約とportfolio drawdownはまだ表さない。
-5. 保有銘柄の状態を管理する ledger と、結果を人へ届ける consumer がない。
-6. 日次 GitHub Actions はリアルタイム監視に使えない。
+5. 保有銘柄の状態を管理する ledger と、結果を人へ届ける consumer は、Googleスプレッドシート＋Slackによる実装計画（[`memo/implement/plan.md`](implement/plan.md)）を作成・レビュー反映済みだが、まだ実装していない。
+6. 日次 GitHub Actions は真のリアルタイム監視には使えないため、上記計画では平日3回/日（best-effort、定刻保証なし）への妥協点で運用する。分単位・秒単位の反応が必要になった場合は常駐プロセス等への切り替えを別途検討する。
 7. Entry 側の欠損年度を複数年 YoY と扱う問題は修正済み。
 
-したがって、次はsnapshotを蓄積し、実装済みTrailingが固定期間基準よりout-of-sampleで改善するかを確認する。優位性が確認できるまでATR等のルール追加、リアルタイム監視、自動売却は行わない。
+したがって、次はsnapshotを蓄積し、実装済みTrailingが固定期間基準よりout-of-sampleで改善するかを確認しつつ、Position Exit Monitorの実装（計画: [`memo/implement/plan.md`](implement/plan.md)）に着手できる。優位性が確認できるまでATR等のルール追加、自動売却は行わない。Position Exit Monitorの既定Trailing Stop率（15%）も、優位性確認前は「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
 
 ## 15. 確認した主なリポジトリファイル
 
@@ -216,6 +223,8 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 - `archive/legacy/src/enrichment/sizing_enricher.py`
 - `archive/legacy/dashboard/js/index.js`
 - `archive/legacy/dashboard/js/stock.js`
+- `memo/implement/plan.md`（Position Exit Monitor 実装計画）
+- `memo/implement/review.md`（上記計画のレビュー、ブロッカー4件・反映済み）
 
 ## 16. 本レポートの適用範囲
 

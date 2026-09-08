@@ -6,14 +6,17 @@ on:
     paths:
       - "src/evaluation/inflection_backtest.py"
       - "src/evaluation/inflection_forward.py"
+      - "src/evaluation/inflection_learning.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
       - "scripts/rebuild_inflection_forward_validation.py"
+      - "scripts/rebuild_inflection_learning.py"
       - "dashboard/data/inflection/**"
       - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
       - "tests/test_inflection_forward.py"
+      - "tests/test_inflection_learning.py"
       - ".github/workflows/forward_validation.yml"
   schedule:
     # Sunday 09:30 JST (00:30 UTC).
@@ -43,15 +46,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Test forward-validation core
+      - name: Test forward-validation and learning core
         run: |
           python -m pytest \
             tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
+            tests/test_inflection_learning.py \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.evaluation.inflection_forward \
+            --cov=src.evaluation.inflection_learning \
             --cov=src.data.snapshot_crypto \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \
@@ -62,6 +67,11 @@ jobs:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: python scripts/rebuild_inflection_forward_validation.py
 
+      - name: Rebuild cumulative self-learning knowledge
+        env:
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
+        run: python scripts/rebuild_inflection_learning.py
+
       - name: Preserve aggregate validation summary
         uses: actions/upload-artifact@v7
         with:
@@ -70,4 +80,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # Prediction-level trade rows remain on the ephemeral runner.
+      - name: Preserve aggregate learning summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: inflection-learning-summary
+          path: artifacts/inflection_learning_summary.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Prediction-level trade rows and ticker-level learning postmortems remain on the ephemeral runner.

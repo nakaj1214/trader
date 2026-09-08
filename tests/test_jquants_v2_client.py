@@ -151,7 +151,7 @@ def test_get_rejects_malformed_success_payload(payload: object) -> None:
     client = JQuantsV2Client(api_key="secret", min_interval=0)
     with (
         patch("src.data.jquants_v2_client.requests.get", return_value=_response(200, payload)),
-        pytest.raises(ValueError, match="Invalid J-Quants response"),
+        pytest.raises(TypeError, match="Invalid J-Quants response"),
     ):
         client._get("/equities/master")
 

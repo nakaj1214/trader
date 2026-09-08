@@ -4,13 +4,16 @@ import argparse
 import json
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
+
+import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.evaluation.forward_validation import fetch_histories_yfinance
 from src.evaluation.inflection_backtest import simulate_signals, summarize_trades
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
@@ -31,6 +34,45 @@ def _snapshot_secret() -> str:
     return secret
 
 
+def _fetch_adjusted_histories(
+    rows: list[dict[str, Any]],
+    *,
+    max_horizon: int,
+) -> dict[str, pd.DataFrame]:
+    """Fetch split-adjusted OHLC and fail loudly on missing provider data."""
+    import yfinance as yf
+
+    by_ticker: dict[str, list[pd.Timestamp]] = {}
+    for row in rows:
+        ticker = str(row["ticker"])
+        by_ticker.setdefault(ticker, []).append(pd.Timestamp(str(row["date"])))
+
+    histories: dict[str, pd.DataFrame] = {}
+    failures: dict[str, str] = {}
+    for ticker, dates in sorted(by_ticker.items()):
+        start = min(dates) - timedelta(days=10)
+        end = max(dates) + timedelta(days=max_horizon * 2 + 30)
+        try:
+            history = yf.Ticker(ticker).history(
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                auto_adjust=True,
+                actions=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - all provider failures are reported together
+            failures[ticker] = f"{type(exc).__name__}: {exc}"
+            continue
+        if history.empty or "Open" not in history.columns or "Close" not in history.columns:
+            failures[ticker] = "empty or missing adjusted Open/Close"
+            continue
+        histories[ticker] = history
+
+    if failures:
+        detail = "; ".join(f"{ticker} ({reason})" for ticker, reason in failures.items())
+        raise RuntimeError(f"Forward price retrieval failed: {detail}")
+    return histories
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward-validate encrypted immutable JP inflection snapshots.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
@@ -47,21 +89,22 @@ def main() -> int:
 
     signals = load_inflection_signals(snapshot_dir, encryption_secret=_snapshot_secret())
     if not signals:
-        print("Encrypted snapshots exist but contain no valid EARLY_CANDIDATE signals yet.")
+        print("Encrypted snapshots exist but contain no EARLY_CANDIDATE signals yet.")
         return 0
 
-    histories = fetch_histories_yfinance(signals, max_horizon=60)
+    histories = _fetch_adjusted_histories(signals, max_horizon=60)
     benchmark_rows = [
         {"ticker": BENCHMARK_TICKER, "date": signal["signal_date"]}
         for signal in signals
     ]
-    benchmark_history = fetch_histories_yfinance(benchmark_rows, max_horizon=60).get(BENCHMARK_TICKER)
-    if benchmark_history is None or benchmark_history.empty:
-        raise RuntimeError(f"Benchmark history unavailable for {BENCHMARK_TICKER}")
+    benchmark_history = _fetch_adjusted_histories(benchmark_rows, max_horizon=60)[BENCHMARK_TICKER]
 
     report: dict[str, object] = {
         "signal_count": len(signals),
+        "evaluation_unit": "independent_daily_signal_observation",
+        "portfolio_interpretation": False,
         "entry_rule": "next_trading_day_open",
+        "price_adjustment": "split_adjusted_ohlc",
         "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
         "benchmark": {
             "ticker": BENCHMARK_TICKER,

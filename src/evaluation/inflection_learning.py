@@ -271,7 +271,7 @@ def _independent_rows(rows: list[dict[str, Any]], horizon: int) -> list[dict[str
             continue
         ticker = str(row["ticker"])
         signal_date = str(row["signal_date"])
-        if signal_date <= occupied_until.get(ticker, ""):
+        if signal_date < occupied_until.get(ticker, ""):
             continue
         selected.append(row)
         occupied_until[ticker] = str(outcome["exit_date"])
@@ -395,7 +395,13 @@ def build_learning_report(
 ) -> dict[str, Any]:
     """Build cumulative knowledge while gating promotions on the latest strategy."""
     evaluated = evaluate_learning_observations(observations, histories, benchmark_history)
-    strategy_versions = sorted({str(row.get("strategy_version") or "") for row in observations if row.get("strategy_version")})
+    strategy_versions = sorted(
+        {
+            str(row.get("strategy_version") or "")
+            for row in observations
+            if row.get("strategy_version")
+        }
+    )
     latest_strategy_version = None
     if observations:
         latest_observation = max(observations, key=lambda row: str(row.get("signal_date") or ""))

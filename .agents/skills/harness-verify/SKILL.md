@@ -12,14 +12,15 @@ description: Deterministic verification with progressive log disclosure and mini
 6. On failure use `--detail` first, then one named failing check; use `--raw` only when bounded detail is insufficient.
 7. Do not spawn a Tester subagent for routine verification.
 
-### v6.4 verification policy
-1. Start from task-touched files / task scope, not the whole dirty worktree.
-2. Before any Laravel/PHP test, run through `python3 .codex/harness/scripts/safe_test.py --shell '<original test command>'`.
-3. `safe_test.py` requires `test_db_guard.py` and `side_effect_guard.py` to pass before launching the test process.
-4. If isolation cannot be proven, fail closed. Never fall back to the container's normal DB, network, mail, queue, storage, print, or remote-share environment.
-5. Small/low-risk: diff check + directly relevant tests/checks.
-6. Moderate: add lint/format for task-touched files and the relevant regression group.
-7. Broad/high-risk/release-sensitive: full gate may be appropriate, but unrelated pre-existing failures stay non-blocking.
-8. Do not create new test files just to satisfy verification. Prefer existing coverage or extending an existing test.
-9. Do not re-run an unchanged full gate repeatedly. After a small edit, re-run only invalidated checks unless final risk justifies a full pass.
-10. Use bounded detail first; raw/full logs only when bounded detail cannot diagnose the failure.
+### v6.5 verification policy
+1. Harness verification output/logs/state must be written under `.harness/`, never `.codex/` or `.agents/`.
+2. Start from task-touched files / task scope, not the whole dirty worktree.
+3. Before any Laravel/PHP test, run through `python3 .codex/harness/scripts/safe_test.py --shell '<original test command>'`.
+4. `safe_test.py` requires `test_db_guard.py` and `side_effect_guard.py` to pass before launching the test process.
+5. If isolation cannot be proven, fail closed. Never fall back to the container's normal DB, network, mail, queue, storage, print, or remote-share environment.
+6. Small/low-risk: diff check + directly relevant tests/checks.
+7. Moderate: add lint/format for task-touched files and the relevant regression group.
+8. Broad/high-risk/release-sensitive: full gate may be appropriate, but unrelated pre-existing failures stay non-blocking.
+9. Do not create new test files just to satisfy verification. Prefer existing coverage or extending an existing test.
+10. Do not re-run an unchanged full gate repeatedly. After a small edit, re-run only invalidated checks unless final risk justifies a full pass.
+11. Use bounded detail first; raw/full logs only when bounded detail cannot diagnose the failure.

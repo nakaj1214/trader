@@ -136,7 +136,7 @@ Googleスプレッドシートには、次の2つのタブを事前に作成し�
 - `保有銘柄`（手動編集）: `ticker`, `entry_date` (`YYYY-MM-DD`), `entry_price`, `trailing_stop_pct`（任意、既定15%）
 - `状況`（システムが毎回上書き）: `ticker`, `entry_date`, `entry_price`, `current_price`, `high_water_mark`, `stop_price`, `trailing_stop_pct`, `unrealized_pct`, `distance_to_stop_pct`, `triggered`, `exit_reason`, `as_of_at`, `quote_source`, `status`, `error`
 
-必要なGitHub Secretは `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID`, `SLACK_WEBHOOK_URL` です。サービスアカウントではGoogle Sheets APIを有効化し、JSONキーの内容全体を `GOOGLE_SERVICE_ACCOUNT_JSON` に登録します。
+必要なGitHub Secretは `GOOGLE_CREDENTIALS_JSON`, `GOOGLE_SHEET_ID`, `SLACK_WEBHOOK_URL` です。サービスアカウントではGoogle Sheets APIを有効化し、JSONキーの内容全体を `GOOGLE_CREDENTIALS_JSON` に登録します。
 
 live monitorは実約定単価に合わせ、配当調整なし・株式分割のみ補正した価格を使います。forward validationのTrailing Stop評価も同じ価格基準ですが、十分な成熟signalが蓄積するまで既定15%は暫定の検証用アラートであり、確定した売買判断ではありません。
 

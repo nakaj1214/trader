@@ -12,7 +12,7 @@ description: Develop with GPT-5.6 Sol high while minimizing duplicated context, 
 6. Delegate only when ALL are true: at least two substantial workstreams remain; scopes are independent and mostly non-overlapping; serial execution would be materially slow; each subagent has a narrow file/symbol boundary and concrete deliverable. Maximum two concurrent subagents; no nested delegation.
 7. Subagents return compact findings (paths, symbols, mismatches, risks), not source dumps. Keep integration, cross-cutting decisions, implementation order, and final synthesis in the parent.
 8. Prefer existing dependencies, helpers, abstractions, files, factories, and conventions. Add a dependency/new architectural layer/new file only when the requested behavior genuinely needs a new responsibility; do not scaffold speculatively.
-9. Keep temporary audits, inventories, generated diagnostics, and raw logs under `.codex/harness/runtime/`. Do not create tracked audit/report/plan files unless the user requested them or they are durable project knowledge.
+9. Keep temporary audits, inventories, generated diagnostics, and raw logs under `.harness/runtime/`. Do not create tracked audit/report/plan files unless the user requested them or they are durable project knowledge.
 10. Batch related edits before running targeted checks. Do not run a test/lint/build after every tiny file edit. Re-run a previously passing targeted check only when later edits can invalidate it.
 11. During iteration use the smallest relevant deterministic check. Run registered full Harness verification once against the final diff unless later edits invalidate it.
 12. Route potentially large command/search/diff output through `quiet_exec.py`, `verify.py`, or runtime files. Inspect `git diff --stat`/`--name-only` before a large full diff; inspect per-file hunks as needed.
@@ -25,7 +25,8 @@ description: Develop with GPT-5.6 Sol high while minimizing duplicated context, 
 19. Use `task_state.py` only for genuinely long or multi-session work.
 20. Keep plans/status concise and do not restate already-known findings.
 
-### v6.4 side-effect safety / bounded execution
+### v6.5 writable layout / side-effect safety / bounded execution
+- `.codex/` and `.agents/` are static configuration. Runtime/state/cache/report writes belong under project-root `.harness/`.
 - For medium/high-risk work, run `python3 .codex/harness/scripts/task_scope.py begin` before edits and `... task_scope.py report` near closeout.
 - Keep unrelated dirty files and unrelated existing failures untouched.
 - Prefer the smallest coherent edit; do not expand scope merely to make a repository-wide gate green.

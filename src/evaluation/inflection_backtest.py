@@ -7,12 +7,15 @@ into historical scoring.
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from statistics import mean, median
 from typing import Any
 
 import pandas as pd
+
+BOOTSTRAP_SEED = 1234
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,11 @@ class TradeResult:
     mae_pct: float | None = None
     exit_reason: str | None = None
     horizon_matured: bool | None = None
+    peak_giveback_pct: float | None = None
+    peak_capture_ratio: float | None = None
+    early_exit_return_5d_pct: float | None = None
+    early_exit_return_20d_pct: float | None = None
+    early_exit_return_60d_pct: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -188,6 +196,19 @@ def simulate_signal(
     net = gross - round_trip_cost_pct
     if apply_tax and net > 0:
         net *= 1.0 - tax_rate_pct / 100.0
+    peak_giveback = None
+    peak_capture = None
+    if mfe is not None:
+        peak_price = entry_price * (1.0 + mfe / 100.0)
+        peak_giveback = (peak_price - exit_price) / peak_price * 100.0
+        if mfe > 0:
+            peak_capture = net / mfe
+    future_after_exit = closes[closes.index > exit_date]
+
+    def early_exit_return(days: int) -> float | None:
+        if len(future_after_exit) < days or exit_price <= 0:
+            return None
+        return (float(future_after_exit.iloc[days - 1]) / exit_price - 1.0) * 100.0
 
     return TradeResult(
         ticker=ticker,
@@ -206,6 +227,17 @@ def simulate_signal(
         mae_pct=round(mae, 6) if mae is not None else None,
         exit_reason=exit_reason,
         horizon_matured=has_full_horizon,
+        peak_giveback_pct=round(peak_giveback, 6) if peak_giveback is not None else None,
+        peak_capture_ratio=round(peak_capture, 6) if peak_capture is not None else None,
+        early_exit_return_5d_pct=(
+            round(value, 6) if (value := early_exit_return(5)) is not None else None
+        ),
+        early_exit_return_20d_pct=(
+            round(value, 6) if (value := early_exit_return(20)) is not None else None
+        ),
+        early_exit_return_60d_pct=(
+            round(value, 6) if (value := early_exit_return(60)) is not None else None
+        ),
     )
 
 
@@ -246,6 +278,55 @@ def filter_matured(trades: Iterable[TradeResult]) -> list[TradeResult]:
     return [trade for trade in trades if trade.horizon_matured is True]
 
 
+def cluster_bootstrap_ci(
+    values: list[float],
+    cluster_keys: list[str],
+    *,
+    n_resamples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    """Return a deterministic percentile CI after resampling whole clusters."""
+    if len(values) != len(cluster_keys):
+        raise ValueError("values and cluster_keys must have equal length")
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be at least 1")
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between 0 and 1")
+    clusters: dict[str, list[float]] = {}
+    for value, key in zip(values, cluster_keys, strict=True):
+        clusters.setdefault(key, []).append(float(value))
+    if len(clusters) < 2:
+        return None
+
+    rng = random.Random(seed)
+    groups = list(clusters.values())
+    estimates = sorted(
+        mean(value for group in rng.choices(groups, k=len(groups)) for value in group)
+        for _ in range(n_resamples)
+    )
+
+    def percentile(q: float) -> float:
+        position = (len(estimates) - 1) * q
+        lower = int(position)
+        fraction = position - lower
+        if not fraction:
+            return estimates[lower]
+        return estimates[lower] + (estimates[lower + 1] - estimates[lower]) * fraction
+
+    alpha = (1.0 - confidence) / 2.0
+    return round(percentile(alpha), 6), round(percentile(1.0 - alpha), 6)
+
+
+def score_band(score: float) -> str:
+    if not 0 <= score <= 100:
+        raise ValueError("score must be between 0 and 100")
+    if score == 100:
+        return "100"
+    lower = int(score // 10) * 10
+    return f"{lower}-{lower + 9}"
+
+
 def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
     trades = list(trades)
     completed = [trade for trade in trades if trade.net_return_pct is not None]
@@ -257,11 +338,28 @@ def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
     drawdowns = [float(trade.max_drawdown_pct) for trade in completed if trade.max_drawdown_pct is not None]
     mfe = [float(trade.mfe_pct) for trade in completed if trade.mfe_pct is not None]
     mae = [float(trade.mae_pct) for trade in completed if trade.mae_pct is not None]
+    peak_givebacks = [
+        float(trade.peak_giveback_pct) for trade in completed if trade.peak_giveback_pct is not None
+    ]
+    peak_captures = [
+        float(trade.peak_capture_ratio) for trade in completed if trade.peak_capture_ratio is not None
+    ]
+    early_returns = {
+        days: [
+            float(value)
+            for trade in completed
+            if (value := getattr(trade, f"early_exit_return_{days}d_pct")) is not None
+        ]
+        for days in (5, 20, 60)
+    }
     gross_profit = sum(winners)
     gross_loss = abs(sum(losers))
+    signal_dates = [trade.signal_date for trade in completed]
+    tickers = [trade.ticker for trade in completed]
     return {
         "signals": len(trades),
         "completed": len(completed),
+        "sample_count": len(completed),
         "win_rate_pct": round(len(winners) / len(returns) * 100.0, 3) if returns else None,
         "mean_gross_return_pct": round(mean(gross), 6) if gross else None,
         "mean_net_return_pct": round(mean(returns), 6) if returns else None,
@@ -276,4 +374,19 @@ def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
         "median_max_drawdown_pct": round(median(drawdowns), 6) if drawdowns else None,
         "median_mfe_pct": round(median(mfe), 6) if mfe else None,
         "median_mae_pct": round(median(mae), 6) if mae else None,
+        "median_peak_giveback_pct": round(median(peak_givebacks), 6) if peak_givebacks else None,
+        "median_peak_capture_ratio": round(median(peak_captures), 6) if peak_captures else None,
+        "median_early_exit_return_5d_pct": (
+            round(median(early_returns[5]), 6) if early_returns[5] else None
+        ),
+        "median_early_exit_return_20d_pct": (
+            round(median(early_returns[20]), 6) if early_returns[20] else None
+        ),
+        "median_early_exit_return_60d_pct": (
+            round(median(early_returns[60]), 6) if early_returns[60] else None
+        ),
+        "mean_net_return_ci95_by_signal_date": cluster_bootstrap_ci(returns, signal_dates),
+        "signal_date_cluster_count": len(set(signal_dates)),
+        "mean_net_return_ci95_by_ticker": cluster_bootstrap_ci(returns, tickers),
+        "ticker_cluster_count": len(set(tickers)),
     }

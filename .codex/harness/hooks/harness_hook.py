@@ -133,7 +133,7 @@ def stop(event, cfg):
             max_blocks = int(gate.get("max_stop_blocks_per_diff", 1))
             if count < max_blocks:
                 counter_path.write_text(json.dumps({"count": count + 1, "timestamp": time.time()}, indent=2), encoding="utf-8")
-                return {"decision": "block", "reason": "Adaptive Harness v6.4 advisory quality policy: " + "; ".join(missing) + ". Later edits invalidate the relevant stamp."}
+                return {"decision": "block", "reason": "Adaptive Harness v6.5 advisory quality policy: " + "; ".join(missing) + ". Later edits invalidate the relevant stamp."}
             return {"continue": True, "suppressOutput": True}
 
     knowledge_cfg = cfg.get("knowledge", {})

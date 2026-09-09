@@ -6,6 +6,7 @@ on:
     paths:
       - "src/evaluation/inflection_backtest.py"
       - "src/evaluation/inflection_forward.py"
+      - "src/evaluation/inflection_recall.py"
       - "src/data/live_quote.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
@@ -15,6 +16,7 @@ on:
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
       - "tests/test_inflection_forward.py"
+      - "tests/test_inflection_recall.py"
       - "tests/test_live_quote.py"
       - ".github/workflows/forward_validation.yml"
   schedule:
@@ -56,8 +58,10 @@ jobs:
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
             tests/test_inflection_forward.py \
+            tests/test_inflection_recall.py \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.evaluation.inflection_forward \
+            --cov=src.evaluation.inflection_recall \
             --cov=src.data.snapshot_crypto \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \

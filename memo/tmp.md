@@ -1,171 +1,30 @@
-Run python scripts/run_inflection_shadow.py
-HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: 2540.T"}}}
-$2540.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2540.T']: No data found, symbol may be delisted
-HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: 2540.T"}}}
-$2540.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2540.T']: No data found, symbol may be delisted
-$2540.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2540.T']: No data found, symbol may be delisted
-$2686.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2686.T']: No data found, symbol may be delisted
-$2686.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2686.T']: No data found, symbol may be delisted
-$2686.T: No data found, symbol may be delisted
-
-1 Failed download:
-['2686.T']: No data found, symbol may be delisted
-$3198.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3198.T']: No data found, symbol may be delisted
-$3198.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3198.T']: No data found, symbol may be delisted
-$3198.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3198.T']: No data found, symbol may be delisted
-$3546.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3546.T']: No data found, symbol may be delisted
-$3546.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3546.T']: No data found, symbol may be delisted
-$3546.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3546.T']: No data found, symbol may be delisted
-$3681.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3681.T']: No data found, symbol may be delisted
-$3681.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3681.T']: No data found, symbol may be delisted
-$3681.T: No data found, symbol may be delisted
-
-1 Failed download:
-['3681.T']: No data found, symbol may be delisted
-$4449.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4449.T']: No data found, symbol may be delisted
-$4449.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4449.T']: No data found, symbol may be delisted
-$4449.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4449.T']: No data found, symbol may be delisted
-$4494.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4494.T']: No data found, symbol may be delisted
-$4494.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4494.T']: No data found, symbol may be delisted
-$4494.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4494.T']: No data found, symbol may be delisted
-$4659.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4659.T']: No data found, symbol may be delisted
-$4659.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4659.T']: No data found, symbol may be delisted
-$4659.T: No data found, symbol may be delisted
-
-1 Failed download:
-['4659.T']: No data found, symbol may be delisted
-$5856.T: No data found, symbol may be delisted
-
-1 Failed download:
-['5856.T']: No data found, symbol may be delisted
-$5856.T: No data found, symbol may be delisted
-
-1 Failed download:
-['5856.T']: No data found, symbol may be delisted
-$5856.T: No data found, symbol may be delisted
-
-1 Failed download:
-['5856.T']: No data found, symbol may be delisted
-$6403.T: No data found, symbol may be delisted
-
-1 Failed download:
-['6403.T']: No data found, symbol may be delisted
-$6403.T: No data found, symbol may be delisted
-
-1 Failed download:
-['6403.T']: No data found, symbol may be delisted
-$6403.T: No data found, symbol may be delisted
-
-1 Failed download:
-['6403.T']: No data found, symbol may be delisted
-$7922.T: No data found, symbol may be delisted
-
-1 Failed download:
-['7922.T']: No data found, symbol may be delisted
-$7922.T: No data found, symbol may be delisted
-
-1 Failed download:
-['7922.T']: No data found, symbol may be delisted
-$7922.T: No data found, symbol may be delisted
-
-1 Failed download:
-['7922.T']: No data found, symbol may be delisted
-$8289.T: No data found, symbol may be delisted
-
-1 Failed download:
-['8289.T']: No data found, symbol may be delisted
-$8289.T: No data found, symbol may be delisted
-
-1 Failed download:
-['8289.T']: No data found, symbol may be delisted
-$8289.T: No data found, symbol may be delisted
-
-1 Failed download:
-['8289.T']: No data found, symbol may be delisted
-$9927.T: No data found, symbol may be delisted
-
-1 Failed download:
-['9927.T']: No data found, symbol may be delisted
-$9927.T: No data found, symbol may be delisted
-
-1 Failed download:
-['9927.T']: No data found, symbol may be delisted
-$9927.T: No data found, symbol may be delisted
-
-1 Failed download:
-['9927.T']: No data found, symbol may be delisted
+Run python scripts/run_position_monitor.py
+  python scripts/run_position_monitor.py
+  shell: /usr/bin/bash -e {0}
+  env:
+    GOOGLE_SERVICE_ACCOUNT_JSON: 
+    GOOGLE_SHEET_ID: 
+    SLACK_WEBHOOK_URL: ***
+    pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+    PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+    Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+    Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+    Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+    LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
 Traceback (most recent call last):
-  File "/home/runner/work/trader/trader/scripts/run_inflection_shadow.py", line 166, in <module>
-    main()
-  File "/home/runner/work/trader/trader/scripts/run_inflection_shadow.py", line 148, in main
-    snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
-                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/trader/trader/scripts/run_inflection_shadow.py", line 118, in persist_report
-    validate_report(report)
-  File "/home/runner/work/trader/trader/scripts/run_inflection_shadow.py", line 55, in validate_report
-    raise RuntimeError(
-RuntimeError: DATA_HEALTH: latest market-date coverage too low: date=2026-09-09, 2855/3656 (78.1%)
+  File "/home/runner/work/trader/trader/scripts/run_position_monitor.py", line 187, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/runner/work/trader/trader/scripts/run_position_monitor.py", line 183, in main
+    return run(dry_run=args.dry_run)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/trader/trader/scripts/run_position_monitor.py", line 69, in run
+    holdings = read_holdings()
+               ^^^^^^^^^^^^^^^
+  File "/home/runner/work/trader/trader/src/data/sheets_client.py", line 47, in read_holdings
+    return list(_worksheet(worksheet_name).get_all_records())
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/trader/trader/src/data/sheets_client.py", line 35, in _worksheet
+    raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_SHEET_ID are required")
+RuntimeError: GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_SHEET_ID are required
 Error: Process completed with exit code 1.

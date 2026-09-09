@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pandas as pd
+import pytest
 
 from src.evaluation.inflection_backtest import (
+    cluster_bootstrap_ci,
     filter_matured,
+    score_band,
     select_non_overlapping_trades,
     simulate_signal,
     summarize_trades,
@@ -278,3 +281,112 @@ def test_summary_reports_outlier_sensitive_metrics() -> None:
     assert summary["completed"] == 2
     assert summary["win_rate_pct"] == 50.0
     assert summary["profit_factor"] == 2.0
+
+
+def test_peak_and_early_exit_metrics_flow_into_summary() -> None:
+    index = pd.bdate_range("2026-01-01", periods=63)
+    closes = [100.0, 100.0, 110.0, *([121.0] * 60)]
+    history = pd.DataFrame(
+        {
+            "Open": [100.0] * 63,
+            "High": [100.0, 120.0, 110.0, *([121.0] * 60)],
+            "Low": [100.0, 95.0, 90.0, *([115.0] * 60)],
+            "Close": closes,
+        },
+        index=index,
+    )
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+
+    assert trade.peak_giveback_pct == 8.333333
+    assert trade.peak_capture_ratio == 0.5
+    assert trade.early_exit_return_5d_pct == 10.0
+    assert trade.early_exit_return_20d_pct == 10.0
+    assert trade.early_exit_return_60d_pct == 10.0
+    summary = summarize_trades([trade])
+    assert summary["median_peak_giveback_pct"] == 8.333333
+    assert summary["median_peak_capture_ratio"] == 0.5
+    assert summary["median_early_exit_return_60d_pct"] == 10.0
+
+
+def test_peak_giveback_is_defined_when_mfe_is_zero() -> None:
+    index = pd.bdate_range("2026-01-01", periods=8)
+    history = pd.DataFrame(
+        {
+            "Open": [100.0] * 8,
+            "High": [100.0] * 8,
+            "Low": [100.0, 95.0, 85.0, 85.0, 85.0, 85.0, 85.0, 85.0],
+            "Close": [100.0, 95.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0],
+        },
+        index=index,
+    )
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 40},
+        history,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+
+    assert trade.mfe_pct == 0.0
+    assert trade.peak_giveback_pct == 10.0
+    assert trade.peak_capture_ratio is None
+
+
+def test_early_exit_decline_and_missing_mfe_are_reported() -> None:
+    index = pd.bdate_range("2026-01-01", periods=8)
+    history = pd.DataFrame(
+        {
+            "Open": [100.0] * 8,
+            "High": [100.0, 110.0, 105.0, 90.0, 90.0, 90.0, 90.0, 90.0],
+            "Low": [100.0, 95.0, 90.0, 75.0, 75.0, 75.0, 75.0, 75.0],
+            "Close": [100.0, 100.0, 100.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+        },
+        index=index,
+    )
+    decline = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+    missing_mfe = simulate_signal(
+        {"ticker": "B.T", "signal_date": "2026-01-01", "score": 80},
+        history[["Open", "Close"]],
+        holding_days=2,
+        round_trip_cost_pct=0,
+    )
+
+    assert decline.early_exit_return_5d_pct == -20.0
+    assert missing_mfe.mfe_pct is None
+    assert missing_mfe.peak_giveback_pct is None
+    assert missing_mfe.peak_capture_ratio is None
+
+
+def test_cluster_bootstrap_is_deterministic_and_requires_two_clusters() -> None:
+    assert cluster_bootstrap_ci([], []) is None
+    assert cluster_bootstrap_ci([1.0, 2.0], ["one", "one"]) is None
+    first = cluster_bootstrap_ci([1.0, 1.0, 3.0, 3.0], ["one", "one", "two", "two"])
+    assert first == cluster_bootstrap_ci(
+        [1.0, 1.0, 3.0, 3.0], ["one", "one", "two", "two"]
+    )
+    assert first is not None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0.0, "0-9"),
+        (9.999, "0-9"),
+        (10.0, "10-19"),
+        (49.999, "40-49"),
+        (50.0, "50-59"),
+        (99.999, "90-99"),
+        (100.0, "100"),
+    ],
+)
+def test_score_band_covers_valid_score_range(value: float, expected: str) -> None:
+    assert score_band(value) == expected

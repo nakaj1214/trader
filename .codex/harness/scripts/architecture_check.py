@@ -26,7 +26,7 @@ def run(all_files: bool = False) -> tuple[str, list[dict]]:
     if all_files:
         candidates = []
         for p in WORKSPACE_ROOT.rglob("*"):
-            if p.is_file() and ".git" not in p.parts and ".codex/harness/runtime" not in p.as_posix():
+            if p.is_file() and ".git" not in p.parts and ".harness/runtime" not in p.as_posix():
                 candidates.append(p.relative_to(WORKSPACE_ROOT).as_posix())
     else:
         candidates = changed_paths()

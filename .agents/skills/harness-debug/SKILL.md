@@ -14,7 +14,8 @@ description: Debug with GPT-5.6 Sol high and bounded context. Prefer one reprodu
 8. Run final registered verification once after the fix; use `--detail` before `--raw` on failure.
 9. Reviewer and Knowledge updates remain conditional, not automatic.
 
-### v6.4 debug safety
+### v6.5 debug safety
+- Harness-generated debug logs/state belong under `.harness/`; do not write runtime data below `.codex/` or `.agents/`.
 - Prefer read-only diagnostics. Persistent/external mutation is not diagnosis.
 - Do not run tests until both DB and side-effect guards pass. Do not assume `phpunit.xml` wins over populated container environment unless `force="true"` is verified.
 - For HTTP, mail, queue, storage/NAS/S3, printer/CUPS, external processes, scheduler/worker, and remote-transfer problems, inspect configuration/logs/read-only status first. Do not send a real probe that creates, updates, deletes, prints, emails, uploads, or queues work merely to reproduce an issue.

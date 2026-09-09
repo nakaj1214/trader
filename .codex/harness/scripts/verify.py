@@ -2,22 +2,29 @@
 from __future__ import annotations
 
 
-# adaptive-codex-harness-v6.4-side-effect-preflight:begin
+
+
+# adaptive-codex-harness-v6.5-side-effect-preflight:begin
 # Fail closed before formal verification can launch any Laravel test command.
-def _adaptive_harness_v64_preflight() -> None:
+def _adaptive_harness_v65_preflight() -> None:
     import subprocess as _subprocess
     import sys as _sys
     from pathlib import Path as _Path
 
     _root = _Path(__file__).resolve().parents[3]
+    _scripts = _root / ".codex" / "harness" / "scripts"
+    if str(_scripts) not in _sys.path:
+        _sys.path.insert(0, str(_scripts))
+    from harness_paths import ensure_layout as _ensure_layout
+    _ensure_layout()
     for _name in ("test_db_guard.py", "side_effect_guard.py"):
         _guard = _root / ".codex" / "harness" / "scripts" / _name
         if _guard.exists():
             _cp = _subprocess.run([_sys.executable, str(_guard), "--quiet"], cwd=_root)
             if _cp.returncode != 0:
                 raise SystemExit(f"Harness safety preflight failed in {_name}; verification aborted before tests.")
-_adaptive_harness_v64_preflight()
-# adaptive-codex-harness-v6.4-side-effect-preflight:end
+_adaptive_harness_v65_preflight()
+# adaptive-codex-harness-v6.5-side-effect-preflight:end
 
 import argparse
 import json
@@ -167,7 +174,7 @@ def main() -> int:
         for line in result.get("excerpt", []):
             print(f"  {line}")
         if not passed and result.get("log_path"):
-            print(f"  retained log: .codex/harness/runtime/{result['log_path']}")
+            print(f"  retained log: .harness/runtime/{result['log_path']}")
             print(f"  more detail: python3 .codex/harness/scripts/verify.py --detail \"{name}\"")
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)

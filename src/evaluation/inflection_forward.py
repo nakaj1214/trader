@@ -9,7 +9,12 @@ from typing import Any
 import pandas as pd
 
 from src.data.snapshot_crypto import decrypt_json
-from src.evaluation.inflection_backtest import TradeResult, simulate_signal
+from src.evaluation.inflection_backtest import (
+    TradeResult,
+    _series,
+    cluster_bootstrap_ci,
+    simulate_signal,
+)
 
 BENCHMARK_TICKER = "1306.T"  # NEXT FUNDS TOPIX ETF
 
@@ -153,23 +158,74 @@ def enrich_trades_with_benchmark(
     return rows
 
 
+def paired_benchmark_returns(
+    trades: list[TradeResult],
+    benchmark_history: pd.DataFrame,
+    *,
+    round_trip_cost_pct: float,
+) -> list[dict[str, Any]]:
+    """Attach a benchmark return over each trade's actual entry/exit dates."""
+    opens = _series(benchmark_history, "Open")
+    closes = _series(benchmark_history, "Close")
+    rows: list[dict[str, Any]] = []
+    for trade in trades:
+        empty = {
+            "benchmark_ticker": BENCHMARK_TICKER,
+            "benchmark_entry_date": None,
+            "benchmark_exit_date": None,
+            "benchmark_net_return_pct": None,
+            "excess_return_pct": None,
+            "beat_benchmark": None,
+        }
+        if not trade.entry_date or not trade.exit_date or trade.net_return_pct is None:
+            rows.append(empty)
+            continue
+        entries = opens[opens.index >= pd.Timestamp(trade.entry_date)]
+        exits = closes[closes.index <= pd.Timestamp(trade.exit_date)]
+        if entries.empty or exits.empty or entries.index[0] > exits.index[-1]:
+            rows.append(empty)
+            continue
+        entry_price = float(entries.iloc[0])
+        exit_price = float(exits.iloc[-1])
+        if entry_price <= 0 or exit_price <= 0:
+            rows.append(empty)
+            continue
+        benchmark_return = (exit_price / entry_price - 1.0) * 100.0 - round_trip_cost_pct
+        excess = float(trade.net_return_pct) - benchmark_return
+        rows.append(
+            {
+                "benchmark_ticker": BENCHMARK_TICKER,
+                "benchmark_entry_date": str(entries.index[0].date()),
+                "benchmark_exit_date": str(exits.index[-1].date()),
+                "benchmark_net_return_pct": round(benchmark_return, 6),
+                "excess_return_pct": round(excess, 6),
+                "beat_benchmark": excess > 0,
+            }
+        )
+    return rows
+
+
 def summarize_benchmark_excess(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize completed strategy-vs-TOPIX excess returns."""
-    values = [
-        float(row["excess_return_pct"])
-        for row in rows
-        if isinstance(row.get("excess_return_pct"), (int, float))
+    evaluated = [
+        row for row in rows if isinstance(row.get("excess_return_pct"), (int, float))
     ]
+    values = [float(row["excess_return_pct"]) for row in evaluated]
+    signal_dates = [str(row["signal_date"]) for row in evaluated]
     if not values:
         return {
             "evaluated": 0,
             "mean_excess_return_pct": None,
             "median_excess_return_pct": None,
             "beat_benchmark_rate_pct": None,
+            "mean_excess_return_ci95_by_signal_date": None,
+            "signal_date_cluster_count": 0,
         }
     return {
         "evaluated": len(values),
         "mean_excess_return_pct": round(mean(values), 6),
         "median_excess_return_pct": round(median(values), 6),
         "beat_benchmark_rate_pct": round(sum(value > 0 for value in values) / len(values) * 100.0, 3),
+        "mean_excess_return_ci95_by_signal_date": cluster_bootstrap_ci(values, signal_dates),
+        "signal_date_cluster_count": len(set(signal_dates)),
     }

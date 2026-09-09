@@ -9,9 +9,7 @@ HARNESS_DIR = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = HARNESS_DIR.parents[1]
 CONFIG_PATH = HARNESS_DIR / "config.json"
 COMMANDS_PATH = HARNESS_DIR / "commands.json"
-RUNTIME_DIR = HARNESS_DIR / "runtime"
-
-
+RUNTIME_DIR = WORKSPACE_ROOT / ".harness" / "runtime"
 def load_json(path: Path, default=None):
     if default is None:
         default = {}

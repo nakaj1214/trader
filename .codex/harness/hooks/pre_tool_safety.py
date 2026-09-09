@@ -74,7 +74,7 @@ PROTECTED_PATHS = (
     ".codex/harness/scripts/side_effect_guard.py",
     ".codex/harness/scripts/safe_test.py",
     ".codex/harness/scripts/verify.py",
-    ".codex/harness/v6_4_policy.json",
+    ".codex/harness/v6_5_policy.json",
     ".codex/hooks.json",
     ".codex/rules/harness-side-effect-safety.rules",
     "tests/concerns/harnesssideeffectisolation.php",
@@ -105,16 +105,16 @@ def main() -> int:
 
     if tool_name == "apply_patch":
         if any(path in low for path in PROTECTED_PATHS):
-            return deny("Adaptive Harness v6.4 blocked an agent edit to side-effect safety infrastructure. Update the Harness through its installer.")
+            return deny("Adaptive Harness v6.5 blocked an agent edit to side-effect safety infrastructure. Update the Harness through its installer.")
         if "@harness-side-effect-allow" in low:
-            return deny("Adaptive Harness v6.4 blocked adding a side-effect bypass marker. A human must review and add any exceptional allow marker outside the agent.")
+            return deny("Adaptive Harness v6.5 blocked adding a side-effect bypass marker. A human must review and add any exceptional allow marker outside the agent.")
         if "phpunit.xml" in low:
             if re.search(r"^\+.*(?:DB_CONNECTION|MAIL_MAILER|QUEUE_CONNECTION|FILESYSTEM_DISK|HTTP_PROXY|CUPS_SERVER).*(?:mysql|smtp|redis|sqs|s3|production|prod)", command, re.I | re.M):
-                return deny("Adaptive Harness v6.4 blocked a phpunit.xml edit that could reconnect tests to persistent/external infrastructure.")
+                return deny("Adaptive Harness v6.5 blocked a phpunit.xml edit that could reconnect tests to persistent/external infrastructure.")
             if re.search(r"^-.*(?:APP_ENV|DB_CONNECTION|DB_DATABASE|MAIL_MAILER|QUEUE_CONNECTION|CACHE_STORE|SESSION_DRIVER|FILESYSTEM_DISK|BROADCAST_CONNECTION|CUPS_SERVER|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY).*force=[\"']true[\"']", command, re.I | re.M):
-                return deny("Adaptive Harness v6.4 blocked removal of forced test isolation settings.")
+                return deny("Adaptive Harness v6.5 blocked removal of forced test isolation settings.")
         if "tests/testcase.php" in low and re.search(r"^-.*(?:HarnessSideEffectIsolation|harnessEnableSideEffectIsolation|environment\(['\"]testing|:memory:|DB::purge|database\.connections)", command, re.I | re.M):
-            return deny("Adaptive Harness v6.4 blocked removal of the Laravel TestCase isolation guard.")
+            return deny("Adaptive Harness v6.5 blocked removal of the Laravel TestCase isolation guard.")
         return 0
 
     if tool_name not in ("Bash", "shell_command", "exec_command", None):
@@ -128,34 +128,34 @@ def main() -> int:
         command,
         re.I,
     ):
-        return deny("Adaptive Harness v6.4 blocked a shell command that could modify/remove safety infrastructure.")
+        return deny("Adaptive Harness v6.5 blocked a shell command that could modify/remove safety infrastructure.")
 
     for rx, label in DANGEROUS_PATTERNS:
         if rx.search(command):
             return deny(
-                f"Adaptive Harness v6.4 blocked {label}. This is an external, destructive, or persistent side effect, "
+                f"Adaptive Harness v6.5 blocked {label}. This is an external, destructive, or persistent side effect, "
                 "not routine autonomous verification. Use read-only diagnostics or a separately reviewed user-supervised procedure."
             )
 
     if TINKER.search(command) and not re.search(r"--execute(?:=|\s)", command, re.I):
-        return deny("Adaptive Harness v6.4 blocked interactive Laravel Tinker. Use a bounded non-interactive read-only `tinker --execute=...` probe.")
+        return deny("Adaptive Harness v6.5 blocked interactive Laravel Tinker. Use a bounded non-interactive read-only `tinker --execute=...` probe.")
     if DB_CLIENT_CMD.search(command) and not re.search(r"(?:^|\s)(?:-e|--execute(?:=|\s)|-c)(?:\s|=)", command, re.I):
-        return deny("Adaptive Harness v6.4 blocked an interactive database client. Use a non-interactive read-only SELECT/SHOW/DESCRIBE/EXPLAIN command.")
+        return deny("Adaptive Harness v6.5 blocked an interactive database client. Use a non-interactive read-only SELECT/SHOW/DESCRIBE/EXPLAIN command.")
     if SMBCLIENT.search(command) and not smbclient_is_bounded_read_only(command):
-        return deny("Adaptive Harness v6.4 blocked interactive/non-read-only smbclient. Use a bounded `-c 'ls'` / metadata-only command containing read/navigation verbs only.")
+        return deny("Adaptive Harness v6.5 blocked interactive/non-read-only smbclient. Use a bounded `-c 'ls'` / metadata-only command containing read/navigation verbs only.")
 
     if (DB_CLIENT_CMD.search(command) or TINKER.search(command) or re.search(r"\bphp\s+-r\b", command, re.I)) and WRITE_SQL.search(command):
-        return deny("Adaptive Harness v6.4 blocked a database write/destructive command before execution.")
+        return deny("Adaptive Harness v6.5 blocked a database write/destructive command before execution.")
     if TINKER.search(command) and re.search(r"(?:->|::)(?:delete|forceDelete|update|insert|insertGetId|upsert|create|firstOrCreate|updateOrCreate|save|restore|truncate|drop|dropIfExists|statement|unprepared)\s*\(", command, re.I):
-        return deny("Adaptive Harness v6.4 blocked a Laravel tinker write/destructive call.")
+        return deny("Adaptive Harness v6.5 blocked a Laravel tinker write/destructive call.")
     if CUSTOM_WRITE_ARTISAN.search(command) and not re.search(r"\b(?:status|check|show|list|dry-run|pretend)\b", command, re.I):
-        return deny("Adaptive Harness v6.4 blocked a custom Artisan command whose name suggests persistent mutation.")
+        return deny("Adaptive Harness v6.5 blocked a custom Artisan command whose name suggests persistent mutation.")
 
     root = Path(payload.get("cwd") or ".").resolve()
     laravel = (root / "artisan").exists() or (root / "src" / "artisan").exists()
     if laravel and any(rx.search(command) for rx in TEST_PATTERNS):
         return deny(
-            "Adaptive Harness v6.4 blocked a raw Laravel/PHP test command. Use "
+            "Adaptive Harness v6.5 blocked a raw Laravel/PHP test command. Use "
             "`python3 .codex/harness/scripts/safe_test.py --shell '<command>'` so DB and external side effects are isolated first."
         )
 

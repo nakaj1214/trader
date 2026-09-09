@@ -49,6 +49,8 @@ PHP_DISABLED_FUNCTIONS = ",".join((
 ))
 
 TEST_ENV = {
+    "ADAPTIVE_HARNESS_ROOT": str(ROOT / ".harness"),
+    "ADAPTIVE_HARNESS_RUNTIME": str(ROOT / ".harness" / "runtime"),
     "APP_ENV": "testing",
     "DB_CONNECTION": "sqlite",
     "DB_DATABASE": ":memory:",

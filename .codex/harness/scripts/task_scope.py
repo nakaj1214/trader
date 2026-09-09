@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse, hashlib, json, subprocess, time
 from pathlib import Path
 
+from harness_paths import RUNTIME_ROOT, ensure_layout
+
 ROOT = Path(__file__).resolve().parents[3]
-STATE = ROOT / ".codex" / "harness" / "runtime" / "task_scope" / "current.json"
+STATE = RUNTIME_ROOT / "task_scope" / "current.json"
 
 HIGH_RISK_PARTS = (
     "auth", "permission", "policy", "middleware", "migration", "schema", "routes/", "security",
@@ -53,6 +55,7 @@ def snapshot() -> dict:
     return data
 
 def begin(force: bool) -> int:
+    ensure_layout()
     if STATE.exists() and not force:
         print("task scope already active; baseline preserved"); return 0
     STATE.parent.mkdir(parents=True, exist_ok=True)

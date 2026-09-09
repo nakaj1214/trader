@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import json
 import logging
+import sys
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
 from scripts.rebuild_inflection_forward_validation import (
+    BENCHMARK_ROUND_TRIP_COST_PCT,
     SPLIT_ONLY,
+    _build_group_report,
     _changed_price_rows,
     _fetch_adjusted_histories,
     _history_row_hashes,
     _persist_price_hashes,
+    _report_breakdowns,
     _summary_only,
+    regime_label,
+)
+from scripts.rebuild_inflection_forward_validation import (
+    main as rebuild_main,
 )
 from src.data.snapshot_crypto import decrypt_json, encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
@@ -22,6 +31,7 @@ from src.evaluation.inflection_forward import (
     benchmark_returns_by_signal_date,
     enrich_trades_with_benchmark,
     load_inflection_signals,
+    paired_benchmark_returns,
     summarize_benchmark_excess,
 )
 
@@ -342,3 +352,255 @@ def test_forward_summary_removes_prediction_rows() -> None:
         "signal_count": 1,
         "horizons": {"h5": {"summary": {"completed": 1}}},
     }
+
+
+def test_load_inflection_signals_can_load_all_tracked_classifications(tmp_path) -> None:
+    snapshot_dir = tmp_path / "inflection"
+    snapshot_dir.mkdir()
+    payload = _payload()
+    payload["candidates"].extend(
+        [
+            {"ticker": "3333.T", "classification": "NONE", "score": 40.0},
+            {"ticker": "4444.T", "classification": "OVEREXTENDED", "score": 90.0},
+        ]
+    )
+    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+
+    signals = load_inflection_signals(
+        snapshot_dir,
+        encryption_secret=SECRET,
+        classifications=("EARLY_CANDIDATE", "WATCH", "NONE", "OVEREXTENDED"),
+    )
+
+    assert {signal["classification"] for signal in signals} == {
+        "EARLY_CANDIDATE",
+        "WATCH",
+        "NONE",
+        "OVEREXTENDED",
+    }
+
+
+def test_paired_benchmark_uses_each_trades_actual_dates() -> None:
+    index = pd.bdate_range("2026-01-01", periods=8)
+    benchmark = pd.DataFrame(
+        {"Open": [100.0] * 8, "Close": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0]},
+        index=index,
+    )
+    candidate = benchmark.copy()
+    trades = [
+        simulate_signal(
+            {"ticker": ticker, "signal_date": "2026-01-01", "score": 80},
+            candidate,
+            holding_days=days,
+            round_trip_cost_pct=0,
+        )
+        for ticker, days in (("A.T", 2), ("B.T", 4))
+    ]
+
+    rows = paired_benchmark_returns(
+        trades,
+        benchmark,
+        round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
+    )
+
+    assert rows[0]["benchmark_exit_date"] != rows[1]["benchmark_exit_date"]
+    assert rows[0]["benchmark_net_return_pct"] != rows[1]["benchmark_net_return_pct"]
+
+
+def test_paired_benchmark_rejects_dates_that_invert_after_fill() -> None:
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        pd.DataFrame(
+            {"Open": [100.0, 100.0], "Close": [100.0, 101.0]},
+            index=pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        ),
+        holding_days=1,
+        round_trip_cost_pct=0,
+    )
+    benchmark = pd.DataFrame(
+        {"Open": [float("nan"), 100.0], "Close": [101.0, float("nan")]},
+        index=pd.to_datetime(["2026-01-01", "2026-01-05"]),
+    )
+
+    row = paired_benchmark_returns([trade], benchmark, round_trip_cost_pct=0)[0]
+
+    assert row["benchmark_net_return_pct"] is None
+    assert row["excess_return_pct"] is None
+
+
+def test_forward_price_fetch_extends_requested_lookback() -> None:
+    history = pd.DataFrame(
+        {"Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.0]},
+        index=pd.to_datetime(["2026-09-09"]),
+    )
+    with patch("yfinance.Ticker") as ticker:
+        ticker.return_value.history.return_value = history
+        _fetch_adjusted_histories(
+            [{"ticker": "1306.T", "date": "2026-09-08"}],
+            max_horizon=5,
+            extra_lookback_days=35,
+            request_interval_seconds=0,
+        )
+
+    assert ticker.return_value.history.call_args.kwargs["start"] == "2026-07-25"
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "expected"),
+    [(100.0, 99.0, "down"), (100.0, 100.0, "up"), (100.0, 101.0, "up")],
+)
+def test_regime_label_uses_twenty_session_return(first: float, last: float, expected: str) -> None:
+    closes = [first, *([100.0] * 19), last]
+    history = pd.DataFrame({"Close": closes}, index=pd.bdate_range("2026-01-01", periods=21))
+    assert regime_label(history, str(history.index[-1].date())) == expected
+
+
+def test_regime_label_reports_unknown_with_fewer_than_twenty_sessions() -> None:
+    history = pd.DataFrame(
+        {"Close": [100.0] * 20},
+        index=pd.bdate_range("2026-01-01", periods=20),
+    )
+    assert regime_label(history, str(history.index[-1].date())) == "unknown"
+
+
+def test_group_report_has_all_horizons_stops_and_aligned_breakdowns() -> None:
+    index = pd.bdate_range("2025-01-01", periods=340)
+    history = pd.DataFrame(
+        {
+            "Open": [100.0] * 340,
+            "High": [105.0] * 340,
+            "Low": [95.0] * 340,
+            "Close": [100.0] * 340,
+        },
+        index=index,
+    )
+    signal_date = str(index[20].date())
+    signals = [
+        {
+            "ticker": "1111.T",
+            "signal_date": signal_date,
+            "date": signal_date,
+            "score": 80.0,
+            "classification": "EARLY_CANDIDATE",
+        }
+    ]
+
+    report = _build_group_report(
+        signals,
+        {"1111.T": history},
+        {"1111.T": history},
+        history,
+        [signal_date],
+    )
+
+    assert set(report["horizons"]) == {"h5", "h20", "h60", "h126", "h252"}
+    assert len(report["exit_strategies"]) == 9
+    h5 = report["horizons"]["h5"]
+    assert h5["summary"]["sample_count"] == sum(h5["score_band_sample_counts"].values())
+    assert h5["summary"]["sample_count"] == sum(h5["regime_sample_counts"].values())
+    assert h5["trades"][0]["benchmark_net_return_pct"] == -BENCHMARK_ROUND_TRIP_COST_PCT
+    assert h5["stress"]["trades"][0]["benchmark_net_return_pct"] == -BENCHMARK_ROUND_TRIP_COST_PCT
+    trailing = report["exit_strategies"]["trailing_10pct_h60"]
+    assert trailing["trades"][0]["benchmark_net_return_pct"] == -BENCHMARK_ROUND_TRIP_COST_PCT
+    assert trailing["stress"]["trades"][0]["benchmark_net_return_pct"] == (
+        -BENCHMARK_ROUND_TRIP_COST_PCT
+    )
+    assert trailing["benchmark_excess"]["evaluated"] == 1
+
+
+def test_report_breakdowns_exclude_incomplete_trades() -> None:
+    complete = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 50},
+        pd.DataFrame(
+            {"Open": [100.0, 100.0], "Close": [100.0, 100.0]},
+            index=pd.bdate_range("2026-01-01", periods=2),
+        ),
+        holding_days=1,
+    )
+    incomplete = simulate_signal(
+        {"ticker": "B.T", "signal_date": "2026-01-01", "score": 100},
+        pd.DataFrame(),
+        holding_days=1,
+    )
+    benchmark = pd.DataFrame(
+        {"Close": [100.0] * 21},
+        index=pd.bdate_range("2025-12-04", periods=21),
+    )
+
+    counts = _report_breakdowns([complete, incomplete], benchmark)
+
+    assert sum(counts["score_band_sample_counts"].values()) == 1
+    assert sum(counts["regime_sample_counts"].values()) == 1
+
+
+def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch) -> None:
+    snapshot_dir = tmp_path / "dashboard" / "data" / "inflection"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "2026-01-29.enc").write_text("placeholder", encoding="utf-8")
+    index = pd.bdate_range("2026-01-01", periods=340)
+    history = pd.DataFrame(
+        {
+            "Open": [100.0] * 340,
+            "High": [105.0] * 340,
+            "Low": [95.0] * 340,
+            "Close": [100.0] * 340,
+        },
+        index=index,
+    )
+    signal_date = str(index[20].date())
+    observations = [
+        {
+            "ticker": ticker,
+            "signal_date": signal_date,
+            "date": signal_date,
+            "score": score,
+            "classification": classification,
+            "strategy_version": "v1",
+            "report_schema_version": 3,
+        }
+        for ticker, score, classification in (
+            ("1111.T", 80.0, "EARLY_CANDIDATE"),
+            ("2222.T", 60.0, "WATCH"),
+            ("3333.T", 40.0, "NONE"),
+            ("4444.T", 90.0, "OVEREXTENDED"),
+        )
+    ]
+
+    def fake_fetch(rows, **_kwargs):
+        return {str(row["ticker"]): history for row in rows}
+
+    monkeypatch.setattr(
+        "scripts.rebuild_inflection_forward_validation.snapshot_encryption_secret",
+        lambda: SECRET,
+    )
+    monkeypatch.setattr(
+        "scripts.rebuild_inflection_forward_validation.load_inflection_signals",
+        lambda *_args, **_kwargs: observations,
+    )
+    monkeypatch.setattr(
+        "scripts.rebuild_inflection_forward_validation._fetch_adjusted_histories",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "scripts.rebuild_inflection_forward_validation._persist_price_hashes",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rebuild_inflection_forward_validation.py",
+            "--repo-root",
+            str(tmp_path),
+            "--output",
+            "artifacts/report.json",
+        ],
+    )
+
+    assert rebuild_main() == 0
+    report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
+    assert set(report["groups"]) == {"early_candidate", "watch", "none"}
+    assert report["tracked_pool_explosion_recall"]["exploded_ticker_count"] == 0
+    assert report["groups"]["early_candidate"]["signal_count"] == 1
+    assert report["groups"]["watch"]["signal_count"] == 1
+    assert report["groups"]["none"]["signal_count"] == 1

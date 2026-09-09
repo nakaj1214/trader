@@ -1,21 +1,21 @@
-# Adaptive Codex Harness v6.4 side-effect safety rules.
+# Adaptive Codex Harness v6.5 side-effect safety rules.
 # PreToolUse is primary because Docker-wrapped commands do not have a stable inner prefix.
 # These prefix rules are a second layer for common bare destructive commands.
 
 prefix_rule(
     pattern = ["php", "artisan", ["migrate:fresh", "migrate:refresh", "migrate:reset", "migrate:rollback", "db:wipe"]],
     decision = "forbidden",
-    justification = "Harness v6.4 forbids destructive database reset/wipe commands from Codex."
+    justification = "Harness v6.5 forbids destructive database reset/wipe commands from Codex."
 )
 
 prefix_rule(
     pattern = ["php", "artisan", ["queue:work", "queue:listen", "schedule:run", "schedule:work", "horizon"]],
     decision = "forbidden",
-    justification = "Harness v6.4 forbids starting workers/schedulers as autonomous verification because they may perform persistent external work."
+    justification = "Harness v6.5 forbids starting workers/schedulers as autonomous verification because they may perform persistent external work."
 )
 
 prefix_rule(
     pattern = ["git", ["clean", "reset"]],
     decision = "prompt",
-    justification = "Harness v6.4 treats Git cleanup/reset as potentially destructive; prefer scoped reversible operations."
+    justification = "Harness v6.5 treats Git cleanup/reset as potentially destructive; prefer scoped reversible operations."
 )

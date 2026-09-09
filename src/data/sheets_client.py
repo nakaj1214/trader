@@ -29,16 +29,16 @@ STATUS_COLUMNS = (
 
 
 def _worksheet(name: str) -> Any:
-    raw_credentials = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    raw_credentials = os.getenv("GOOGLE_CREDENTIALS_JSON")
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
     if not raw_credentials or not sheet_id:
-        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_SHEET_ID are required")
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON and GOOGLE_SHEET_ID are required")
     try:
         info = json.loads(raw_credentials)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON") from exc
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON is not valid JSON") from exc
     if not isinstance(info, dict):
-        raise TypeError("GOOGLE_SERVICE_ACCOUNT_JSON must be a JSON object")
+        raise TypeError("GOOGLE_CREDENTIALS_JSON must be a JSON object")
     credentials = Credentials.from_service_account_info(info, scopes=SCOPES)  # type: ignore[no-untyped-call]
     return gspread.authorize(credentials).open_by_key(sheet_id).worksheet(name)
 

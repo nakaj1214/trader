@@ -22,7 +22,10 @@ if str(REPO_ROOT) not in sys.path:
 from src.data.live_quote import split_adjust_ohlc
 from src.data.snapshot_crypto import decrypt_json, encrypt_json, snapshot_encryption_secret
 from src.evaluation.inflection_backtest import (
+    TradeResult,
+    _series,
     filter_matured,
+    score_band,
     select_non_overlapping_trades,
     simulate_signals,
     summarize_trades,
@@ -32,11 +35,14 @@ from src.evaluation.inflection_forward import (
     benchmark_returns_by_signal_date,
     enrich_trades_with_benchmark,
     load_inflection_signals,
+    paired_benchmark_returns,
     summarize_benchmark_excess,
 )
+from src.evaluation.inflection_recall import compute_tracked_pool_explosion_recall
 
 ROUND_TRIP_COST_PCT = 0.2
 STRESS_ROUND_TRIP_COST_PCT = 1.2
+BENCHMARK_ROUND_TRIP_COST_PCT = 0.05
 TAX_RATE_PCT = 20.315
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
@@ -55,11 +61,17 @@ def _fetch_adjusted_histories(
     request_interval_seconds: float = DEFAULT_REQUEST_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     price_basis: str = TOTAL_RETURN_ADJUSTED,
+    extra_lookback_days: int = 0,
 ) -> dict[str, pd.DataFrame]:
     """Fetch OHLC on the requested price basis with bounded retries."""
     import yfinance as yf
 
-    if max_retries < 0 or retry_backoff_seconds < 0 or request_interval_seconds < 0:
+    if (
+        max_retries < 0
+        or retry_backoff_seconds < 0
+        or request_interval_seconds < 0
+        or extra_lookback_days < 0
+    ):
         raise ValueError("retry and request timing parameters must not be negative")
     if price_basis not in {TOTAL_RETURN_ADJUSTED, SPLIT_ONLY}:
         raise ValueError(f"unsupported price basis: {price_basis}")
@@ -75,7 +87,7 @@ def _fetch_adjusted_histories(
     ticker_dates = sorted(by_ticker.items())
     required_columns = {"Open", "High", "Low", "Close"}
     for index, (ticker, dates) in enumerate(ticker_dates):
-        start = min(dates) - timedelta(days=10)
+        start = min(dates) - timedelta(days=10 + extra_lookback_days)
         end = max(dates) + timedelta(days=max_horizon * 2 + 30)
         failure = "empty or missing adjusted OHLC"
         for attempt in range(max_retries + 1):
@@ -212,6 +224,152 @@ def _summary_only(value: Any) -> Any:
     return value
 
 
+def regime_label(benchmark_history: pd.DataFrame, signal_date: str) -> str:
+    closes = _series(benchmark_history, "Close")
+    available = closes[closes.index <= pd.Timestamp(signal_date)]
+    if len(available) < 21:
+        return "unknown"
+    return "up" if float(available.iloc[-1]) >= float(available.iloc[-21]) else "down"
+
+
+def _report_breakdowns(
+    trades: list[TradeResult],
+    benchmark_history: pd.DataFrame,
+) -> dict[str, dict[str, int]]:
+    completed = [trade for trade in trades if trade.net_return_pct is not None]
+    score_counts = {**{f"{value}-{value + 9}": 0 for value in range(0, 100, 10)}, "100": 0}
+    regime_counts = {"up": 0, "down": 0, "unknown": 0}
+    for trade in completed:
+        score_counts[score_band(trade.score)] += 1
+        regime_counts[regime_label(benchmark_history, trade.signal_date)] += 1
+    return {
+        "score_band_sample_counts": score_counts,
+        "regime_sample_counts": regime_counts,
+    }
+
+
+def _paired_trade_rows(
+    trades: list[TradeResult],
+    benchmark_history: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    benchmarks = paired_benchmark_returns(
+        trades,
+        benchmark_history,
+        round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
+    )
+    return [trade.as_dict() | benchmark for trade, benchmark in zip(trades, benchmarks, strict=True)]
+
+
+def _build_group_report(
+    signals: list[dict[str, Any]],
+    histories: dict[str, pd.DataFrame],
+    split_histories: dict[str, pd.DataFrame],
+    benchmark_history: pd.DataFrame,
+    signal_dates: list[str],
+) -> dict[str, Any]:
+    horizons: dict[str, object] = {}
+    for holding_days in (5, 20, 60, 126, 252):
+        trades = simulate_signals(
+            signals,
+            histories,
+            holding_days=holding_days,
+            round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+            tax_rate_pct=TAX_RATE_PCT,
+            apply_tax=False,
+        )
+        benchmark_returns = benchmark_returns_by_signal_date(
+            signal_dates,
+            benchmark_history,
+            holding_days=holding_days,
+            round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
+        )
+        trade_rows = enrich_trades_with_benchmark(trades, benchmark_returns)
+        stress_trades = simulate_signals(
+            signals,
+            histories,
+            holding_days=holding_days,
+            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+            tax_rate_pct=TAX_RATE_PCT,
+            apply_tax=False,
+        )
+        stress_trade_rows = enrich_trades_with_benchmark(stress_trades, benchmark_returns)
+        stress_report: dict[str, Any] = {
+            "summary": summarize_trades(stress_trades),
+            "position_summary": summarize_trades(select_non_overlapping_trades(stress_trades)),
+            "benchmark_excess": summarize_benchmark_excess(stress_trade_rows),
+            **_report_breakdowns(stress_trades, benchmark_history),
+            "trades": stress_trade_rows,
+        }
+        horizons[f"h{holding_days}"] = {
+            "summary": summarize_trades(trades),
+            "position_summary": summarize_trades(select_non_overlapping_trades(trades)),
+            "benchmark_excess": summarize_benchmark_excess(trade_rows),
+            **_report_breakdowns(trades, benchmark_history),
+            "trades": trade_rows,
+            "stress": stress_report,
+        }
+
+    exit_strategies: dict[str, object] = {}
+    for trailing_stop_pct in (10.0, 15.0, 20.0):
+        for holding_days in (60, 126, 252):
+            trades = simulate_signals(
+                signals,
+                split_histories,
+                holding_days=holding_days,
+                round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+                apply_tax=False,
+                trailing_stop_pct=trailing_stop_pct,
+            )
+            stress_trades = simulate_signals(
+                signals,
+                split_histories,
+                holding_days=holding_days,
+                round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+                apply_tax=False,
+                trailing_stop_pct=trailing_stop_pct,
+            )
+            matured_trades = filter_matured(trades)
+            matured_stress_trades = filter_matured(stress_trades)
+            trade_rows = _paired_trade_rows(trades, benchmark_history)
+            stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
+            matured_rows = [
+                row for trade, row in zip(trades, trade_rows, strict=True) if trade.horizon_matured is True
+            ]
+            matured_stress_rows = [
+                row
+                for trade, row in zip(stress_trades, stress_trade_rows, strict=True)
+                if trade.horizon_matured is True
+            ]
+            stress_report = {
+                "matured_summary": summarize_trades(matured_stress_trades),
+                "raw_summary": summarize_trades(stress_trades),
+                "position_summary": summarize_trades(
+                    select_non_overlapping_trades(matured_stress_trades)
+                ),
+                "benchmark_excess": summarize_benchmark_excess(matured_stress_rows),
+                **_report_breakdowns(matured_stress_trades, benchmark_history),
+                "trades": stress_trade_rows,
+            }
+            exit_strategies[f"trailing_{int(trailing_stop_pct)}pct_h{holding_days}"] = {
+                "rule": "prior_confirmed_high_water_mark",
+                "max_holding_days": holding_days,
+                "eligible_count": len(matured_trades),
+                "censored_count": sum(trade.horizon_matured is False for trade in trades),
+                "matured_summary": summarize_trades(matured_trades),
+                "raw_summary": summarize_trades(trades),
+                "position_summary": summarize_trades(select_non_overlapping_trades(matured_trades)),
+                "benchmark_excess": summarize_benchmark_excess(matured_rows),
+                **_report_breakdowns(matured_trades, benchmark_history),
+                "trades": trade_rows,
+                "stress": stress_report,
+            }
+    return {
+        "signal_count": len(signals),
+        "horizons": horizons,
+        "exit_strategies": exit_strategies,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward-validate encrypted immutable JP inflection snapshots.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
@@ -227,22 +385,30 @@ def main() -> int:
         return 0
 
     encryption_secret = snapshot_encryption_secret()
-    signals = load_inflection_signals(snapshot_dir, encryption_secret=encryption_secret)
-    if not signals:
-        print("Encrypted snapshots exist but contain no EARLY_CANDIDATE signals yet.")
+    all_observations = load_inflection_signals(
+        snapshot_dir,
+        encryption_secret=encryption_secret,
+        classifications=("EARLY_CANDIDATE", "WATCH", "NONE", "OVEREXTENDED"),
+    )
+    if not all_observations:
+        print("Encrypted snapshots exist but contain no tracked inflection observations yet.")
         return 0
 
-    histories = _fetch_adjusted_histories(signals, max_horizon=60)
+    histories = _fetch_adjusted_histories(all_observations, max_horizon=252)
     split_histories = _fetch_adjusted_histories(
-        signals,
-        max_horizon=60,
+        all_observations,
+        max_horizon=252,
         price_basis=SPLIT_ONLY,
     )
     benchmark_rows = [
         {"ticker": BENCHMARK_TICKER, "date": signal["signal_date"]}
-        for signal in signals
+        for signal in all_observations
     ]
-    benchmark_history = _fetch_adjusted_histories(benchmark_rows, max_horizon=60)[BENCHMARK_TICKER]
+    benchmark_history = _fetch_adjusted_histories(
+        benchmark_rows,
+        max_horizon=252,
+        extra_lookback_days=35,
+    )[BENCHMARK_TICKER]
     price_hashes = _price_hashes(
         {
             TOTAL_RETURN_ADJUSTED: {**histories, BENCHMARK_TICKER: benchmark_history},
@@ -255,10 +421,11 @@ def main() -> int:
         encryption_secret,
     )
 
+    recall = compute_tracked_pool_explosion_recall(all_observations, histories)
     report: dict[str, object] = {
-        "signal_count": len(signals),
-        "strategy_version": signals[0]["strategy_version"],
-        "report_schema_version": signals[0]["report_schema_version"],
+        "signal_count": len(all_observations),
+        "strategy_version": all_observations[0]["strategy_version"],
+        "report_schema_version": all_observations[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",
         "portfolio_interpretation": False,
         "entry_rule": "next_trading_day_open",
@@ -270,6 +437,7 @@ def main() -> int:
         "execution_cost_scenarios_pct": {
             "base": ROUND_TRIP_COST_PCT,
             "stress": STRESS_ROUND_TRIP_COST_PCT,
+            "benchmark": BENCHMARK_ROUND_TRIP_COST_PCT,
         },
         "execution_limitations": [
             "order_book_depth_not_modeled",
@@ -281,101 +449,37 @@ def main() -> int:
             "ticker": BENCHMARK_TICKER,
             "name": "NEXT FUNDS TOPIX ETF",
             "entry_rule": "same next-trading-day open",
-            "cost_rule": "same round-trip cost as candidate trades",
+            "cost_rule": (
+                f"fixed {BENCHMARK_ROUND_TRIP_COST_PCT}% round-trip regardless of base/stress scenario"
+            ),
         },
         "jquants_delay_note": (
             "Free-tier delayed fundamentals are evaluated exactly as observed in each encrypted immutable snapshot."
         ),
-        "horizons": {},
+        "regime_definition": (
+            "TOPIX 20-session return through signal date; zero is up; insufficient history is unknown"
+        ),
+        "multiple_comparisons_caveat": (
+            "Many group, horizon, and stop combinations are reported; do not over-interpret the best result."
+        ),
+        "tracked_pool_explosion_recall": recall,
+        "groups": {},
     }
-    horizons: dict[str, object] = {}
-    signal_dates = [str(signal["signal_date"]) for signal in signals]
-    for holding_days in (5, 20, 60):
-        trades = simulate_signals(
+    groups: dict[str, object] = {}
+    for classification in ("EARLY_CANDIDATE", "WATCH", "NONE"):
+        signals = [
+            observation
+            for observation in all_observations
+            if observation["classification"] == classification
+        ]
+        groups[classification.lower()] = _build_group_report(
             signals,
             histories,
-            holding_days=holding_days,
-            round_trip_cost_pct=ROUND_TRIP_COST_PCT,
-            tax_rate_pct=TAX_RATE_PCT,
-            apply_tax=False,
-        )
-        benchmark_returns = benchmark_returns_by_signal_date(
-            signal_dates,
-            benchmark_history,
-            holding_days=holding_days,
-            round_trip_cost_pct=ROUND_TRIP_COST_PCT,
-        )
-        trade_rows = enrich_trades_with_benchmark(trades, benchmark_returns)
-        position_trades = select_non_overlapping_trades(trades)
-        stress_trades = simulate_signals(
-            signals,
-            histories,
-            holding_days=holding_days,
-            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
-            tax_rate_pct=TAX_RATE_PCT,
-            apply_tax=False,
-        )
-        stress_benchmark_returns = benchmark_returns_by_signal_date(
-            signal_dates,
-            benchmark_history,
-            holding_days=holding_days,
-            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
-        )
-        stress_trade_rows = enrich_trades_with_benchmark(stress_trades, stress_benchmark_returns)
-        stress_position_trades = select_non_overlapping_trades(stress_trades)
-        horizons[f"h{holding_days}"] = {
-            "summary": summarize_trades(trades),
-            "position_summary": summarize_trades(position_trades),
-            "benchmark_excess": summarize_benchmark_excess(trade_rows),
-            "trades": trade_rows,
-            "stress": {
-                "summary": summarize_trades(stress_trades),
-                "position_summary": summarize_trades(stress_position_trades),
-                "benchmark_excess": summarize_benchmark_excess(stress_trade_rows),
-                "trades": stress_trade_rows,
-            },
-        }
-    report["horizons"] = horizons
-
-    exit_strategies: dict[str, object] = {}
-    for trailing_stop_pct in (10.0, 15.0, 20.0):
-        trades = simulate_signals(
-            signals,
             split_histories,
-            holding_days=60,
-            round_trip_cost_pct=ROUND_TRIP_COST_PCT,
-            apply_tax=False,
-            trailing_stop_pct=trailing_stop_pct,
+            benchmark_history,
+            [str(signal["signal_date"]) for signal in signals],
         )
-        stress_trades = simulate_signals(
-            signals,
-            split_histories,
-            holding_days=60,
-            round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
-            apply_tax=False,
-            trailing_stop_pct=trailing_stop_pct,
-        )
-        matured_trades = filter_matured(trades)
-        matured_stress_trades = filter_matured(stress_trades)
-        exit_strategies[f"trailing_{int(trailing_stop_pct)}pct"] = {
-            "rule": "prior_confirmed_high_water_mark",
-            "max_holding_days": 60,
-            "eligible_count": len(matured_trades),
-            "censored_count": sum(trade.horizon_matured is False for trade in trades),
-            "matured_summary": summarize_trades(matured_trades),
-            "raw_summary": summarize_trades(trades),
-            "position_summary": summarize_trades(select_non_overlapping_trades(matured_trades)),
-            "trades": [trade.as_dict() for trade in trades],
-            "stress": {
-                "matured_summary": summarize_trades(matured_stress_trades),
-                "raw_summary": summarize_trades(stress_trades),
-                "position_summary": summarize_trades(
-                    select_non_overlapping_trades(matured_stress_trades)
-                ),
-                "trades": [trade.as_dict() for trade in stress_trades],
-            },
-        }
-    report["exit_strategies"] = exit_strategies
+    report["groups"] = groups
 
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -387,7 +491,11 @@ def main() -> int:
     )
     print(
         json.dumps(
-            {"signal_count": len(signals), "output": str(output), "summary_output": str(summary_output)},
+            {
+                "signal_count": len(all_observations),
+                "output": str(output),
+                "summary_output": str(summary_output),
+            },
             ensure_ascii=False,
         )
     )

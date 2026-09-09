@@ -13,7 +13,7 @@ description: Perform a bounded independent review only when the Harness quality 
 7. If PASS, stop with `VERDICT: PASS`; do not launch another reviewer. If FAIL, list only blocking findings with exact paths/symbols and concise evidence.
 8. After blocking fixes, rerun only invalidated targeted checks plus final Harness verification as required, then one final bounded review.
 
-### v6.4 reviewer policy
+### v6.5 reviewer policy
 - Reviewer is normally skipped for small/low-risk changes.
 - Spawn at most one bounded independent reviewer when the current task is broad/high-risk: roughly >=5 task-touched files, >=200 task-diff lines, auth/permission/security, schema/migration/persistent-data behavior, material cross-component behavior, or explicit review request.
 - Review only the current-task diff. Pre-existing dirty changes are context only when necessary and are not findings to fix.

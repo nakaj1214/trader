@@ -8,7 +8,7 @@ from src.data.sheets_client import STATUS_COLUMNS, read_holdings, write_status
 
 
 def _environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", '{"type":"service_account"}')
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON", '{"type":"service_account"}')
     monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet-id")
 
 
@@ -49,7 +49,7 @@ def test_write_status_replaces_dashboard(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_sheets_environment_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_CREDENTIALS_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
     with pytest.raises(RuntimeError, match="required"):
         read_holdings()

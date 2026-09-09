@@ -9,7 +9,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 HARNESS_DIR = SCRIPT_DIR.parent
-RUNTIME_DIR = HARNESS_DIR / "runtime"
+RUNTIME_DIR = ROOT / ".harness" / "runtime"
 TELEMETRY_DIR = RUNTIME_DIR / "telemetry"
 
 

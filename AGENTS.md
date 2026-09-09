@@ -1,8 +1,11 @@
 
 
-<!-- adaptive-codex-harness-v6.4:begin -->
-## Adaptive Codex Harness v6.4 — fail-closed side-effect isolation + bounded execution
+
+<!-- adaptive-codex-harness-v6.5:begin -->
+## Adaptive Codex Harness v6.5 — fail-closed side-effect isolation + bounded execution
 - Keep work scoped to the current user task. Pre-existing dirty-worktree changes/failures are non-blocking unless explicitly requested.
+- Treat `.codex/` and `.agents/` as static read-only Harness configuration during Codex execution. Do not store mutable runtime/state/log/cache/report data there.
+- All Harness-generated mutable data must live under project-root `.harness/`: transient execution data in `.harness/runtime/`, durable machine state in `.harness/state/`, caches in `.harness/cache/`, generated reports in `.harness/reports/`, and installer backups in `.harness/backups/`.
 - Verification is risk-based: targeted checks by default; repository-wide/full gates only for broad/high-risk/release-sensitive work or when targeted checks are insufficient.
 - Prefer existing tests, then extend an existing relevant test file. Create a new test file only for a material regression risk that existing coverage cannot reasonably validate. Never create tests merely to satisfy the Harness.
 - **Tests must not reach persistent business infrastructure.** Laravel/PHP tests must pass both `test_db_guard.py` and `side_effect_guard.py` and should run through `safe_test.py`.
@@ -16,4 +19,4 @@
 - Do not repeatedly run the same full gate, re-read unchanged large diffs, or open raw/full logs when bounded output is sufficient.
 - Stop hooks are advisory; do not rely on a blocking Stop loop for correctness.
 - Update durable project knowledge only for stable/repeated evidence or explicit user intent, not as automatic closeout for every task.
-<!-- adaptive-codex-harness-v6.4:end -->
+<!-- adaptive-codex-harness-v6.5:end -->

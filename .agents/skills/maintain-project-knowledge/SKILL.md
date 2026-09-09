@@ -12,7 +12,7 @@ description: Record only verified durable project knowledge that will materially
 6. Do not create an audit report, exec plan, evidence file, and pattern for the same fact.
 7. If nothing durable was learned, make no Knowledge change.
 
-### v6.4 knowledge policy
+### v6.5 knowledge policy
 - Project knowledge is not an automatic per-task closeout step.
 - Promote only stable, repeated, evidenced patterns or explicit user decisions.
 - Safety incidents that can cause persistent/external side effects may be promoted when the rule is general and mechanically enforceable.

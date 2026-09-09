@@ -1,232 +1,192 @@
-# Position Exit Monitor（保有銘柄の売却タイミング通知）
+# 実装計画: Phase 0+1 — ガバナンス基盤の復旧と評価バイアスの是正
 
-計画作成日: 2026-09-08
+> 入力: `memo/implement/proposal.md` の REQ-001〜REQ-007（Phase 0: ガバナンス・実行基盤 / Phase 1: データ再現性・評価バイアスの是正）。
+> 出力先を標準の `docs/implement/plan.md` ではなく `memo/implement/plan.md` にしている点に注意。
+> REQ-002/003/007のユーザー決定は2026-09-09に確定済み（詳細はStep 2/3/7）。
 
-## Context
+## 目的
 
-現在の `trader` は買い候補の発見（`scripts/run_inflection_shadow.py`）とバックテスト上の出口ルール検証（`scripts/rebuild_inflection_forward_validation.py`）はあるが、**実際に手動で購入した保有銘柄をリアルタイムに近い形で見張って「そろそろ売り時」と知らせる仕組み**が無い。
+Shadow Scan が実データを一度も蓄積できていない状態（REQ-001）と、main の無保護運用（REQ-002）・Actions の tag pin（REQ-003）というガバナンス上の欠落を解消したうえで、Forward Validation に存在する2つの評価バイアス — Trailing Stop の右打切り（REQ-004）と backtest/live 間の価格調整基準の不一致（REQ-005） — を是正する。あわせて評価用価格データの再現性チェック（REQ-006）を追加し、単一プロバイダ依存のデータ品質リスク（REQ-007）を文書化してユーザー合意を得る。これらは Phase 2 以降（評価指標拡張・戦略ロジック改善）を実施する前提となる。
 
-ユーザーは以下を決定済み:
-- 証券会社は **SBI証券**。ただしSBIには個人向けリアルタイム/発注APIが無く、かつ**自動売買はしない**（売買は常にユーザーが手動でSBI証券上で行う）ため、証券会社側のAPI連携は一切不要。
-- 保有銘柄の管理は **Excel/VBA不可（自宅PCで使えない）なのでGoogleスプレッドシート**を使いたい。
-- 通知は **Slack**（このリポジトリに既にある `SLACK_WEBHOOK_URL` を流用）。
-- チェック頻度は **GitHub Actionsの負荷を抑えることを優先**し、頻度を上げるより「重要なタイミングで確実に」を優先 → 平日 **9:00 / 12:35 / 15:35 JST** の3回（寄り付き・後場寄り・大引け）。
+## スコープ
 
-この機能は既存の本番scan/forward validationパイプラインとは完全に独立した追加機能であり、既存コードへの変更は最小限（既存ヘルパーの再利用のみ）にする。
+- 含むもの: REQ-001〜REQ-007（proposal.md 記載の Phase 0 + Phase 1）
+- 含まないもの:
+  - Phase 2（126/252日評価、Explosion Recall、ポートフォリオ評価等）
+  - Phase 3（買い候補ロジック改善、`deep_candidates` 比較、スコア閾値検証等）
+  - Phase 4（Exit Monitor の当日HWM反映、Trade Ledger等）
+  - 文献・記述修正（REQ-029〜035）
+  - J-Quants有償プラン導入、cross-provider の本格実装、単一provider内の異常値検知コード（REQ-007はリスクの文書化とユーザー合意のみ。詳細はStep 7参照）
 
-## 全体構成
+## 影響範囲（変更/追加予定ファイル）
+
+| ファイル | 理由 |
+|---|---|
+| GitHub リポジトリ設定（Secrets, Branch protection） | REQ-001（運用確認。Secret自体は登録済み）, REQ-002（保護方針の決定） — コード変更ではなくユーザー操作 |
+| `scripts/run_inflection_shadow.py` | REQ-001（coverage不足の根本原因調査のための診断出力追加。`validate_report()` L54付近）、原因判明後の対応（マスタのフィルタ追加等、別途追記のうえ実装） |
+| `src/screening/inflection_live.py` | REQ-001（`scan_japan_inflection()`の戻り値に日付別件数・stale ticker一覧を追加。原因調査結果に応じて上場廃止/取引停止銘柄の除外フィルタを追加する可能性は調査結果次第で別途追記） |
+| `tests/test_inflection_live.py` | REQ-001（日付別件数・stale ticker一覧の計算に対するテスト追加） |
+| `tests/test_shadow_health.py` | REQ-001（`validate_report()`の例外メッセージに診断情報が含まれることのテスト追加） |
+| `.github/workflows/inflection_shadow.yml` | REQ-002（direct push運用方針の確定後に対応。方針未確定のため本計画では変更を保留） |
+| `.github/workflows/forward_validation.yml` | REQ-002（Forward Validationのdirect push可否もREQ-002の確認事項に含める。方針未確定のため保留）, REQ-003（方針確定後にActions SHA pin。方針未確定のため保留）, REQ-006（`validate` job（read-only）と`persist-price-hashes` job（`contents: write`、scheduled限定）への分割） |
+| `.github/workflows/position_monitor.yml`, `.github/workflows/test.yml` | REQ-003（方針確定後にActions SHA pin。方針未確定のため保留） |
+| `.github/dependabot.yml`（新規） | REQ-003（方針確定後にDependabot有効化。方針未確定のため保留） |
+| `README.md` または新規 `docs/runbook.md`（`memo/analysis/` 配下でも可、要確認） | REQ-002/003の方針決定結果の明記, REQ-007（単一プロバイダリスクの受容方針とユーザー合意の明記） |
+| `src/evaluation/inflection_backtest.py` | REQ-004（`TradeResult` に `horizon_matured` フィールド追加、matured-only集計関数追加） |
+| `scripts/rebuild_inflection_forward_validation.py` | REQ-004（`exit_strategies` に `eligible_count`/`censored_count` 出力を追加）, REQ-005（trailing stop用にsplit-only価格を`actions=True`で取得する経路を追加し`price_adjustment`表記を区別）, REQ-006（価格基準ごと・日付行ごとのOHLCハッシュを算出し、暗号化永続化ファイルとの共通日付比較・更新を行う） |
+| `src/data/live_quote.py` | REQ-005（`fetch_split_adjusted_history` の split-only 調整ロジックを forward validation から再利用できるよう関数を切り出し） |
+| `dashboard/data/inflection_forward_price_hashes.enc`（新規） | REQ-006（価格再現性ハッシュ（日付行単位）の永続化先。ticker等を平文で残さないよう既存の `snapshot_encryption_secret()` で暗号化してgit commitする） |
+| `tests/test_inflection_backtest.py` | REQ-004のテスト、REQ-005のTrailing Stop基準差分のテスト（既存ファイルに追記） |
+| `tests/test_live_quote.py` | REQ-005（分割調整関数の切り出しに対するテスト、既存ファイルに追記） |
+| `tests/test_inflection_forward.py` | REQ-005（`actions=True`/`False`取得モード分岐）, REQ-006（日付行ハッシュの安定性・共通日付比較ロジック）のテスト（既存ファイルに追記） |
+| `tests/test_data_validation.py` | REQ-007の異常値検知を将来実施する場合の追加先（本計画では実装しない。既存ファイル名を誤って `tests/test_validation.py` としないよう明記） |
+
+## 実装ステップ
+
+#### Step 1: Shadow Scan の稼働復旧（REQ-001）
+
+**訂正**: 「本ステップにコード変更は無い」としていたのは誤り。下記「coverage不足の根本原因調査」で`scripts/run_inflection_shadow.py`（`validate_report()`）と`src/screening/inflection_live.py`（`scan_japan_inflection()`）に診断出力を追加するコード変更を伴う。ユーザーが行う運用タスク（Secret登録・workflow_dispatch実行・3営業日確認）と、診断コードの実装・テストは分けて管理する。
+
+**状況更新（2026-09-09 実行ログ `memo/tmp.md` により判明）**: `SNAPSHOT_ENCRYPTION_KEY` は登録済みで、`snapshot_encryption_secret()` は正常に通過し `persist_report()` まで到達している。したがって Secret未設定はもはや現在のblockerではない。現在の実際の失敗原因は `validate_report()`（`scripts/run_inflection_shadow.py:54`）の以下のチェックである。
 
 ```
-src/monitoring/__init__.py              (新規, 空)
-src/monitoring/position_exit.py         (新規, 純粋ロジック)
-src/data/live_quote.py                  (新規, Exit monitor専用の実勢価格・現在値取得)
-src/data/sheets_client.py               (新規, Google Sheets I/O)
-scripts/run_position_monitor.py         (新規, オーケストレーション)
-.github/workflows/position_monitor.yml  (新規, スケジュール実行)
-
-tests/test_position_exit.py             (新規)
-tests/test_live_quote.py                (新規)
-tests/test_sheets_client.py             (新規)
-tests/test_run_position_monitor.py      (新規)
-
-pyproject.toml                          (編集: 依存追加 gspread, google-auth)
-.env.example                            (編集: 変数追加)
-README.md                               (編集: セクション追加)
-.github/workflows/test.yml              (編集: mypy対象ファイルに追加)
+RuntimeError: DATA_HEALTH: latest market-date coverage too low: date=2026-09-09, 2855/3656 (78.1%)
 ```
 
-既存の本番scanパス（`src/screening/`, `src/strategy/`, `src/evaluation/`, `.github/workflows/inflection_shadow.yml` など）は一切変更しない。
+`MIN_LATEST_DATE_COVERAGE = 0.80`（同ファイルL22）に対し78.1%で不足。これは`universe`（J-Quants `listed_issues()` から取得した現在の上場銘柄マスタ、L278）に対する価格カバレッジ（70%基準、こちらは通過）ではなく、価格取得に成功した銘柄（`price_data_count`）のうち「最新日付のバーを持つ銘柄」の比率が基準を満たさないというチェックである。ログには個別に404となった13銘柄（`2540.T`等、"No data found, symbol may be delisted"）が見えるが、これらは`price_data`に含まれないため`latest_date_coverage`の分母にすら入らない別問題であり、78.1%不足の主因ではない。**真因は未特定**。
 
-## 1. `src/monitoring/position_exit.py`（純粋ロジック）
+**運用チェックリスト（ユーザー実施・Secret値とGitHub操作権限が必要）**:
+- [x] GitHub リポジトリの Settings → Secrets and variables → Actions に `SNAPSHOT_ENCRYPTION_KEY` を設定する（値は `src/data/snapshot_crypto.py` の `snapshot_encryption_secret()` が要求する形式に合わせる）— **2026-09-09 登録済み・動作確認済み（Secret起因のエラーは解消）**
+- [ ] 下記「coverage不足の根本原因調査」を完了する
+- [ ] 原因調査の結果に基づく対応（下記参照）を適用したうえで `workflow_dispatch` を再実行し、成功することを確認する
+- [ ] 翌営業日以降、scheduled run（毎日 07:40 UTC）が成功し `dashboard/data/inflection/YYYY-MM-DD.enc` が commit されることを3営業日以上連続で確認する（経過日数が必要なため即日には完了しない）
 
-`src/evaluation/inflection_backtest.py` の `_true_max_drawdown_pct()`（51行目）を直接importして再利用する（内部関数だが同一リポジトリ内なので直接参照でよい、importの上に一行コメントで理由を残す）。`_series()` はスキャナー/バックテスト固有の調整型（Adj Close置換済み）を前提にしているため本モジュールでは使わず、`src/data/live_quote.py`（Section 2a）が実勢価格ベースの同等整形を行う。
+**coverage不足の根本原因調査（`systematic-debugging`方針に準拠。閾値は根拠なく変更しない）**:
+- [ ] `scan_japan_inflection()`（`src/screening/inflection_live.py:293-296`）の戻り値に、`latest_dates`の日付別件数（例: 直近5営業日分の件数）と、最新日付でない銘柄のticker一覧（先頭20件程度）を新しいキー（例: `latest_date_histogram`, `stale_tickers_sample`）として追加する
+- [ ] `validate_report()`（`scripts/run_inflection_shadow.py:54`）が`DATA_HEALTH: latest market-date coverage too low`で失敗する際、上記2つの値を例外メッセージに含める
+- [ ] `tests/test_inflection_live.py` に `scan_japan_inflection()` が日付別件数とstale ticker一覧を正しく計算することを確認する最小テストを追加する
+- [ ] `tests/test_shadow_health.py` に、`validate_report()` がcoverage不足時に例外メッセージへ日付別件数を含めることを確認するテストを追加する（既存の `test_validate_report_rejects_*` 系テストの構造に合わせる）
+- [ ] `workflow_dispatch`を再実行し、上記診断出力を取得する
+- [ ] 診断結果を次の観点で評価する: (a) stale銘柄が特定の古い日付に集中しているか（J-Quantsマスタに残る上場廃止・取引停止銘柄の可能性）、(b) 日付がランダムに分散しているか（yfinanceのバッチ取得タイミング起因の一時的遅延の可能性）、(c) 78.1%程度が実際の全市場スキャンで恒常的に生じる値かどうか
+- [ ] **診断結果が出るまで、フィルタ追加・リトライ変更・閾値変更のいずれも実装しない。** 診断結果に基づき対応を決定した後、対応候補（J-Quantsマスタから上場廃止/取引停止銘柄を除外するフィルタ追加／yfinance取得のリトライ・タイミング見直し／実測データに基づく`MIN_LATEST_DATE_COVERAGE`の変更をユーザーに提示し合意）から選び、別途この計画に追記してから実装する
 
-**レビュー対応（P1: 実約定単価との尺度不一致／現在値の鮮度／backtestとの乖離）**: 既存 `simulate_signal()` が検証しているTrailing Stopは「前日までの確定済み日次HighをHWMとし、当日Openのgapと当日LowのStop到達で判定する」ルールである。本モジュールは無期限ポジション・単発チェック向けに**同じ判定式**を適用する（Closeの最大値・最新Closeだけで判定する簡易版は採用しない）。また `entry_price` とHigh/Low/Closeは、配当調整を含まない実勢価格ベースで揃え、分割のみを `src/data/live_quote.py` 側で補正済みの値を受け取る契約とする（本モジュール自身は補正しない）。
+**注意**: Secret登録前の段階では、Phase 1（REQ-004〜007）の「実データでの検証」は実施不能だったが、Secret自体は解消済み。現在は上記coverage問題により実データ蓄積が引き続きブロックされている。REQ-004〜007のコード変更自体は実データ蓄積を待たずに合成データのユニットテストで検証を進めてよいが、本Phase全体の完了条件からは運用チェックリストを分離し、それが未完了の間は「Phase 1実データ検証: 未完了」として扱う。
 
-```python
-@dataclass(frozen=True)
-class PositionStatus:
-    ticker: str
-    entry_date: str
-    entry_price: float           # 分割調整済み・配当調整なしの実勢価格スケール
-    as_of_at: str                 # ISO8601 (JST) — 現在値（分足データ）の取得時刻
-    quote_source: str             # 例: "yfinance_1m_bar"
-    current_price: float
-    high_water_mark: float        # entry_price と「前日までの確定済み日次High」の最大値
-    stop_price: float
-    trailing_stop_pct: float
-    unrealized_pct: float
-    distance_to_stop_pct: float
-    max_drawdown_pct: float | None
-    triggered: bool
-    exit_reason: str | None       # "trailing_gap" | "trailing_stop" | None（未発動）
+**検証**: `git log --oneline -- dashboard/data/inflection/` に `.gitkeep` 以外の `.enc` ファイル追加コミットが3件以上並ぶこと（運用チェックリスト側の受入条件。コード変更の完了条件には含めない）。
 
-def evaluate_position(
-    entry_price: float,
-    entry_date: str,
-    prior_confirmed_highs: pd.Series,   # entry日以降・JSTの当日より前だけ、分割調整済み日次High
-    prior_confirmed_closes: pd.Series,  # drawdown計算用、同じ調整基準・同じ当日除外
-    today_quote: TodayQuote,            # src/data/live_quote.py の型
-    trailing_stop_pct: float,
-    evaluated_at: datetime,             # 判定基準時刻（呼び出し側が渡す、システム時計を直接読まない）
-    ticker: str,
-) -> PositionStatus: ...
-```
+#### Step 2: main ブランチのガバナンス方針を決定・明記する（REQ-002）— **決定済み**
 
-ロジック（`simulate_signal()` のTrailing Stop分岐と同じ判定式を単発チェックへ適用）:
+**ユーザー決定（2026-09-09）**: Shadow ScanおよびForward Validation（Step 6で新設する`persist-price-hashes` job）のいずれもmainへのdirect push（`contents: write`での直接commit）を**継続する**。専用ブランチ+PRへの変更は行わない。
 
-1. `prior_confirmed_highs` が空なら `high_water_mark = entry_price`、非空なら `high_water_mark = max(entry_price, float(prior_confirmed_highs.max()))`（`pd.Series.max()` に `default` 引数は無く`TypeError`になるため、空判定を明示的に分岐する）
-2. `stop_price = high_water_mark * (1 - trailing_stop_pct / 100)`
-3. `today_quote.open <= stop_price` なら `triggered=True, exit_reason="trailing_gap"`（backtestのgap扱いと同じく当日始値で判定）
-4. そうでなく `today_quote.low_so_far <= stop_price` なら `triggered=True, exit_reason="trailing_stop"`
-5. どちらでもなければ `triggered=False, exit_reason=None`
-6. `current_price = today_quote.last_price` を基準に `unrealized_pct`/`distance_to_stop_pct` を算出
-7. `max_drawdown_pct` は `_true_max_drawdown_pct(entry_price, prior_confirmed_closes に today_quote.last_price を追加した系列)` で算出
+**対応**:
+- [ ] `.github/workflows/inflection_shadow.yml`の"Commit encrypted immutable market-day snapshot"ステップの直前に、direct pushが許容されている理由（生成物のみでソースコード変更を含まない、レビュー不要なデータ更新である）を1行コメントで残す
+- [ ] `.github/workflows/forward_validation.yml`の`persist-price-hashes` job（Step 6）にも同様の理由コメントを残す
+- [ ] README または runbook に「`main`はブランチ保護が無効。Shadow Scan workflowおよびForward Validationの`persist-price-hashes` jobが`contents: write`で直接pushする設計であり、意図的な運用である」旨を明記する
 
-**鮮度チェック（純粋関数として決定的にする）**: `today_quote` が取得できない、または `evaluated_at - today_quote.as_of_at` が `STALE_QUOTE_THRESHOLD_MINUTES`（`live_quote.py`で定義、既定60分）を超えている場合、`evaluate_position` は判定せず `StaleQuoteError`（`ValueError`のサブクラス）を送出する。`evaluated_at` は関数の外（オーケストレーション側）が生成して引数で渡し、関数内でシステム時計を直接読まない（純粋関数・テストの決定性を保つ）。呼び出し側はこれを監視エラーとして扱い、`triggered=False` へ黙ってフォールバックしない（見逃し防止）。
+**検証**: 上記コメント・README/runbook記述が追加されていること。
 
-**検証根拠の明記（backtestとliveの価格基準の相違）**: `scripts/rebuild_inflection_forward_validation.py::_fetch_adjusted_histories()` は `yf.Ticker.history(auto_adjust=True)` を使い、配当調整と分割調整の両方を含むOHLCでbacktestする。一方live monitorは実約定単価と比較するため「配当調整なし・分割のみ補正」のOHLCを使う（Section 2a）。判定式（HWM・gap・Low到達）は同一でも**価格基準が異なる**ため、既存および将来のforward validationの10%/15%/20% Trailing Stop成績を**そのままlive monitorの根拠にはできない**（配当落ち付近で発動日・成績が変わり得るため）。したがって `DEFAULT_TRAILING_STOP_PCT = 15.0` は、配当調整なし基準での専用検証が別途行われるまで**「検証済みの売り時シグナル」ではなく「検証用アラート」**として扱う（配当調整なし基準でのforward validation追加は本計画のscope外とし、別途検討する）。この文言はSlackメッセージ・README（Section 3, 5）に明記する。
+#### Step 3: GitHub Actions の SHA pin 化と Dependabot 導入（REQ-003）— **決定済み**
 
-バリデーション: `entry_price`・`trailing_stop_pct`・`today_quote`の`open`/`high_so_far`/`low_so_far`/`last_price`はいずれも有限（`NaN`/`inf`でない）かつ正であることを要求し、満たさなければ `ValueError`。`trailing_stop_pct` は `(0,100)` 範囲外も `ValueError`。呼び出し側（オーケストレーション）が行単位でキャッチし、その行だけ `error`/`stale` 扱いにして他行の処理は続ける（forward validationのfail-closed方針とは違う寛容なダッシュボード用途だが、全行が失敗した場合はSection 3の通りスクリプト全体を失敗させる）。
+**ユーザー決定（2026-09-09）**: 個人プロジェクトの規模ではメンテナンス負荷に見合わないため、SHA pin化・Dependabot導入は**実施しない**。既存のtag pin（`actions/checkout@v7`等）を継続する。
 
-`DEFAULT_TRAILING_STOP_PCT = 15.0` を既定値として定義。
+**対応**: コード変更なし。この決定をplan.md（本項）に記録することをもって本ステップは完了とする。
 
-## 2. `src/data/live_quote.py` と `src/data/sheets_client.py`（外部I/O）
+#### Step 4: Trailing Stop の右打切りバイアスを是正する（REQ-004）
 
-### 2a. `src/data/live_quote.py`（新規）— Exit monitor専用の価格取得契約
+現状 `simulate_signal()`（`src/evaluation/inflection_backtest.py:63`）は、`trailing_stop_pct` 指定時、stop が発動した場合は `has_full_horizon`（60営業日ぶんのデータが既に存在するか）を無視して常に "completed" として返す一方、stop が発動せず `has_full_horizon=False` の場合のみ incomplete（`exit_date=None`）として除外する（L148-162）。この非対称性により、直近シグナルのうち「早く損切りされたもの」だけが集計に残り、「まだ確定していない（stopしていない）もの」が消えるため、直近コホートの成績が下方に歪む。
 
-スキャナー用 `src/data/yfinance_prices.py::fetch_price_data()` は再利用しない。この関数は `Close` を配当・分割調整込みの `Adj Close` に置換するため、SBI証券での実約定単価（配当調整を含まない）とそのまま比較すると `unrealized_pct`・HWM・Stop価格が誤る。
+- [ ] `TradeResult` dataclass（L18-37）に `horizon_matured: bool | None = None` フィールドを追加する
+- [ ] `simulate_signal()`内で、trailing_stop_pct指定の有無・exit_reasonに関わらず、常に `has_full_horizon` の値を `horizon_matured` として設定して返す（早期stopでもimmatureならその旨を記録する。データ欠如で trade自体が作れない場合は `horizon_matured=None` のまま）
+- [ ] `src/evaluation/inflection_backtest.py` に `filter_matured(trades: Iterable[TradeResult]) -> list[TradeResult]` を追加し、`horizon_matured is True` の trade のみを返す
+- [ ] `summarize_trades()` の呼び出し元（`rebuild_inflection_forward_validation.py` の `exit_strategies` 生成部, L212-244）で、`filter_matured()` を通した trade 集合に対する summary（`matured_summary`）と、未フィルタの summary（`raw_summary`、参考値として維持）の両方を出力する
+- [ ] `exit_strategies[f"trailing_{...}pct"]` に `eligible_count`（matured件数）と `censored_count`（immature件数）を追加する
 
-```python
-@dataclass(frozen=True)
-class TodayQuote:
-    open: float
-    high_so_far: float
-    low_so_far: float
-    last_price: float
-    as_of_at: str   # ISO8601, JST — 分足データの最終barのtimestamp（実データ由来、リクエスト時刻の代用は禁止）
-    source: str      # 例: "yfinance_1m_bar"
+**検証**: `entry_date` から60営業日分の未来データが存在しない signal で trailing stop が早期発動したケースを用意したユニットテストを作成し、`horizon_matured=False` かつ `filter_matured()` 適用後に除外されることを確認する。同時に60営業日分のデータが揃っている signal は `horizon_matured=True` となり残ることを確認する。
 
-@dataclass(frozen=True)
-class SplitAdjustedHistory:
-    entry_price: float          # entry_date より後の分割だけで補正済み
-    daily_highs: pd.Series      # 各行を「その行より後に発生した分割比率の累積」で補正済み（単一ratioを全行へ適用しない）
-    daily_closes: pd.Series     # 同上、drawdown計算用
+#### Step 5: Forward Validation と Position Monitor の価格調整基準を統一する（REQ-005）
 
-STALE_QUOTE_THRESHOLD_MINUTES = 60
+現状、`scripts/rebuild_inflection_forward_validation.py:73` は `auto_adjust=True`（配当・分割調整済み＝total-return adjusted）で価格を取得しているが、本番の `src/data/live_quote.py` の `fetch_split_adjusted_history()`（L54-129）は `auto_adjust=False` + 分割のみ手動補正（配当調整なし）である。Trailing Stop の HWM/Stop 判定はこの2つの基準の違いにより、配当銘柄で backtest と実運用の水準がずれうる。
 
-def fetch_split_adjusted_history(ticker: str, entry_date: str, entry_price: float) -> SplitAdjustedHistory:
-    """`Ticker(ticker).history(auto_adjust=False, actions=True)` 相当で日次OHLCと分割イベント（日付・比率）を
-    一度に取得し、行ごとに「その行より後の分割比率の累積」で補正した日次High/Closeと、
-    entry_date より後の分割だけで補正したentry_priceを返す。Adj Closeへの置換は行わない（配当を混ぜない）。
-    `fetch_raw_daily_history`/`fetch_cumulative_split_ratio`/`adjust_entry_price_for_splits` に分割せず
-    1関数にまとめることで、単一ratioを全行へ誤って適用する事故を防ぐ。
-    `daily_highs`/`daily_closes` にはJSTの当日より前の行だけを含め、yfinanceが返す当日の進行中日足は
-    （取得結果に含まれていても）除外する。ただし当日が分割日であれば、その分割は過去行とentry_priceの
-    現在尺度への補正には反映する（当日足を除外することと、当日split eventを補正に使うことは独立）。
-    entry_priceが有限かつ正であることを検証し、満たさなければ ValueError。"""
+- [ ] `src/data/live_quote.py` の分割調整ロジック（L78-129の分割ファクター計算部分）を再利用可能な関数として切り出す（例: `split_adjust_ohlc(history: pd.DataFrame, as_of: date) -> pd.DataFrame` のように、`SplitAdjustedHistory` 生成の中核ロジックを独立させる。既存の `fetch_split_adjusted_history` はこれを呼び出す形にリファクタリングする）
+- [ ] `rebuild_inflection_forward_validation.py` の `_fetch_adjusted_histories()`（L40-93）は現状 `actions=False`（L74）で取得しており分割情報（`Stock Splits`列）を含まない。`exit_strategies` 生成用に別途 `auto_adjust=False, actions=True` で取得する経路を追加し、そのデータを上記の分割調整関数に通す（`horizons` 用は既存どおり `auto_adjust=True, actions=False` のまま維持し、両者の取得方法の違いを関数名またはパラメータで明示する）
+- [ ] レポートの `price_adjustment` フィールド（現状 `"split_adjusted_ohlc"` という誤記、L140）を `{"horizons": "total_return_adjusted", "exit_strategies": "split_only"}` のような区別可能な形式に修正する
 
-def fetch_today_quote(ticker: str) -> TodayQuote | None:
-    """`Ticker(ticker).history(period="1d", interval="1m", auto_adjust=False)` の最終barから
-    Open（当日最初のbarのOpen）/High・Low so far（当日barの最大・最小）/Last（最終barのClose）と、
-    最終barのindexをJSTへ変換した `as_of_at` を組み立てる。`fast_info` は現在値取得APIとして
-    quote時刻を公開していないため使わない（リクエスト実行時刻をas_of_atの代用にしない）。
-    最終barの日付が当日でない、未来時刻、取得失敗、Open/High/Low/Lastが非有限・0以下、
-    または `Low <= min(Open, Last) <= max(Open, Last) <= High` を満たさない（内部整合性が崩れている）
-    のいずれかなら None を返し、呼び出し側で監視エラーとして扱う。"""
-```
+**検証**: 過去に配当を実施した銘柄（テストでは合成データで模擬）に対し、`auto_adjust=True` 系列と split-only 系列で Trailing Stop の exit_date/exit_price が異なりうることを `tests/test_inflection_backtest.py` のユニットテストで示す。分割調整関数の切り出し自体は `tests/test_live_quote.py` に、`_fetch_adjusted_histories()` の取得モード分岐（`actions=True`/`False`の使い分け）は `tests/test_inflection_forward.py` にテストを追加する。
 
-- `fetch_split_adjusted_history` の戻り値（`daily_highs`/`daily_closes`/補正済み`entry_price`）をそのまま `position_exit.evaluate_position()` に渡す。配当発生時は価格・High双方とも変更しない（配当はスケールに影響しない）。分割発生時は各日の行をその行より後の分割比率だけで補正し、単一の累積比率を全履歴へ一律適用しない。
-- `fetch_today_quote` はtimestamp付きの分足データの最終indexをquote時刻として使う。データ提供元がtimestampを保証しない場合でも、リクエスト時刻で代用せずbest-effortである旨を明示する。
-- いずれも新規のリトライ機構は作らない（対象は少数保有銘柄のみで、`fetch_price_data`のような大規模バッチ用の頑健性は過剰）。ただし全銘柄が失敗した場合はオーケストレーション側（Section 3）で実行全体を失敗させる。
+#### Step 6: 評価用価格データの再現性チェックを追加する（REQ-006）
 
-### 2b. `src/data/sheets_client.py`（Google Sheets I/O）
+forward validation は signal（買い候補）自体は immutable snapshot だが、評価に使う将来価格は rebuild のたびに yfinance から再取得しており、provider側の事後訂正で結果が変わりうる。
 
-`gspread` + `google-auth`（`google.oauth2.service_account.Credentials`）を使う薄いラッパー。
+**レビュー指摘への対応（2回目）**: 1回目の改訂で「`artifacts/`はephemeralなので永続化する」という方向には修正したが、`{ticker, price_basis, date_range, sha256}`という**全期間まとめてのハッシュ**は、履歴が毎日1行ずつ伸びる通常運用では機能しない。次回実行時に新しい日付の行が増えれば`date_range`（開始〜終了日）自体が変わるため、「同じ`date_range`同士を比較する」というロジックは実質毎回スキップされ、逆に「取得範囲の終端を固定して比較する」ようにすると新規行が増えただけで毎回差分警告になり、provider側の事後訂正なのか正常な履歴追加なのかを区別できない。したがって**日次の行単位でハッシュを取り、共通する日付部分だけを前回と比較する**方式に変更する。
 
-- 認証: `GOOGLE_SERVICE_ACCOUNT_JSON` 環境変数（サービスアカウントJSONキーの中身をそのまま文字列で）を `json.loads` → `Credentials.from_service_account_info(..., scopes=["https://www.googleapis.com/auth/spreadsheets"])`。Drive scopeは不要（`open_by_key`のみ使用）。
-- `GOOGLE_SHEET_ID` 環境変数でスプレッドシートを特定。
-- `read_holdings(worksheet_name="保有銘柄") -> list[dict]`: `get_all_records()` をそのまま返す。
-- `write_status(rows: list[dict], worksheet_name="状況") -> None`: `worksheet.clear()` してから `STATUS_COLUMNS` の順に整形したヘッダー+データ行を `update()` で書き込む（毎回全上書き、履歴は持たない — シートは可変な「今の状態」を表すダッシュボードであり、暗号化snapshotのような不変監査ログではない）。
-- 呼び出し2箇所（read/write）ごとに都度クライアントを作る。1日3回・呼び出し回数もごく少数なので、共有クライアントやリトライ機構は作らない（Sheets APIのデフォルトクォータ 60 req/min に対して桁違いに少ない。`# ponytail: リトライなし、1日数回のコールなのでクォータに余裕あり` の一言コメントで留める）。
-- 対象ワークシート（「保有銘柄」「状況」タブ）は事前にユーザーが手動作成しておく前提（このコードはタブを作らない）。READMEに明記する。
+- [ ] `rebuild_inflection_forward_validation.py` の `_fetch_adjusted_histories()` が返す各ティッカーのOHLC系列について、**日付ごと**に `(Open, High, Low, Close)` を固定の数値表現（例: 小数点以下6桁に丸めた`float`、またはそれを文字列化したもの）にそろえた上で1行ずつSHA256ハッシュを計算する。インデックスはタイムゾーンなしの`date`に正規化してから使う（`_series()`と同様の正規化）。**価格基準ごと**（`total_return_adjusted`用の horizons 取得と、Step 5 で split-only に切り替える exit_strategies 取得）に分けて保持する: `{ticker: {"total_return_adjusted": {date: sha256, ...}, "split_only": {date: sha256, ...}}}`
+- [ ] 同一OHLC入力に対して常に同じハッシュ値になることを保証するテストを追加する（NaN混入時の扱い、列の順序、dtype違いなどによってハッシュがぶれないことを確認する）
+- [ ] このハッシュ辞書をJSON化し、既存の`dashboard/data/inflection/`配下の暗号化スナップショットと同じ`snapshot_encryption_secret()`を使って暗号化し、`dashboard/data/inflection_forward_price_hashes.enc`として保存する（tickerを平文でリポジトリに残さないため）
+- [ ] スクリプト側は実行開始時に前回の`.enc`ファイルが存在すれば復号して読み込み、**前回と今回の両方に存在する日付キーのみ**を突き合わせてハッシュを比較する（新しい日付の追加はスキップ対象であり差分警告にしない。既存日付のハッシュが変化した場合のみproviderの事後訂正とみなし警告する）。比較後、最新のハッシュ辞書（新しい日付を含む）で`.enc`ファイルを更新する
+- [ ] **標準出力（公開リポジトリのActionsログ）への警告はticker名を含めない。** 警告メッセージは `{"price_basis": "...", "changed_count": N}` のように、変化した価格基準と件数のみを出す。どのticker・どの日付が変化したかの詳細は、暗号化された`.enc`ファイル自身の中に埋め込む（例えば更新後のハッシュ辞書に`revision_detected_at`のようなメタ情報を持たせる）か、暗号化されたartifactとしてのみ保持し、平文ログには出さない
 
-**シートschemaの確定**:
-- 「保有銘柄」（ユーザー手動編集）列: `ticker`（例 "7203.T"）, `entry_date`（`YYYY-MM-DD`）, `entry_price`（実約定単価、数値）, `trailing_stop_pct`（任意・数値・空欄なら15.0を既定値として使用）。`quantity` はどの計算にも使わないため今回のscopeから外す（必要になった時点で改めて追加する）。
-- 「状況」（システムが毎回上書き）列: `ticker, entry_date, entry_price, current_price, high_water_mark, stop_price, trailing_stop_pct, unrealized_pct, distance_to_stop_pct, triggered, exit_reason, as_of_at, quote_source, status, error`。`status` は `ok` / `stale` / `error` のいずれか。`as_of_date`ではなく`as_of_at`（タイムゾーン付き時刻）にする（日中複数回チェックするため日付だけでは粒度不足）。
+**ワークフロー権限の分離**（`contents: write`がPRの検証ジョブ全体に及ぶ問題への対応。責務は比較・生成側と書き込み側で重複させない）:
+- [ ] `.github/workflows/forward_validation.yml`を**2つのjob**に分割する。
+  - (1) `validate`: `permissions.contents: read`のまま変更しない。PR・schedule・workflow_dispatchいずれのトリガーでも実行する。既存のpytest・`rebuild_inflection_forward_validation.py`実行に加え、**前回`.enc`の復号・新規ハッシュとの比較・警告出力・更新後ハッシュ辞書の暗号化までをすべてこのjob内で完結させる**（リポジトリ内の既存`.enc`をcheckoutで読み取り、比較後の新しい暗号化済みペイロードを生成する）。生成した暗号化ペイロードのみを`actions/upload-artifact`で後続jobに渡す
+  - (2) `persist-price-hashes`: `permissions.contents: write`を持ち、`if: github.event_name == 'schedule'`でjobレベルに限定する。行うのは **checkout → `validate` jobが生成した暗号化artifactを`download-artifact`で取得 → `dashboard/data/inflection_forward_price_hashes.enc`として配置 → commit・push** のみ。復号・比較・ハッシュ計算などのロジックはこのjobに置かない
+- [ ] 上記の分担により、書き込み権限を持つjobはgitの読み書きだけを行い、価格データや比較ロジックに一切触れない構成にする
 
-## 3. `scripts/run_position_monitor.py`（オーケストレーション）
+**REQ-002との関係の明確化**: 本Step 6により、Forward Validation側にも新たなmain直接push経路が追加される。これはREQ-002で確認する「main directpush方針」の対象に含める（Shadow Scanのdirect push可否とForward Validationのdirect push可否は同じガバナンス判断の一部として、まとめてユーザーに確認する。Forward Validation側だけ先に既定で書き込み権限を追加することはしない）。
 
-`--dry-run` オプション（argparse、`rebuild_inflection_forward_validation.py`と同じargparse利用の流儀）を追加する。通常実行（本番workflow）では `SLACK_WEBHOOK_URL` を必須にし、未設定なら起動時に失敗させる。`--dry-run` を明示した場合のみ未設定を許容する（fail-open防止）。
+**検証**: ローカルで`SNAPSHOT_ENCRYPTION_KEY`を設定した状態で forward validation を2回連続実行し、1回目で生成された`dashboard/data/inflection_forward_price_hashes.enc`を2回目が読み込み、共通日付部分で警告が出ないことを確認する（プロセスをまたいだ永続化ファイル経由の比較）。新しい日付が1行増えただけでは警告が出ないこと、既存日付のOHLC値を1件改変した場合は警告が出ることの両方をテストで確認する。
 
-流れ:
-1. `read_holdings()` → 空なら `print(...); return 0`（`rebuild_inflection_forward_validation.py` と同じ「何もなければ正常終了」パターン）。
-2. 既存の `exchange_calendars`（`src/data/market_calendar.py` と同じ `XTKS` カレンダー）で当日（JST）がTSE sessionか確認し、休場日なら `print(...); return 0` で正常終了する（祝日に「全銘柄stale」で毎回失敗扱いにしない）。
-3. 各行を検証（ticker必須、entry_date parse可能かつ未来日でない・原則TSE session、entry_priceが有限かつ正、trailing_stop_pctは任意で指定時は有限かつ`(0,100)`）。失敗した行は即座に `error` 行としてためておき、残りを続行。
-4. 行ごとに `fetch_split_adjusted_history(ticker, entry_date, entry_price)` で分割調整済みのentry_price・過去Highと `fetch_today_quote` を取得する。
-5. `today_quote` が `None`、または `evaluated_at`（実行開始時刻、JST）から見て `as_of_at` が `STALE_QUOTE_THRESHOLD_MINUTES` を超えている銘柄は `status="stale"` の行にし、Trailing Stop判定はしない（黙って「未発動」にしない）。
-6. 残りの行に、共通の `evaluated_at` を渡して `evaluate_position()` を適用し `triggered` を判定する（`evaluate_position`はシステム時計を直接読まない純粋関数のため、基準時刻は呼び出し側がここで1回だけ生成し全行で使い回す）。`ValueError`/`StaleQuoteError` は当該行のみ `error`/`stale` にする。
-7. `write_status()` で「状況」シートを全行分書き込む。書込みに失敗した場合は例外を伝播させ、スクリプト全体を非ゼロ終了にする。
-8. 評価対象（`status="ok"`）が0件、つまり全銘柄が `error`/`stale` の場合はスクリプトを非ゼロ終了にする（監視が実質停止しているのに正常終了して見えるfail-open状態を防ぐ）。休場日は手順2で既に正常終了しているため、営業日にこの条件へ達した場合のみ失敗になる。
-9. `triggered=True` の行があれば、該当銘柄をまとめて1通のSlackメッセージとして `requests.post` で送信（1銘柄1通ではなく集約）。メッセージには「暫定の検証用アラートであり、確定した売買判断ではない」旨を含める。送信には `timeout` を設定し、HTTPステータスが4xx/5xxならスクリプトを非ゼロ終了にする（成功扱いにしない）。
-10. `status="stale"` または `status="error"` の行が1件以上あれば、それらもまとめてSlackへ警告として通知する（一部銘柄の失敗は処理継続してよいが黙殺しない）。
-11. サマリを1行print（`run_inflection_shadow.py` と同じ体裁、`ok`/`stale`/`error`/`triggered` の件数を含める）。
+#### Step 7: 単一プロバイダのデータ品質リスクを明記し、ユーザー合意を得る（REQ-007）— **決定済み**
 
-**重複抑制は行わない**（発動中は毎回通知する。1日3回までなので許容する簡略化 — コード中に一言コメントを残す）。
+**ユーザー決定（2026-09-09）**: 当面cross-provider照合（J-Quants価格との突合等）は行わず、yfinance単一プロバイダのデータ品質リスクを**受容する**。
 
-## 4. `.github/workflows/position_monitor.yml`
+**レビュー指摘への対応**: 当初案の「前日比±80%の単一provider内チェック」は、系列全体が一貫して100倍になる誤りや通常幅に収まる誤価格を検出できず、proposal.mdの受入条件（cross-provider照合、またはリスク受容方針の文書化と合意）のどちらも満たさない。また現行の`fetch_price_data()`（`src/data/yfinance_prices.py`）は`actions=False`で取得しており分割情報を`validate_ohlcv()`に渡していないため、「分割イベント発生日を除外する」という当初の実装は前提となるデータ取得ができておらず実装不能だった。本Phaseでは異常値検知の実装は行わず、proposal.mdの受入条件どおりリスクの文書化とユーザー合意のみを行う。
 
-- `schedule`: 9:03/12:35/15:35 JST → UTC変換で `'3 0 * * 1-5'` / `'35 3 * * 1-5'` / `'35 6 * * 1-5'` の3エントリ + `workflow_dispatch`。**GitHub Actionsのscheduleは公式ドキュメント上、高負荷時に遅延・破棄されうるためbest-effortであり厳密な定刻実行を保証しない**。特に毎時0分は混雑しやすいため9:00ちょうどを避けて9:03にずらす。この制約はREADME（Section 5）とSlackメッセージ文言にも明記する。
-- `concurrency`: `position-monitor-${{ github.ref_name }}`, `cancel-in-progress: true`。
-- `permissions: contents: read`（gitに何も書き戻さないため `inflection_shadow.yml` と違い write権限不要）。
-- `timeout-minutes: 15`（対象は少数銘柄のみなので45分は不要）。
-- secrets: `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID`（新規）, `SLACK_WEBHOOK_URL`（既存を流用、本番workflowでは必須。`--dry-run` は付けない）。
-- 失敗時のみSlack通知するステップを既存ワークフローと同じcurlパターンで追加（Section 3のfail-closed化により、全銘柄失敗・シート書込失敗・Slack送信失敗時にここが確実に発火する）。
+- [ ] README または runbook に、yfinance単一プロバイダ依存によるデータ品質リスク（分割調整漏れ、配当調整漏れ、100倍誤り等、yfinance公式のPrice Repair文書が言及する既知の問題）と、当面リスクを受容する旨を明記する
+- [ ] 将来的に異常値検知（例: 前日比リターンの閾値チェック）を追加する場合は、`fetch_price_data()`側で`actions=True`に変更し分割情報を`validate_ohlcv()`まで伝搬させる設計が別途必要であることをrunbookに書き残す（実装は本Phaseの範囲外）
 
-## 5. 既存ファイルの編集
+**検証**: README/runbookに上記リスク説明とリスク受容の記録が追加されていること。異常値検知コードの追加・テストは本Phaseの完了条件に含めない。
 
-- **`pyproject.toml`**: `dependencies` に `gspread`, `google-auth` を追加。既存の `==` 完全固定の慣習に合わせ、実装時に実際に `pip install` して解決されたバージョンをそのまま固定する（現時点のバージョン番号を推測で書かない）。
-- **`.env.example`**: 既存の「# 説明（必須/任意）」形式で `GOOGLE_SERVICE_ACCOUNT_JSON`（必須）、`GOOGLE_SHEET_ID`（必須）を追加。
-- **`README.md`**: 「## Forward Validation」の後、「## セットアップ」の前に新セクションを追加。目的・スケジュール（**best-effortであり厳密な定刻ではない**旨を明記）・シート構成（「保有銘柄」列: ticker/entry_date/entry_price/trailing_stop_pct、「状況」列: Section 2bの定義通り、ともにユーザー手動編集/システム上書きの別を明記）・必要secret・「この経路は暗号化/fail-closed方針とは独立した寛容なダッシュボードだが、全銘柄失敗・シート書込失敗・Slack送信失敗は監視停止とみなしworkflowを失敗させる」ことを明記。Trailing Stopの判定式は既存 `simulate_signal()` と同一である旨、および価格基準（配当調整なし・分割のみ補正）がforward validation（配当調整込み）と異なるため既存のTrailing Stop成績をそのまま根拠にできず、`DEFAULT_TRAILING_STOP_PCT=15.0` は配当調整なし基準での専用検証が別途行われるまで検証用の暫定値であることを明記する。
-- **`.github/workflows/test.yml`**: `lint` job の `mypy --ignore-missing-imports` 対象リストに新規4ファイル（`src/monitoring/position_exit.py`, `src/data/live_quote.py`, `src/data/sheets_client.py`, `scripts/run_position_monitor.py`）を追加（このリストは手動列挙のため、追加しないと型チェックされないまま見過ごされる）。
+## 例外・エラーハンドリング方針
 
-## 6. テスト
+- REQ-004/005 はいずれも既存の fail-closed 方針（データ不備時は例外を送出し処理を止める）を踏襲する。新規追加する検証は既存の `RuntimeError` ベースの失敗経路に統合し、新しい例外階層は増やさない。
+- **REQ-006は意図的にfail-closedにしない。** 価格改訂検知は「標準出力への警告」のみとし、forward validationレポート自体の生成・commitは継続する。理由: providerの事後訂正は珍しくなく、検知のたびにレポート生成全体を失敗させると週次運用が頻繁に止まる。したがってREQ-006はfail-closed方針の対象外として明示的に切り分ける。受入テストも「警告は出るがプロセスは正常終了する（exit code 0）」ことを確認する形にする。
+- REQ-007は原則としてコード実装を行わないため対象外。REQ-001〜003はコードではなく運用・設定変更のため、実装上の例外処理は発生しない。
 
-- **`tests/test_position_exit.py`**: 純粋関数なのでモック不要。backtestと同じgap/低値タッチ判定（`trailing_gap`/`trailing_stop`）・未発動・HWMが前日までの確定High基準で正しく最大値を保持（`prior_confirmed_highs`が空の場合を含む）・含み損益計算・`ValueError`系（価格/quote/split ratioが非有限または0以下・trailing_stop_pct範囲外）・`evaluated_at`を明示的に渡した場合の鮮度判定（naive datetime、未来timestamp、ちょうど60分の境界を含む）・`today_quote`鮮度超過時の`StaleQuoteError`を網羅。`evaluated_at`は常に引数で渡し、関数内でシステム時計を読まないことをテストで担保する。
-- **`tests/test_live_quote.py`**: `yf.Ticker`をモック（既存の「モジュールローカル参照をpatch」規約に従う）。`fetch_split_adjusted_history`がAdj Closeへ置換しないこと、「分割前High」「分割後High」「複数回分割」「配当のみ（補正されないこと）」を個別ケースとして網羅すること（単一ratioを全行へ誤適用しないことの回帰テスト）、`entry_price`がentry_dateより後の分割だけで補正されること、**yfinanceが当日の進行中日足を含めて返してもdaily_highs/daily_closesから当日分が除外されること（当日が分割日でも分割補正自体は反映されること）**、`fetch_today_quote`が分足データの最終barのtimestampを`as_of_at`に使うこと・最終barが当日でない/未来時刻/取得失敗/非有限値や`Low<=Open,Last<=High`を満たさない不整合な場合は例外ではなく`None`を返すことを確認。実ネットワーク呼び出しは一切行わない。
-- **`tests/test_sheets_client.py`**: `gspread.authorize`と`Credentials.from_service_account_info`をモック（既存の「モジュールローカル参照をpatch」規約に従う）。`read_holdings`/`write_status`の正常系、環境変数未設定時の`RuntimeError`を確認。実ネットワーク呼び出しは一切行わない。
-- **`tests/test_run_position_monitor.py`**: `read_holdings`/`write_status`/`live_quote`系関数/`requests.post`/カレンダー判定をモックし、以下を確認する。
-  - 空保有時の早期終了、正常系での状況シート書き込み。
-  - 当日がTSE休場日の場合は価格取得を行わず正常終了する（祝日に「全銘柄stale」で失敗にしない）。
-  - 発動時のSlack送信（本番モードでwebhook未設定なら起動時に失敗、`--dry-run`時のみ許容）。
-  - 不正行が混在しても他行は継続し、当該行のみ`error`になる。
-  - `today_quote`が`None`または`stale`な銘柄は`status="stale"`になりTrailing Stop判定をしない。
-  - **全銘柄が`error`/`stale`（`status="ok"`が0件）の場合はスクリプトが非ゼロ終了する。**
-  - `write_status`が例外を送出した場合、非ゼロ終了で伝播する。
-  - Slack送信がタイムアウト/4xx/5xxを返した場合、非ゼロ終了する。
+## テスト/検証方針
 
-全体テスト実行後、`pyproject.toml`の`--cov=src --cov-fail-under=80`ゲートを新規コードで満たすことを確認する。
+- 自動テスト: `pytest`（既存の `tests/test_inflection_backtest.py`, `tests/test_live_quote.py`, `tests/test_inflection_forward.py`, `tests/test_inflection_live.py`, `tests/test_shadow_health.py` に追記。REQ-007の異常値検知は本Phaseでは実装しないため`tests/test_data_validation.py`への追加は無し）
+- 手動確認観点:
+  - Step 1: GitHub Actions の実行ログ、coverage不足の診断出力、dashboard/data/inflection/への commit 履歴（ユーザーの運用確認）
+  - Step 2/3: ユーザーとの決定事項の記録（Shadow ScanとForward Validation両方のdirect push可否を含む）、決定に応じたREADME/runbookの記述またはworkflow YAMLのdiff
+  - Step 4〜6: `python scripts/rebuild_inflection_forward_validation.py` を実データ（Step1完了後）で実行し、出力JSONに `eligible_count`/`censored_count`/`price_adjustment`区別、および`dashboard/data/inflection_forward_price_hashes.enc`が期待通り出力・更新されることを確認。`forward_validation.yml`の2job構成がPRトリガーでは書き込みを行わないことをActionsのpermissions表示で確認
+  - Step 7: README/runbookのリスク記述とユーザー合意の記録
 
-## 検証手順
+## リスクと対策
 
-1. `ruff check src scripts tests`
-2. `mypy --ignore-missing-imports src/monitoring/position_exit.py src/data/live_quote.py src/data/sheets_client.py scripts/run_position_monitor.py`（test.ymlに追加したのと同じ対象）
-3. `pytest tests/test_position_exit.py tests/test_live_quote.py tests/test_sheets_client.py tests/test_run_position_monitor.py -q` → その後 `pytest tests/` でカバレッジ80%ゲートを含め全体確認
-4. ローカルでの実シート疎通確認（CI外の手作業）:
-   - Googleスプレッドシートに「保有銘柄」「状況」タブを作成し、「保有銘柄」にヘッダー+1行テストデータを入れる
-   - GCPでサービスアカウントを作成しSheets APIを有効化、鍵JSONをダウンロード、そのシートをサービスアカウントのメールアドレスに編集者共有
-   - `GOOGLE_SERVICE_ACCOUNT_JSON`/`GOOGLE_SHEET_ID` を環境変数にセットし、`python -c "from src.data.sheets_client import read_holdings; print(read_holdings())"` で疎通確認
-   - `SLACK_WEBHOOK_URL` を設定せず `python scripts/run_position_monitor.py --dry-run` を実行し「状況」シートへの書き込みのみ確認する（通常実行はSlack必須のため未設定のまま`--dry-run`なしでは起動時に失敗する）→ 次に `SLACK_WEBHOOK_URL` を設定し、意図的にentry_priceを現在値より大幅に高くした行を入れて `--dry-run` なしで実行しTrailing Stopを発動させ、Slack通知が届くことを確認
-5. secrets登録後、`workflow_dispatch` で手動実行し、cronに任せる前に一度確認する
+1. リスク: REQ-004の変更でmatured判定を厳格化すると、直近数ヶ月分のsignalがtrailing-stop評価から一時的にほぼ全滅する可能性がある（そもそもshadow scanが2026-09-09時点でデータ蓄積を始めたばかりのため） → 対策: `eligible_count`/`censored_count`を出力し、サンプル不足の場合はレポート上で明示する（Phase 2のREQ-012統計的信頼性強化と合わせて評価）。
+2. リスク: REQ-005でexit_strategiesの価格基準をsplit-onlyに切り替えると、既存のforward validation結果（過去に生成済みのartifacts）と数値が変わり、比較不能になる → 対策: 変更後の初回実行結果をベースラインとして扱う旨をコミットメッセージ/PRに明記する。過去結果は「total-return adjusted基準だった」ことをレポート内の`price_adjustment`フィールドの違いで判別可能にする。
+3. リスク: （解消）REQ-003のSHA pin/Dependabotは「実施しない」と決定済みのため、メンテナンス負荷増のリスクは発生しない。
+4. リスク: REQ-006でforward_validation.ymlに書き込み権限を持たせると、PRトリガー実行時に意図しない書き込みが発生しうる → 対策: commitステップの条件分岐ではなく、`contents: write`を持つjob自体を`validate`（read-only、PR/schedule/dispatch共通）から分離し、`persist-price-hashes`job（scheduled限定）にのみ付与する。
+5. リスク: （解消）REQ-002/003/007のユーザー決定は2026-09-09に取得済み（Step 2/3/7参照）。REQ-006の`persist-price-hashes`job追加はREQ-002の「継続する」決定に基づき実施してよい。
+6. リスク: REQ-001のcoverage不足の根本原因が「J-Quantsマスタの上場廃止銘柄残存」以外（例: yfinanceバッチ取得の一時的な問題）だった場合、フィルタ追加では解決しない → 対策: 診断出力（日付ヒストグラム・stale ticker一覧）を先に取得し、原因を分類してから対応方針を決める。原因不明のまま実装を進めない。
 
-## 既知の制約・意図的な簡略化
+## 完了条件
 
-- 自動発注は行わない。売買は常にユーザーがSBI証券で手動実行する。
-- Trailing Stop率は銘柄ごとに1つ（シートの列で上書き可、既定15%）。10/15/20%を並行比較する機能は持たない（バックテスト側の役割）。
-- `DEFAULT_TRAILING_STOP_PCT=15.0`は、forward validationが配当調整込み・live monitorが配当調整なしという異なる価格基準を使うため、既存のTrailing Stop成績をそのまま根拠にできない。配当調整なし基準での専用検証が別途行われるまで「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
-- 通知の重複抑制はしない。発動が続く限り毎回（最大1日3回）Slackに通知する。
-- GitHub Actionsのschedule時刻（9:03/12:35/15:35 JST）はbest-effortであり、高負荷時は遅延・省略されうる（公式仕様）。定刻性が必要になった場合はGitHub Actions以外の実行基盤を検討する。
-- 日本の祝日をcronは認識しないが、`exchange_calendars`によるTSE session判定で休場日は価格取得前に正常終了する（祝日ごとに「全銘柄stale」でworkflowが失敗しないようにする）。
-- 「状況」シートは毎回全上書きで、過去の履歴は残らない（暗号化snapshotのような不変記録ではなく、現在地を映すダッシュボード）。`clear()`後に`update()`が失敗すると直前の状態も失われる2段階更新のリスクは残存する既知の限界とし、今回のscopeでは対応しない（write失敗時にworkflowを失敗させることで、誤った状態が放置され続けることだけは防ぐ）。
-- `quantity`（保有数量）列は現時点でどの計算にも使わないためscopeから外す。必要になった時点で改めて追加する。
-- 全銘柄のprice/quote取得失敗、状況シート書込失敗、Slack送信失敗（webhook未設定含む、`--dry-run`時を除く）は実行全体を失敗させ、既存の失敗時Slack通知経路につなげる（fail-open防止）。一部銘柄のみの失敗は処理を継続するが、`stale`/`error`件数もあわせてSlackへ警告として通知する。
+**ユーザー決定（2026-09-09、すべて確定済み）**:
+- REQ-002: main directpushを**継続する**（Shadow Scan・Forward Validation双方）
+- REQ-003: Actions SHA pin + Dependabot導入は**実施しない**
+- REQ-007: yfinance単一プロバイダのデータ品質リスクを**受容する**
+
+**コード変更の完了条件（合成データ・ユニットテストで検証可能）**:
+- [ ] `TradeResult`に`horizon_matured`が追加され、`filter_matured()`によるmatured-only集計が`exit_strategies`に`eligible_count`/`censored_count`とともに出力される（REQ-004）
+- [ ] Trailing Stop評価（`exit_strategies`）が`actions=True`で取得したsplit-only価格基準を使用し、レポートの`price_adjustment`表記が実態と一致する（REQ-005）
+- [ ] 評価用価格データのハッシュが価格基準ごと・日付行ごとに算出され、同一入力に対し安定したハッシュ値になることがテストで確認されている。警告出力にticker名が含まれない（REQ-006）
+- [ ] `.github/workflows/forward_validation.yml`が`validate`（read-only、復号・比較・暗号化artifact生成まで担当）と`persist-price-hashes`（`contents: write`、schedule限定、checkout・commit・pushのみ担当）の2job構成になっており、`dashboard/data/inflection_forward_price_hashes.enc`への暗号化commitがscheduled実行でのみ行われる（REQ-006。REQ-002の決定により実施可）
+- [ ] `.github/workflows/inflection_shadow.yml`と`persist-price-hashes` jobにdirect push許容理由のコメントが追加され、README/runbookにREQ-002〜003・007の決定内容が明記されている
+- [ ] `scan_japan_inflection()`の戻り値に日付別件数・stale ticker一覧が追加され、`validate_report()`の例外メッセージに含まれる（REQ-001診断コード）
+- [ ] 上記に対応するユニットテストが `tests/test_inflection_backtest.py`, `tests/test_live_quote.py`, `tests/test_inflection_forward.py`, `tests/test_inflection_live.py`, `tests/test_shadow_health.py` に追加され、`pytest`が成功する
+
+**運用確認が必要な完了条件（コード変更とは別に管理。ユーザー実施）**:
+- [ ] REQ-001: coverage不足（`DATA_HEALTH: latest market-date coverage too low`）の根本原因が診断出力（上記コード変更後に`workflow_dispatch`を再実行して取得）により特定され、対応が適用されたうえで、Shadow Scanが3営業日以上連続で成功し`.enc`ファイルが蓄積されている
+
+**Phase 1完了の前提**: 上記「運用確認」が完了するまで、Phase 2以降（proposal.mdのREQ-008〜）の着手根拠となる実データでの検証は「未完了」として扱う。

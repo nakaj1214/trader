@@ -47,6 +47,7 @@ jobs:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: python scripts/run_inflection_shadow.py
 
+      # Intentional direct push: this step writes encrypted generated data only, never source code.
       - name: Commit encrypted immutable market-day snapshot
         run: |
           git config user.name "github-actions[bot]"

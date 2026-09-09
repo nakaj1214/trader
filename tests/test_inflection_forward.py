@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-from scripts.rebuild_inflection_forward_validation import _fetch_adjusted_histories, _summary_only
-from src.data.snapshot_crypto import encrypt_json
+from scripts.rebuild_inflection_forward_validation import (
+    SPLIT_ONLY,
+    _changed_price_rows,
+    _fetch_adjusted_histories,
+    _history_row_hashes,
+    _persist_price_hashes,
+    _summary_only,
+)
+from src.data.snapshot_crypto import decrypt_json, encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
@@ -206,6 +214,122 @@ def test_forward_price_fetch_retries_transient_failure() -> None:
     assert result["1111.T"].equals(history)
     assert ticker.return_value.history.call_count == 2
     assert sleeps == [0]
+
+
+def test_forward_price_fetch_failure_hides_candidate_ticker() -> None:
+    with patch("yfinance.Ticker") as ticker:
+        ticker.return_value.history.side_effect = RuntimeError("failure for 1111.T")
+        with pytest.raises(RuntimeError, match=r"failed for 1 ticker\(s\)") as error:
+            _fetch_adjusted_histories(
+                [{"ticker": "1111.T", "date": "2026-09-08"}],
+                max_horizon=5,
+                max_retries=0,
+                request_interval_seconds=0,
+            )
+
+    assert "1111.T" not in str(error.value)
+
+
+def test_forward_price_fetch_suppresses_provider_ticker_log(caplog: pytest.LogCaptureFixture) -> None:
+    provider_logger = logging.getLogger("yfinance")
+    was_disabled = provider_logger.disabled
+
+    def fail_with_log(ticker: str) -> None:
+        provider_logger.error("%s: provider failure", ticker)
+        raise RuntimeError("provider failure")
+
+    with (
+        caplog.at_level(logging.ERROR, logger="yfinance"),
+        patch("yfinance.Ticker", side_effect=fail_with_log),
+        pytest.raises(RuntimeError, match=r"failed for 1 ticker\(s\)"),
+    ):
+        _fetch_adjusted_histories(
+            [{"ticker": "1111.T", "date": "2026-09-08"}],
+            max_horizon=5,
+            max_retries=0,
+            request_interval_seconds=0,
+        )
+
+    assert "1111.T" not in caplog.text
+    assert provider_logger.disabled is was_disabled
+
+
+def test_forward_split_only_fetch_requests_actions_and_adjusts_splits() -> None:
+    history = pd.DataFrame(
+        {
+            "Open": [100.0, 55.0],
+            "High": [110.0, 60.0],
+            "Low": [90.0, 50.0],
+            "Close": [100.0, 55.0],
+            "Stock Splits": [0.0, 2.0],
+        },
+        index=pd.to_datetime(["2026-09-09", "2026-09-10"]),
+    )
+    with patch("yfinance.Ticker") as ticker:
+        ticker.return_value.history.return_value = history
+        result = _fetch_adjusted_histories(
+            [{"ticker": "1111.T", "date": "2026-09-08"}],
+            max_horizon=5,
+            request_interval_seconds=0,
+            price_basis=SPLIT_ONLY,
+        )
+
+    assert ticker.return_value.history.call_args.kwargs["auto_adjust"] is False
+    assert ticker.return_value.history.call_args.kwargs["actions"] is True
+    assert ticker.return_value.history.call_args.kwargs["raise_errors"] is True
+    assert result["1111.T"]["Close"].tolist() == pytest.approx([50.0, 55.0])
+
+
+def test_price_hashes_are_stable_and_only_common_changed_dates_are_reported() -> None:
+    first = pd.DataFrame(
+        {"Close": [100, float("nan")], "Low": [90, 91], "High": [110, 111], "Open": [95, 96]},
+        index=pd.to_datetime(["2026-09-09", "2026-09-10"]),
+    )
+    same = first.astype(float)[["Open", "High", "Low", "Close"]]
+    original = _history_row_hashes(first)
+
+    assert _history_row_hashes(same) == original
+    previous = {"hashes": {"1111.T": {"split_only": original}}}
+    appended = dict(original)
+    appended["2026-09-11"] = "new"
+    assert _changed_price_rows(previous, {"1111.T": {"split_only": appended}}) == []
+    appended["2026-09-09"] = "changed"
+    assert _changed_price_rows(previous, {"1111.T": {"split_only": appended}}) == [
+        {"ticker": "1111.T", "price_basis": "split_only", "date": "2026-09-09"}
+    ]
+
+
+def test_price_hashes_ignore_later_uniform_corporate_action_rescaling() -> None:
+    index = pd.to_datetime(["2026-09-08", "2026-09-09"])
+    before = pd.DataFrame(
+        {"Open": [100.0, 110.0], "High": [105.0, 115.0], "Low": [95.0, 105.0], "Close": [102.0, 112.0]},
+        index=index,
+    )
+    after = before / 2.0
+    after.loc[pd.Timestamp("2026-09-10")] = [60.0, 65.0, 58.0, 62.0]
+
+    assert _history_row_hashes(after).keys() > _history_row_hashes(before).keys()
+    assert _changed_price_rows(
+        {"hashes": {"1111.T": {"split_only": _history_row_hashes(before)}}},
+        {"1111.T": {"split_only": _history_row_hashes(after)}},
+    ) == []
+
+
+def test_price_hash_warning_hides_ticker_and_persists_encrypted_details(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "hashes.enc"
+    old = {"1111.T": {"split_only": {"2026-09-09": "old"}}}
+    new = {"1111.T": {"split_only": {"2026-09-09": "new"}}}
+    _persist_price_hashes(path, old, SECRET)
+    _persist_price_hashes(path, new, SECRET)
+
+    output = capsys.readouterr().out
+    assert '"changed_count": 1' in output
+    assert "1111.T" not in output
+    assert decrypt_json(path.read_text(encoding="utf-8"), SECRET)["revisions"] == [
+        {"ticker": "1111.T", "price_basis": "split_only", "date": "2026-09-09"}
+    ]
 
 
 def test_forward_summary_removes_prediction_rows() -> None:

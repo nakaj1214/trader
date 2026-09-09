@@ -199,6 +199,8 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     assert report["price_data_count"] == 1
     assert report["technical_usable_count"] == 1
     assert report["latest_price_date_count"] == 1
+    assert report["latest_date_histogram"] == {str(prices["1111.T"].index[-1].date()): 1}
+    assert report["stale_tickers_sample"] == []
     assert report["deep_candidate_count"] == 1
     assert report["strategy_version"] == STRATEGY_VERSION
     assert report["report_schema_version"] == REPORT_SCHEMA_VERSION
@@ -213,3 +215,30 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     assert candidate["company_name"] == "Test Corp"
     assert 0.0 <= candidate["score"] <= 100.0
     assert candidate["classification"] in {"EARLY_CANDIDATE", "WATCH", "OVEREXTENDED", "NONE"}
+
+
+def test_scan_reports_latest_date_distribution_and_stale_tickers() -> None:
+    current = _price_frame()
+    stale = _price_frame().iloc[:-1]
+    client = FakeJQuantsClient()
+    with (
+        patch.object(
+            client,
+            "listed_issues",
+            return_value=[
+                {"Code": "11110", "Mkt": "0111", "MktNm": "Prime", "CoName": "Current"},
+                {"Code": "22220", "Mkt": "0112", "MktNm": "Standard", "CoName": "Stale"},
+            ],
+        ),
+        patch(
+            "src.screening.inflection_live.fetch_price_data",
+            return_value={"1111.T": current, "2222.T": stale},
+        ),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=0)
+
+    assert report["latest_date_histogram"] == {
+        str(current.index[-1].date()): 1,
+        str(stale.index[-1].date()): 1,
+    }
+    assert report["stale_tickers_sample"] == ["2222.T"]

@@ -32,6 +32,7 @@ class TradeResult:
     mfe_pct: float | None = None
     mae_pct: float | None = None
     exit_reason: str | None = None
+    horizon_matured: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -110,6 +111,7 @@ def simulate_signal(
             None,
             None,
             None,
+            horizon_matured=has_full_horizon,
         )
 
     window = future_closes.iloc[:holding_days]
@@ -159,6 +161,7 @@ def simulate_signal(
                 None,
                 None,
                 None,
+                horizon_matured=False,
             )
     else:
         window_highs = highs.reindex(window.index).dropna()
@@ -202,6 +205,7 @@ def simulate_signal(
         mfe_pct=round(mfe, 6) if mfe is not None else None,
         mae_pct=round(mae, 6) if mae is not None else None,
         exit_reason=exit_reason,
+        horizon_matured=has_full_horizon,
     )
 
 
@@ -236,6 +240,10 @@ def select_non_overlapping_trades(trades: Iterable[TradeResult]) -> list[TradeRe
         selected.append(trade)
         occupied_until[trade.ticker] = str(trade.exit_date)
     return selected
+
+
+def filter_matured(trades: Iterable[TradeResult]) -> list[TradeResult]:
+    return [trade for trade in trades if trade.horizon_matured is True]
 
 
 def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:

@@ -7,10 +7,33 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
-from src.data.live_quote import fetch_split_adjusted_history, fetch_today_quote
+from src.data.live_quote import fetch_split_adjusted_history, fetch_today_quote, split_adjust_ohlc
 
 JST = ZoneInfo("Asia/Tokyo")
 NOW = datetime(2026, 9, 8, 9, 3, tzinfo=JST)
+
+
+def test_split_adjusts_all_ohlc_without_dividend_adjustment() -> None:
+    index = pd.DatetimeIndex(["2026-09-01", "2026-09-03"], tz=JST)
+    history = pd.DataFrame(
+        {
+            "Open": [100.0, 55.0],
+            "High": [110.0, 60.0],
+            "Low": [90.0, 50.0],
+            "Close": [100.0, 55.0],
+            "Dividends": [10.0, 0.0],
+            "Stock Splits": [0.0, 2.0],
+        },
+        index=index,
+    )
+
+    adjusted = split_adjust_ohlc(history, NOW.date())
+
+    assert adjusted.loc[index[0], ["Open", "High", "Low", "Close"]].tolist() == pytest.approx(
+        [50.0, 55.0, 45.0, 50.0]
+    )
+    assert adjusted.loc[index[1], "Close"] == 55.0
+    assert adjusted["Dividends"].tolist() == [10.0, 0.0]
 
 
 def test_split_history_uses_date_specific_factors_and_excludes_today_bar() -> None:

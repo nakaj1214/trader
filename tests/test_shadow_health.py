@@ -55,7 +55,9 @@ def test_validate_report_rejects_low_technical_coverage() -> None:
 def test_validate_report_rejects_split_market_date() -> None:
     report = _healthy_report()
     report["latest_price_date_count"] = 1000
-    with pytest.raises(RuntimeError, match="market-date coverage too low"):
+    report["latest_date_histogram"] = {"2026-09-07": 1000, "2026-09-06": 2500}
+    report["stale_tickers_sample"] = ["1111.T"]
+    with pytest.raises(RuntimeError, match=r"histogram=.*2026-09-06.*stale_tickers_sample=.*1111\.T"):
         validate_report(report)
 
 

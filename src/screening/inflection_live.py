@@ -9,6 +9,7 @@ Outputs are research candidates only. They are not BUY recommendations.
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -288,12 +289,12 @@ def scan_japan_inflection(
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable_count = 0
     liquid_candidate_count = 0
-    latest_dates: list[str] = []
+    latest_dates: dict[str, str] = {}
 
     for ticker, df in prices.items():
         latest_date = _latest_close_date(df)
         if latest_date:
-            latest_dates.append(latest_date)
+            latest_dates[ticker] = latest_date
         tech = _technical_features(df)
         if not tech:
             continue
@@ -375,8 +376,16 @@ def scan_japan_inflection(
     for item in candidates:
         counts[item.classification] = counts.get(item.classification, 0) + 1
 
-    latest_price_date = max(latest_dates) if latest_dates else None
-    latest_price_date_count = sum(date == latest_price_date for date in latest_dates) if latest_price_date else 0
+    latest_price_date = max(latest_dates.values()) if latest_dates else None
+    latest_price_date_count = (
+        sum(value == latest_price_date for value in latest_dates.values()) if latest_price_date else 0
+    )
+    latest_date_histogram = dict(
+        sorted(Counter(latest_dates.values()).items(), reverse=True)[:5]
+    )
+    stale_tickers_sample = sorted(
+        ticker for ticker, value in latest_dates.items() if value != latest_price_date
+    )[:20]
 
     return {
         "report_schema_version": REPORT_SCHEMA_VERSION,
@@ -391,6 +400,8 @@ def scan_japan_inflection(
         "liquid_candidate_count": liquid_candidate_count,
         "latest_price_date": latest_price_date,
         "latest_price_date_count": latest_price_date_count,
+        "latest_date_histogram": latest_date_histogram,
+        "stale_tickers_sample": stale_tickers_sample,
         "deep_candidate_count": len(preselected),
         "classification_counts": counts,
         "scan_parameters": {

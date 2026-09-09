@@ -51,6 +51,50 @@ def _positive(value: Any) -> float:
     return number
 
 
+def _split_ratios(frame: pd.DataFrame) -> dict[date, float]:
+    values = (
+        pd.to_numeric(frame["Stock Splits"], errors="coerce")
+        if "Stock Splits" in frame
+        else pd.Series(0.0, index=frame.index)
+    )
+    if values.isna().any() or any(
+        not math.isfinite(float(value)) or float(value) < 0 for value in values
+    ):
+        raise ValueError("split ratios must be finite and non-negative")
+    ratios: dict[date, float] = {}
+    for timestamp, value in values.items():
+        ratio = float(value)
+        if ratio > 0:
+            split_date = timestamp.date()
+            ratios[split_date] = ratios.get(split_date, 1.0) * _positive(ratio)
+    return ratios
+
+
+def _later_split_factor(ratios: dict[date, float], value_date: date, as_of: date) -> float:
+    factor = 1.0
+    for split_date, ratio in ratios.items():
+        if value_date < split_date <= as_of:
+            factor *= ratio
+    return _positive(factor)
+
+
+def split_adjust_ohlc(history: pd.DataFrame, as_of: date) -> pd.DataFrame:
+    """Put raw OHLC rows on one split-only price scale as of the given date."""
+    frame = history.copy()
+    frame.index = _jst_index(frame.index)
+    ratios = _split_ratios(frame)
+    for column in ("Open", "High", "Low", "Close"):
+        if column not in frame:
+            continue
+        frame[column] = [
+            float(value) / _later_split_factor(ratios, timestamp.date(), as_of)
+            if pd.notna(value)
+            else float("nan")
+            for timestamp, value in pd.to_numeric(frame[column], errors="coerce").items()
+        ]
+    return frame
+
+
 def fetch_split_adjusted_history(
     ticker: str,
     entry_date: str,
@@ -75,34 +119,9 @@ def fetch_split_adjusted_history(
             pd.Series(dtype=float),
         )
 
-    frame = history.copy()
-    frame.index = _jst_index(frame.index)
+    frame = split_adjust_ohlc(history, current_date)
     row_dates = pd.Series(frame.index.date, index=frame.index)
-    split_values = (
-        pd.to_numeric(frame["Stock Splits"], errors="coerce")
-        if "Stock Splits" in frame
-        else pd.Series(0.0, index=frame.index)
-    )
-    if split_values.isna().any() or any(
-        not math.isfinite(float(value)) or float(value) < 0 for value in split_values
-    ):
-        raise ValueError("split ratios must be finite and non-negative")
-
-    splits_by_date: dict[date, float] = {}
-    for timestamp, ratio in split_values.items():
-        numeric_ratio = float(ratio)
-        if numeric_ratio > 0:
-            split_date = timestamp.date()
-            splits_by_date[split_date] = splits_by_date.get(split_date, 1.0) * _positive(numeric_ratio)
-
-    def later_split_factor(value_date: date) -> float:
-        factor = 1.0
-        for split_date, ratio in splits_by_date.items():
-            if split_date > value_date:
-                factor *= ratio
-        return _positive(factor)
-
-    adjusted_entry /= later_split_factor(purchase_date)
+    adjusted_entry /= _later_split_factor(_split_ratios(frame), purchase_date, current_date)
     prior_mask = row_dates < current_date
     prior = frame.loc[prior_mask]
     if prior.empty:
@@ -116,16 +135,10 @@ def fetch_split_adjusted_history(
     if not {"High", "Close"}.issubset(prior.columns):
         raise ValueError("daily history is missing High or Close")
 
-    highs: list[float] = []
-    closes: list[float] = []
-    for timestamp, row in prior.iterrows():
-        factor = later_split_factor(timestamp.date())
-        highs.append(_positive(row["High"]) / factor)
-        closes.append(_positive(row["Close"]) / factor)
     return SplitAdjustedHistory(
         entry_price=adjusted_entry,
-        daily_highs=pd.Series(highs, index=prior.index, dtype=float),
-        daily_closes=pd.Series(closes, index=prior.index, dtype=float),
+        daily_highs=pd.Series([_positive(value) for value in prior["High"]], index=prior.index),
+        daily_closes=pd.Series([_positive(value) for value in prior["Close"]], index=prior.index),
     )
 
 

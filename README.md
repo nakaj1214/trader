@@ -76,6 +76,14 @@ snapshot の日付は **workflow実行日ではなく `latest_price_date`** で�
 
 本番実行に必要な GitHub Secret は `JQUANTS_API_KEY` と `SNAPSHOT_ENCRYPTION_KEY` です。Slack失敗通知を使う場合は `SLACK_WEBHOOK_URL` も設定します。
 
+yfinance は単一providerであり、分割・配当調整漏れ、欠損・破損データ、通貨単位の100倍誤りを完全には検出できません。当面はこのリスクを受容し、cross-provider照合は行いません。異常値検知を追加する場合は、分割情報を取得・伝搬した上で誤検知を避ける設計が必要です。
+
+## GitHub Actionsの運用方針
+
+`main`のbranch protectionは無効で、Shadow ScanとForward Validationのschedule jobは暗号化された生成データだけを`main`へ直接pushします。ソースコードは変更しないため、このdirect pushを意図的に許容しています。
+
+Actionsはfull commit SHAへ固定せず、既存のversion tagを継続利用します。Dependabotも導入しません。個人プロジェクトでの保守負担を優先した決定であり、第三者Action追加や運用規模拡大時に再検討します。
+
 ## データ健全性
 
 保存前に以下を検証し、条件を満たさない実行は失敗扱いにします。
@@ -105,6 +113,8 @@ J-Quants clientはFreeの5 calls/minを考慮した間隔制御に加えて、42
 - Closeベースの最大上昇・drawdownと、High/LowベースのMFE/MAEを分離して保存
 - strategy return、TOPIX return、excess return、benchmark勝率を保存
 - 10% / 15% / 20%のTrailing Stopを、最大60営業日の固定保有と比較
+- 固定期間評価は配当込み調整価格、Trailing Stop評価はlive monitorと同じ分割のみ調整した価格を使用
+- Trailing Stopは60営業日を経過したsignalの集計と、未成熟signalを含む参考集計を分離
 - 同一銘柄の重複signalは、`position_summary` では一つの保有が終了するまで再entryしない
 
 板厚、売買停止、制限値幅による約定確率は未モデル化のため、reportの `execution_limitations` に明記します。
@@ -113,6 +123,7 @@ Trailing Stopは前日までの確定済みHigh Water Markから計算します�
 
 `.github/workflows/forward_validation.yml` は週次で蓄積snapshotを検証します。snapshotがまだ存在しない期間、または有効な `EARLY_CANDIDATE` がない期間は正常終了します。
 銘柄別のtrade行を除いた集計結果は、90日間保持するGitHub Actions artifact `inflection-forward-summary` で確認できます。
+評価に使ったOHLCの日次hashは暗号化して保存し、週次実行で過去行の事後訂正を検知します。公開ログには候補tickerを出しません。
 
 ## Position Exit Monitor
 
@@ -127,7 +138,7 @@ Googleスプレッドシートには、次の2つのタブを事前に作成し�
 
 必要なGitHub Secretは `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID`, `SLACK_WEBHOOK_URL` です。サービスアカウントではGoogle Sheets APIを有効化し、JSONキーの内容全体を `GOOGLE_SERVICE_ACCOUNT_JSON` に登録します。
 
-live monitorは実約定単価に合わせ、配当調整なし・株式分割のみ補正した価格を使います。forward validationは配当調整込みのため、その成績をlive monitorへ直接流用できません。既定15%は専用検証が完了するまで暫定の検証用アラートであり、確定した売買判断ではありません。
+live monitorは実約定単価に合わせ、配当調整なし・株式分割のみ補正した価格を使います。forward validationのTrailing Stop評価も同じ価格基準ですが、十分な成熟signalが蓄積するまで既定15%は暫定の検証用アラートであり、確定した売買判断ではありません。
 
 一部銘柄の欠測は `状況` とSlackへ通知して残りを継続します。全銘柄の価格欠測、シート書込失敗、Slack送信失敗は監視停止としてworkflowを失敗させます。状況タブは履歴・監査ログではなく現在地を表示するダッシュボードです。
 

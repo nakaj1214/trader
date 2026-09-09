@@ -54,7 +54,9 @@ def validate_report(report: dict[str, Any]) -> None:
     if not latest_price_date or latest_date_coverage < MIN_LATEST_DATE_COVERAGE:
         raise RuntimeError(
             "DATA_HEALTH: latest market-date coverage too low: "
-            f"date={latest_price_date}, {latest_date_count}/{price_data} ({latest_date_coverage:.1%})"
+            f"date={latest_price_date}, {latest_date_count}/{price_data} ({latest_date_coverage:.1%}), "
+            f"histogram={report.get('latest_date_histogram')}, "
+            f"stale_tickers_sample={report.get('stale_tickers_sample')}"
         )
 
     try:

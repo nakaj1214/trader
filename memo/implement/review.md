@@ -1,28 +1,27 @@
-# Position Exit Monitor 実装レビュー
+# Phase 0+1 実装レビュー（最終）
 
-確認日: 2026-09-08
-対象: `memo/implement/plan.md`
+確認日: 2026-09-09
+対象: 更新後の `memo/implement/plan.md`（REQ-001〜REQ-007）
 
 ## 判定
 
-**実装可能。前回までの指摘は更新版で解消または既知の制約として明確化された。**
+**実装可。計画上のブロッカーは解消済みで、コード実装とローカル検証を完了した。**
 
-以下を確認して実装した。
+## 実装結果
 
-- 実約定価格と同じ、配当調整なし・分割のみ補正した価格基準
-- timestamp付き1分足によるquote鮮度判定
-- 日付ごとの分割補正と、当日未確定日足のHWM除外
-- 既存backtestとの価格基準差、および15%が暫定の検証用アラートであることの明記
-- 非有限値、不整合OHLC、未来日、TSE休場日の検証
-- 全銘柄取得失敗、Sheets書込失敗、Slack送信失敗のfail-closed動作
-- Google Sheets schema、dry-run、GitHub Actionsのbest-effort制約
+- REQ-001: market-date coverage失敗時に日付分布とstale ticker例を出す診断を追加した。
+- REQ-002/003/007: 確定済みのdirect push、Actions tag pin継続、yfinance単一providerリスク受容をworkflowコメントとREADMEへ反映した。
+- REQ-004: `horizon_matured`を追加し、Trailing Stop集計をmatured-onlyとrawに分離した。
+- REQ-005: 固定期間はtotal-return adjusted、Trailing Stopはsplit-only OHLCを使用するよう分離した。
+- REQ-006: 価格基準・日付行単位の暗号化ハッシュを追加し、共通日付だけを比較するscheduled限定の永続化jobを追加した。公開ログにはtickerを出さない。
 
-## 検証結果
+## 検証
 
-- 対象テスト: 30 passed
-- 全回帰テスト: 119 passed
-- coverage: 91.03%（要求80%以上）
-- ruff: PASS
-- mypy（CI production path）: PASS
+- 全体テスト: 128 passed、coverage 91.22%。
+- 最終修正後の影響範囲: 75 passed。providerログ抑止の最終修正後: 25 passed。
+- `ruff`、`mypy`、`git diff --check`: pass。
+- 独立レビュー: `PASS`。
 
-実Google Sheets、実Slack、実yfinanceとの疎通は認証情報と市場時間中のデータが必要なため、README記載の手動確認事項として残す。
+## 残る運用確認
+
+REQ-001の根本原因対応とPhase 1の実データ検証は、更新したShadow Scanを`workflow_dispatch`で実行して診断結果を取得した後に行う。Shadow Scanの3営業日連続成功確認も未実施であり、今回のローカル実装には含めない。

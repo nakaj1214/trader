@@ -5,6 +5,7 @@ from dataclasses import replace
 import pandas as pd
 
 from src.evaluation.inflection_backtest import (
+    filter_matured,
     select_non_overlapping_trades,
     simulate_signal,
     summarize_trades,
@@ -177,6 +178,8 @@ def test_trailing_stop_completes_before_max_horizon_is_available() -> None:
     assert trade.exit_date == "2026-01-05"
     assert trade.exit_reason == "trailing_gap"
     assert trade.net_return_pct == -20.0
+    assert trade.horizon_matured is False
+    assert filter_matured([trade]) == []
 
 
 def test_trailing_stop_without_stop_remains_incomplete_before_max_horizon() -> None:
@@ -196,6 +199,24 @@ def test_trailing_stop_without_stop_remains_incomplete_before_max_horizon() -> N
     assert trade.entry_date == "2026-01-02"
     assert trade.exit_date is None
     assert trade.net_return_pct is None
+    assert trade.horizon_matured is False
+
+
+def test_matured_filter_keeps_full_horizon_trade() -> None:
+    index = pd.bdate_range("2026-01-01", periods=61)
+    history = pd.DataFrame(
+        {"Open": [100.0] * 61, "High": [105.0] * 61, "Low": [95.0] * 61, "Close": [100.0] * 61},
+        index=index,
+    )
+    trade = simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80},
+        history,
+        holding_days=60,
+        trailing_stop_pct=10,
+    )
+
+    assert trade.horizon_matured is True
+    assert filter_matured([trade]) == [trade]
 
 
 def test_non_overlapping_trades_keep_one_position_per_ticker() -> None:

@@ -21,12 +21,15 @@ from src.data.jquants_v2_client import JQuantsV2Client
 from src.data.yfinance_prices import fetch_price_data
 from src.strategy.inflection import InflectionFeatures, score_inflection
 
-JP_MARKET_CODES = {"0111", "0112", "0113"}  # Prime / Standard / Growth
+JP_MARKET_NAMES = {"0111": "Prime", "0112": "Standard", "0113": "Growth"}
+JP_MARKET_CODES = set(JP_MARKET_NAMES)
+# Live data cannot measure revenue acceleration or catalyst points, so its positive
+# raw-score ceiling is 58 rather than the generic scorer's 100-point scale.
 LIVE_MEASURABLE_MAX_SCORE = 58.0
 EARLY_CANDIDATE_SCORE = 70.0
 WATCH_SCORE = 52.0
-STRATEGY_VERSION = "jp-inflection-shadow-v2"
-REPORT_SCHEMA_VERSION = 3
+STRATEGY_VERSION = "jp-inflection-shadow-v3"
+REPORT_SCHEMA_VERSION = 4
 DEFAULT_JQUANTS_PLAN = "free"
 DEFAULT_FREE_DELAY_WEEKS = 12
 
@@ -37,20 +40,23 @@ class LiveCandidate:
     company_name: str
     market: str
     classification: str
-    score: float
+    live_normalized_score: float
     raw_inflection_score: float
     current_price: float
     return_5d_pct: float | None
     return_20d_pct: float | None
     return_60d_pct: float | None
     volume_ratio_20d: float | None
-    breakout_52w: bool
+    near_52w_high: bool
+    near_listing_high: bool
     avg_turnover_20d_jpy: float | None
     reasons: list[str]
     limitations: list[str]
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        result["score"] = result["live_normalized_score"]  # schema-3 compatibility alias
+        return result
 
 
 def _ticker_from_code(code: str) -> str:
@@ -70,7 +76,7 @@ def _pct_change(close: pd.Series, days: int) -> float | None:
 
 def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
     close = pd.to_numeric(df.get("Close"), errors="coerce").dropna()
-    if len(close) < 65:
+    if len(close) < 21:
         return None
     volume = pd.to_numeric(df.get("Volume"), errors="coerce").reindex(close.index)
     current = float(close.iloc[-1])
@@ -79,7 +85,7 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
     volume_ratio = None
     if prev20 is not None and pd.notna(prev20) and float(prev20) > 0 and pd.notna(vol20):
         volume_ratio = float(vol20) / float(prev20)
-    high52 = float(close.tail(min(252, len(close))).max())
+    available_high = float(close.tail(252).max())
     turnover_values = (
         pd.to_numeric(df["Turnover"], errors="coerce").reindex(close.index)
         if "Turnover" in df.columns
@@ -92,7 +98,8 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
         "return_20d_pct": _pct_change(close, 20),
         "return_60d_pct": _pct_change(close, 60),
         "volume_ratio_20d": volume_ratio,
-        "breakout_52w": current >= high52 * 0.99,
+        "near_52w_high": len(close) >= 252 and current >= available_high * 0.99,
+        "near_listing_high": len(close) < 252 and current >= available_high * 0.99,
         "avg_turnover_20d_jpy": turnover,
     }
 
@@ -114,7 +121,7 @@ def _pre_score(t: dict[str, Any]) -> float:
     score = max(0.0, min(r5, 12.0))
     score += max(0.0, min(r20, 30.0)) * 0.7
     score += max(0.0, min(vr - 1.0, 3.0)) * 8.0
-    if t.get("breakout_52w"):
+    if t.get("near_52w_high") or t.get("near_listing_high"):
         score += 10.0
     if r20 >= 50.0:
         score -= 25.0
@@ -229,8 +236,11 @@ def _normalize_available_score(fundamental: float, momentum: float, risk: float)
 
 
 def _classify(score: float, tech: dict[str, Any]) -> str:
+    """Classify the 0-100 live-normalized score using live thresholds."""
     r20 = float(tech.get("return_20d_pct") or 0.0)
     r60 = float(tech.get("return_60d_pct") or 0.0)
+    # ponytail: short histories have no r60, so overextension relies on r20;
+    # add an IPO-specific threshold only after forward validation supports one.
     if r20 >= 50.0 or r60 >= 100.0:
         return "OVEREXTENDED"
     if score >= EARLY_CANDIDATE_SCORE and r20 > 0 and float(tech.get("volume_ratio_20d") or 0.0) >= 1.25:
@@ -285,6 +295,17 @@ def scan_japan_inflection(
         ticker_meta[_ticker_from_code(code)] = row
 
     tickers = sorted(ticker_meta)
+    market_coverage = {
+        market: {"universe": 0, "price_data": 0, "technical_usable": 0, "latest_date_count": 0}
+        for market in JP_MARKET_NAMES.values()
+    }
+    for metadata in ticker_meta.values():
+        market_code = str(metadata.get("Mkt") or "")
+        try:
+            market_coverage[JP_MARKET_NAMES[market_code]]["universe"] += 1
+        except KeyError as exc:
+            raise RuntimeError(f"DATA_HEALTH: unexpected market code: {market_code}") from exc
+
     prices = fetch_price_data(tickers, lookback_days)
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable_count = 0
@@ -292,6 +313,9 @@ def scan_japan_inflection(
     latest_dates: dict[str, str] = {}
 
     for ticker, df in prices.items():
+        market_code = str(ticker_meta[ticker].get("Mkt") or "")
+        market = JP_MARKET_NAMES[market_code]
+        market_coverage[market]["price_data"] += 1
         latest_date = _latest_close_date(df)
         if latest_date:
             latest_dates[ticker] = latest_date
@@ -299,6 +323,7 @@ def scan_japan_inflection(
         if not tech:
             continue
         technical_usable_count += 1
+        market_coverage[market]["technical_usable"] += 1
         turnover = tech.get("avg_turnover_20d_jpy")
         if turnover is None or float(turnover) < min_turnover_jpy:
             continue
@@ -331,7 +356,8 @@ def scan_japan_inflection(
             return_20d_pct=tech.get("return_20d_pct"),
             return_60d_pct=tech.get("return_60d_pct"),
             volume_ratio_20d=tech.get("volume_ratio_20d"),
-            breakout_52w=bool(tech.get("breakout_52w")),
+            near_52w_high=bool(tech.get("near_52w_high")),
+            near_listing_high=bool(tech.get("near_listing_high")),
             return_20d_extreme_pct=tech.get("return_20d_pct"),
             negative_operating_cashflow=bool(fundamental.get("negative_operating_cashflow")),
         )
@@ -349,29 +375,32 @@ def scan_japan_inflection(
             reasons.append("業績予想上方修正")
         if (tech.get("volume_ratio_20d") or 0) >= 1.5:
             reasons.append("出来高増加")
-        if tech.get("breakout_52w"):
+        if tech.get("near_52w_high"):
             reasons.append("52週高値圏")
+        if tech.get("near_listing_high"):
+            reasons.append("上場来高値圏")
         candidates.append(
             LiveCandidate(
                 ticker=ticker,
                 company_name=str(ticker_meta[ticker].get("CoName") or ticker),
                 market=str(ticker_meta[ticker].get("MktNm") or ""),
                 classification=classification,
-                score=round(score, 3),
+                live_normalized_score=round(score, 3),
                 raw_inflection_score=raw.total,
                 current_price=float(tech["current_price"]),
                 return_5d_pct=tech.get("return_5d_pct"),
                 return_20d_pct=tech.get("return_20d_pct"),
                 return_60d_pct=tech.get("return_60d_pct"),
                 volume_ratio_20d=tech.get("volume_ratio_20d"),
-                breakout_52w=bool(tech.get("breakout_52w")),
+                near_52w_high=bool(tech.get("near_52w_high")),
+                near_listing_high=bool(tech.get("near_listing_high")),
                 avg_turnover_20d_jpy=tech.get("avg_turnover_20d_jpy"),
                 reasons=reasons,
                 limitations=[fundamental_limitation],
             )
         )
 
-    candidates.sort(key=lambda candidate: candidate.score, reverse=True)
+    candidates.sort(key=lambda candidate: candidate.live_normalized_score, reverse=True)
     counts: dict[str, int] = {}
     for item in candidates:
         counts[item.classification] = counts.get(item.classification, 0) + 1
@@ -380,6 +409,11 @@ def scan_japan_inflection(
     latest_price_date_count = (
         sum(value == latest_price_date for value in latest_dates.values()) if latest_price_date else 0
     )
+    if latest_price_date:
+        for ticker, value in latest_dates.items():
+            if value == latest_price_date:
+                market_code = str(ticker_meta[ticker].get("Mkt") or "")
+                market_coverage[JP_MARKET_NAMES[market_code]]["latest_date_count"] += 1
     latest_date_histogram = dict(
         sorted(Counter(latest_dates.values()).items(), reverse=True)[:5]
     )
@@ -400,6 +434,7 @@ def scan_japan_inflection(
         "liquid_candidate_count": liquid_candidate_count,
         "latest_price_date": latest_price_date,
         "latest_price_date_count": latest_price_date_count,
+        "market_coverage": market_coverage,
         "latest_date_histogram": latest_date_histogram,
         "stale_tickers_sample": stale_tickers_sample,
         "deep_candidate_count": len(preselected),

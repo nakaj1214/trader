@@ -25,7 +25,8 @@ class InflectionFeatures:
     return_20d_pct: float | None = None
     return_60d_pct: float | None = None
     volume_ratio_20d: float | None = None
-    breakout_52w: bool = False
+    near_52w_high: bool = False
+    near_listing_high: bool = False
     return_20d_extreme_pct: float | None = None
     equity_financing_risk: bool = False
     going_concern_risk: bool = False
@@ -111,9 +112,10 @@ def score_inflection(features: InflectionFeatures) -> InflectionScore:
         features.volume_ratio_20d,
         ((1.5, 3.0), (2.0, 5.0), (3.0, 7.0)),
     )
-    details["breakout_52w"] = 6.0 if features.breakout_52w else 0.0
+    details["near_52w_high"] = 6.0 if features.near_52w_high else 0.0
+    details["near_listing_high"] = 6.0 if features.near_listing_high else 0.0
     momentum = min(25.0, sum(details[key] for key in (
-        "return_20d", "return_60d", "volume_ratio", "breakout_52w"
+        "return_20d", "return_60d", "volume_ratio", "near_52w_high", "near_listing_high"
     )))
 
     risk_penalty = 0.0
@@ -151,6 +153,7 @@ def score_inflection(features: InflectionFeatures) -> InflectionScore:
 
 
 def classify_signal(score: InflectionScore) -> str:
+    """Classify the raw, unnormalized 100-point inflection score."""
     if score.total >= 75:
         return "strong_candidate"
     if score.total >= 60:

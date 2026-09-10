@@ -309,6 +309,22 @@ def test_price_hashes_are_stable_and_only_common_changed_dates_are_reported() ->
     ]
 
 
+def test_load_inflection_signals_accepts_v3_schema4_snapshot(tmp_path) -> None:
+    snapshot_dir = tmp_path / "v3"
+    snapshot_dir.mkdir()
+    payload = _payload()
+    payload["strategy_version"] = "jp-inflection-shadow-v3"
+    payload["report_schema_version"] = 4
+    payload["candidates"][0]["live_normalized_score"] = 80.0
+    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+
+    signals = load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
+
+    assert signals[0]["strategy_version"] == "jp-inflection-shadow-v3"
+    assert signals[0]["report_schema_version"] == 4
+    assert signals[0]["score"] == 80.0
+
+
 def test_price_hashes_ignore_later_uniform_corporate_action_rescaling() -> None:
     index = pd.to_datetime(["2026-09-08", "2026-09-09"])
     before = pd.DataFrame(
@@ -534,7 +550,7 @@ def test_report_breakdowns_exclude_incomplete_trades() -> None:
 
 
 def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch) -> None:
-    snapshot_dir = tmp_path / "dashboard" / "data" / "inflection"
+    snapshot_dir = tmp_path / "dashboard" / "data" / "inflection" / "v3"
     snapshot_dir.mkdir(parents=True)
     (snapshot_dir / "2026-01-29.enc").write_text("placeholder", encoding="utf-8")
     index = pd.bdate_range("2026-01-01", periods=340)
@@ -555,8 +571,8 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
             "date": signal_date,
             "score": score,
             "classification": classification,
-            "strategy_version": "v1",
-            "report_schema_version": 3,
+            "strategy_version": "jp-inflection-shadow-v3",
+            "report_schema_version": 4,
         }
         for ticker, score, classification in (
             ("1111.T", 80.0, "EARLY_CANDIDATE"),

@@ -20,7 +20,7 @@ GitHub Actions の `.github/workflows/inflection_shadow.yml` が平日 16:40 JST
 出力:
 
 ```text
-dashboard/data/inflection/YYYY-MM-DD.enc   # encrypted immutable market-day snapshot
+dashboard/data/inflection/v3/YYYY-MM-DD.enc # v3/schema 4 encrypted immutable snapshot
 dashboard/data/inflection_candidates.enc   # encrypted latest snapshot
 ```
 
@@ -47,12 +47,14 @@ snapshot の日付は **workflow実行日ではなく `latest_price_date`** で�
 - 業績予想上方修正
 - 20日 / 60日リターン
 - 出来高増加
-- 52週高値圏
+- 252営業日以上は52週高値圏、未満は取得可能な上場来期間の高値圏
 - 極端な上昇や営業CF悪化のリスクペナルティ
 
 財務比較では、業績予想修正のみの行を最新実績として扱わず、前年の同一期間実績が存在する場合だけYoY比較します。同一年度の訂正値を前年同期として代用しません。
 
 ニュース、提携、大口受注、新規事業などの catalyst は、point-in-time-safe な取得経路が接続されるまで本番スコアから除外しています。
+
+候補には100点換算前の`raw_inflection_score`と、ライブ取得可能項目を100点換算した`live_normalized_score`を保存します。`score`は既存snapshot consumer向けの`live_normalized_score`互換aliasです。
 
 ## 再現性
 
@@ -90,8 +92,9 @@ Actionsはfull commit SHAへ固定せず、既存のversion tagを継続利用�
 
 - TSE対象ユニバース数
 - 価格取得coverage
-- 65営業日以上使えるtechnical coverage
+- 21営業日以上使えるtechnical coverage
 - 最新市場日の一致率
+- Prime / Standard / Growth別の価格・technical・最新市場日coverage
 - candidate件数整合性・ticker重複
 - strategy/schema/source commit metadata
 - 主要runtime dependency metadata
@@ -101,6 +104,8 @@ J-Quants clientはFreeの5 calls/minを考慮した間隔制御に加えて、42
 ## Forward Validation
 
 新inflection戦略は、蓄積した暗号化snapshotから **`EARLY_CANDIDATE` のみ** を復号して評価します。
+
+REQ-018適用後はstrategy v3 / schema 4として`dashboard/data/inflection/v3/`へ分離して蓄積します。既存v2 snapshotは保持しますが、v3のforward validationには混在させないため、評価系列はv2以前と非連続です。
 
 評価ルールは結果を見る前に固定しています。
 
@@ -127,7 +132,7 @@ Trailing Stopは前日までの確定済みHigh Water Markから計算します�
 
 ## Position Exit Monitor
 
-SBI証券で手動保有している銘柄をGoogle Sheetsから読み、前日までのHigh Water Markを起点に当日の1分足を時系列評価してTrailing Stop条件を確認します。同一1分足のHighはその足のStop判定後に反映し、entry当日は約定時刻が不明なためStop判定を行いません。自動発注は行いません。
+SBI証券で手動保有している銘柄をGoogle Sheetsから読み、前日までのHigh Water Markを起点に当日の1分足を時系列評価してTrailing Stop条件を確認します。同一1分足のHighはその足のStop判定後に反映します。entry当日は約定時刻が不明なためStop判定を行わず、その日のHighも翌日以降のHWMには含めません。このため、entry日約定後の高値を基準とするStopは検知できません。自動発注は行いません。
 
 平日9:03 / 12:35 / 15:35 JSTにGitHub Actionsで実行します。GitHub Actionsのscheduleはbest-effortであり、遅延・省略される可能性があるため厳密な定刻監視ではありません。TSE休場日は価格取得前に正常終了します。
 
@@ -139,6 +144,8 @@ Googleスプレッドシートには、次の2つのタブを事前に作成し�
 必要なGitHub Secretは `GOOGLE_CREDENTIALS_JSON`, `GOOGLE_SHEET_ID`, `SLACK_WEBHOOK_URL` です。サービスアカウントではGoogle Sheets APIを有効化し、JSONキーの内容全体を `GOOGLE_CREDENTIALS_JSON` に登録します。
 
 live monitorは実約定単価に合わせ、配当調整なし・株式分割のみ補正した価格を使います。forward validationのTrailing Stop評価も同じ価格基準ですが、十分な成熟signalが蓄積するまで既定15%は暫定の検証用アラートであり、確定した売買判断ではありません。
+
+quoteのstale閾値は、取引時間中と大引け後30分以内が暫定10分、それ以外が60分です。yfinanceの実測遅延が常に5分以内なら5分へ厳格化し、通常の反映遅延で10分超が頻発するなら15〜20分への緩和を検討します。
 
 一部銘柄の欠測は `状況` とSlackへ通知して残りを継続します。同じTrailing StopのSlack通知は、`状況` の状態が継続する間は1回に抑止します。全銘柄の価格欠測、シート書込失敗、Slack送信失敗は監視停止としてworkflowを失敗させます。状況タブは履歴・監査ログではなく現在地を表示するダッシュボードです。Slack成功後にシート保存だけが失敗した場合は、次回実行で通知が重複する可能性があります。
 

@@ -12,7 +12,7 @@ from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_s
 from src.screening.inflection_live import scan_japan_inflection
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "dashboard" / "data" / "inflection"
+OUT_DIR = ROOT / "dashboard" / "data" / "inflection" / "v3"
 LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.enc"
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -20,6 +20,8 @@ MIN_UNIVERSE_COUNT = 3000
 MIN_PRICE_COVERAGE = 0.70
 MIN_TECHNICAL_COVERAGE = 0.60
 MIN_LATEST_DATE_COVERAGE = 0.80
+MARKET_NAMES = ("Prime", "Standard", "Growth")
+MARKET_COVERAGE_FIELDS = ("universe", "price_data", "technical_usable", "latest_date_count")
 
 
 def validate_report(report: dict[str, Any]) -> None:
@@ -32,6 +34,7 @@ def validate_report(report: dict[str, Any]) -> None:
     generated_at = report.get("generated_at")
     deep_count = int(report.get("deep_candidate_count") or 0)
     candidates = report.get("candidates")
+    market_coverage = report.get("market_coverage")
 
     if universe < MIN_UNIVERSE_COUNT:
         raise RuntimeError(f"DATA_HEALTH: universe too small: {universe} < {MIN_UNIVERSE_COUNT}")
@@ -90,6 +93,30 @@ def validate_report(report: dict[str, Any]) -> None:
         raise RuntimeError("DATA_HEALTH: candidate ticker missing or invalid")
     if len(tickers) != len(set(tickers)):
         raise RuntimeError("DATA_HEALTH: duplicate candidate tickers detected")
+
+    if not isinstance(market_coverage, dict) or set(market_coverage) != set(MARKET_NAMES):
+        raise RuntimeError("DATA_HEALTH: invalid market coverage keys")
+    market_totals = dict.fromkeys(MARKET_COVERAGE_FIELDS, 0)
+    for market in MARKET_NAMES:
+        row = market_coverage[market]
+        if not isinstance(row, dict) or set(row) != set(MARKET_COVERAGE_FIELDS):
+            raise RuntimeError(f"DATA_HEALTH: invalid market coverage fields: {market}")
+        for field in MARKET_COVERAGE_FIELDS:
+            value = row[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise RuntimeError(f"DATA_HEALTH: invalid market coverage value: {market}.{field}")
+            market_totals[field] += value
+
+    expected_totals = {
+        "universe": universe,
+        "price_data": price_data,
+        "technical_usable": technical_usable,
+        "latest_date_count": latest_date_count,
+    }
+    if market_totals != expected_totals:
+        raise RuntimeError(
+            f"DATA_HEALTH: market coverage totals mismatch: {market_totals} != {expected_totals}"
+        )
 
     if not report.get("strategy_version") or not report.get("report_schema_version"):
         raise RuntimeError("DATA_HEALTH: strategy/schema version metadata missing")
@@ -150,6 +177,13 @@ def main() -> None:
     snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
 
     counts = report.get("classification_counts", {})
+    market_summary = " ".join(
+        f"{market.lower()}_coverage="
+        f"price:{(row['price_data'] / row['universe'] if row['universe'] else 0):.1%},"
+        f"technical:{(row['technical_usable'] / row['universe'] if row['universe'] else 0):.1%},"
+        f"latest:{(row['latest_date_count'] / row['price_data'] if row['price_data'] else 0):.1%}"
+        for market, row in report["market_coverage"].items()
+    )
     print(
         "inflection shadow scan complete: "
         f"universe={report.get('universe_count')} "
@@ -159,6 +193,7 @@ def main() -> None:
         f"early={counts.get('EARLY_CANDIDATE', 0)} "
         f"watch={counts.get('WATCH', 0)} "
         f"overextended={counts.get('OVEREXTENDED', 0)} "
+        f"{market_summary} "
         f"snapshot={snapshot.name} "
         f"snapshot_created={snapshot_created}"
     )

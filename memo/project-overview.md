@@ -40,7 +40,7 @@ GitHub Actions（平日 16:40 JST）
 | snapshot 暗号化 | `src/data/snapshot_crypto.py` |
 | forward validation | `src/evaluation/inflection_forward.py`, `src/evaluation/inflection_backtest.py` |
 
-スコアは、売上・営業利益・利益率・黒字転換・上方修正などのファンダメンタル、20日 / 60日リターン・出来高・52週高値などのモメンタム、過熱・営業 CF などのリスクを合成します。ニュースや材料は point-in-time-safe な取得経路がないため、本番スコアには含めません。
+スコアは、売上・営業利益・利益率・黒字転換・上方修正などのファンダメンタル、20日 / 60日リターン・出来高・52週高値または取得可能な上場来期間の高値などのモメンタム、過熱・営業 CF などのリスクを合成します。ニュースや材料は point-in-time-safe な取得経路がないため、本番スコアには含めません。
 
 ### Archive
 
@@ -51,7 +51,7 @@ GitHub Actions（平日 16:40 JST）
 現行 scan の出力先:
 
 ```text
-dashboard/data/inflection/YYYY-MM-DD.enc
+dashboard/data/inflection/v3/YYYY-MM-DD.enc
 dashboard/data/inflection_candidates.enc
 ```
 
@@ -61,6 +61,8 @@ dashboard/data/inflection_candidates.enc
 - `strategy_version`、schema version、Git SHA、scan parameters、主要ライブラリの version を保存
 - J-Quants Free の約 12 週間遅延を metadata に明記
 - 専用の `SNAPSHOT_ENCRYPTION_KEY` を推奨し、未設定時のみ `JQUANTS_API_KEY` を鍵素材に利用
+
+REQ-018適用後のsnapshotはstrategy v3 / schema 4として`inflection/v3/`へ分離します。既存v2 snapshotは保持しますがv3のforward validationには混在させないため、評価系列は非連続です。
 
 週次検証は暗号化済み snapshot から `EARLY_CANDIDATE` のみを読み、翌営業日始値で entry、5 / 20 / 60 営業日保有、往復コスト 0.2%、TOPIX ETF (`1306.T`) 比較という固定ルールで評価します。
 

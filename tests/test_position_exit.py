@@ -113,6 +113,33 @@ def test_entry_day_skips_intraday_stop_evaluation() -> None:
     assert status.stop_price == 90.0
 
 
+def test_next_session_does_not_recover_excluded_entry_day_high() -> None:
+    index = pd.DatetimeIndex([NOW - timedelta(minutes=1)])
+    bars = pd.DataFrame(
+        {"Open": [120.0], "High": [120.0], "Low": [120.0], "Close": [120.0]},
+        index=index,
+    )
+    quote = TodayQuote(120.0, 120.0, 120.0, 120.0, index[-1].isoformat())
+
+    # The entry-day high of 150 is intentionally absent from confirmed history.
+    status = evaluate_position(
+        100.0,
+        "2026-09-07",
+        pd.Series(dtype=float),
+        pd.Series(dtype=float),
+        quote,
+        bars,
+        15.0,
+        NOW,
+        "1111.T",
+        in_session=False,
+    )
+
+    assert status.triggered is False
+    assert status.high_water_mark == 120.0
+    assert status.stop_price == 102.0
+
+
 def test_quote_exactly_at_stale_boundary_is_accepted() -> None:
     status = _evaluate(_quote(as_of_at=(NOW - timedelta(minutes=60)).isoformat()), [110.0])
 

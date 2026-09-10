@@ -373,7 +373,7 @@ def _build_group_report(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward-validate encrypted immutable JP inflection snapshots.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
-    parser.add_argument("--snapshot-dir", default="dashboard/data/inflection")
+    parser.add_argument("--snapshot-dir", default="dashboard/data/inflection/v3")
     parser.add_argument("--output", default="artifacts/inflection_forward_validation.json")
     args = parser.parse_args()
 

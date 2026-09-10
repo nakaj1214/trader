@@ -18,7 +18,7 @@ def test_strong_inflection_candidate_scores_high() -> None:
         return_20d_pct=16,
         return_60d_pct=35,
         volume_ratio_20d=3.2,
-        breakout_52w=True,
+        near_52w_high=True,
     )
     score = score_inflection(features)
     assert score.fundamental >= 30
@@ -37,7 +37,7 @@ def test_risk_penalties_can_downgrade_candidate() -> None:
         return_20d_pct=20,
         return_60d_pct=30,
         volume_ratio_20d=3.0,
-        breakout_52w=True,
+        near_52w_high=True,
         return_20d_extreme_pct=100,
         equity_financing_risk=True,
         going_concern_risk=True,
@@ -52,3 +52,10 @@ def test_empty_features_do_not_create_signal() -> None:
     score = score_inflection(InflectionFeatures())
     assert score.total == 0.0
     assert classify_signal(score) == "none"
+
+
+def test_listing_high_has_same_momentum_bonus_as_52w_high() -> None:
+    near_52w = score_inflection(InflectionFeatures(near_52w_high=True))
+    near_listing = score_inflection(InflectionFeatures(near_listing_high=True))
+
+    assert near_52w.momentum == near_listing.momentum == 6.0

@@ -63,10 +63,14 @@ class FakeJQuantsClient:
         ]
 
 
-def _price_frame() -> pd.DataFrame:
-    index = pd.date_range("2026-05-01", periods=80, freq="B")
-    close = pd.Series([100.0 + i * 0.8 for i in range(80)], index=index)
-    volume = pd.Series([1_000_000.0] * 60 + [2_000_000.0] * 20, index=index)
+def _price_frame(periods: int = 80) -> pd.DataFrame:
+    index = pd.date_range("2026-05-01", periods=periods, freq="B")
+    close = pd.Series([100.0 + i * 0.8 for i in range(periods)], index=index)
+    old_volume_days = max(0, periods - 20)
+    volume = pd.Series(
+        [1_000_000.0] * old_volume_days + [2_000_000.0] * (periods - old_volume_days),
+        index=index,
+    )
     return pd.DataFrame({"Close": close, "Volume": volume})
 
 
@@ -88,6 +92,28 @@ def test_technical_features_use_raw_turnover_separately_from_adjusted_close() ->
 
     assert result is not None
     assert result["avg_turnover_20d_jpy"] == 123_000_000.0
+
+
+@pytest.mark.parametrize("periods", [19, 20])
+def test_technical_features_require_21_closes(periods: int) -> None:
+    assert _technical_features(_price_frame(periods)) is None
+
+
+@pytest.mark.parametrize(
+    ("periods", "near_52w_high", "near_listing_high"),
+    [(21, False, True), (100, False, True), (251, False, True), (252, True, False)],
+)
+def test_technical_features_distinguish_listing_and_52w_highs(
+    periods: int,
+    near_52w_high: bool,
+    near_listing_high: bool,
+) -> None:
+    result = _technical_features(_price_frame(periods))
+
+    assert result is not None
+    assert result["return_20d_pct"] is not None
+    assert result["near_52w_high"] is near_52w_high
+    assert result["near_listing_high"] is near_listing_high
 
 
 def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
@@ -204,6 +230,8 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     assert report["deep_candidate_count"] == 1
     assert report["strategy_version"] == STRATEGY_VERSION
     assert report["report_schema_version"] == REPORT_SCHEMA_VERSION
+    assert STRATEGY_VERSION == "jp-inflection-shadow-v3"
+    assert REPORT_SCHEMA_VERSION == 4
     assert report["source_commit_sha"] == "abc123"
     assert report["data_policy"]["jquants_plan"] == "free"
     assert report["data_policy"]["jquants_data_delay_weeks"] == 12
@@ -214,7 +242,39 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     assert candidate["ticker"] == "1111.T"
     assert candidate["company_name"] == "Test Corp"
     assert 0.0 <= candidate["score"] <= 100.0
+    assert candidate["live_normalized_score"] == candidate["score"]
+    assert candidate["raw_inflection_score"] != candidate["live_normalized_score"]
     assert candidate["classification"] in {"EARLY_CANDIDATE", "WATCH", "OVEREXTENDED", "NONE"}
+
+
+def test_scan_reports_market_coverage_by_stable_market_code() -> None:
+    client = FakeJQuantsClient()
+    with (
+        patch.object(
+            client,
+            "listed_issues",
+            return_value=[
+                {"Code": "11110", "Mkt": "0111", "MktNm": "プライム"},
+                {"Code": "22220", "Mkt": "0112", "MktNm": "スタンダード"},
+                {"Code": "33330", "Mkt": "0113", "MktNm": "グロース"},
+            ],
+        ),
+        patch(
+            "src.screening.inflection_live.fetch_price_data",
+            return_value={"1111.T": _price_frame(), "2222.T": _price_frame(20)},
+        ),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=0)
+
+    assert report["market_coverage"] == {
+        "Prime": {"universe": 1, "price_data": 1, "technical_usable": 1, "latest_date_count": 1},
+        "Standard": {"universe": 1, "price_data": 1, "technical_usable": 0, "latest_date_count": 0},
+        "Growth": {"universe": 1, "price_data": 0, "technical_usable": 0, "latest_date_count": 0},
+    }
+    assert report["universe_count"] == 3
+    assert report["price_data_count"] == 2
+    assert report["technical_usable_count"] == 1
+    assert report["latest_price_date_count"] == 1
 
 
 def test_scan_reports_latest_date_distribution_and_stale_tickers() -> None:

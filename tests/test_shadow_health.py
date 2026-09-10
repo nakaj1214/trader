@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scripts.run_inflection_shadow import persist_report, snapshot_date, validate_report
+from scripts.run_inflection_shadow import OUT_DIR, persist_report, snapshot_date, validate_report
 from src.data.snapshot_crypto import decrypt_json
 
 SECRET = "test-snapshot-secret"
@@ -12,8 +12,8 @@ SECRET = "test-snapshot-secret"
 
 def _healthy_report() -> dict:
     return {
-        "strategy_version": "jp-inflection-shadow-v1",
-        "report_schema_version": 3,
+        "strategy_version": "jp-inflection-shadow-v3",
+        "report_schema_version": 4,
         "source_commit_sha": "abc123",
         "generated_at": "2026-09-07T08:00:00+00:00",
         "universe_count": 3700,
@@ -21,6 +21,26 @@ def _healthy_report() -> dict:
         "technical_usable_count": 3300,
         "latest_price_date": "2026-09-07",
         "latest_price_date_count": 3400,
+        "market_coverage": {
+            "Prime": {
+                "universe": 1800,
+                "price_data": 1700,
+                "technical_usable": 1600,
+                "latest_date_count": 1650,
+            },
+            "Standard": {
+                "universe": 1400,
+                "price_data": 1350,
+                "technical_usable": 1250,
+                "latest_date_count": 1300,
+            },
+            "Growth": {
+                "universe": 500,
+                "price_data": 450,
+                "technical_usable": 450,
+                "latest_date_count": 450,
+            },
+        },
         "deep_candidate_count": 2,
         "runtime_versions": {"yfinance": "1.7.0", "pandas": "3.0.5"},
         "candidates": [{"ticker": "1111.T"}, {"ticker": "2222.T"}],
@@ -29,6 +49,10 @@ def _healthy_report() -> dict:
 
 def test_validate_report_accepts_healthy_scan() -> None:
     validate_report(_healthy_report())
+
+
+def test_default_snapshot_directory_is_strategy_v3() -> None:
+    assert OUT_DIR.as_posix().endswith("/dashboard/data/inflection/v3")
 
 
 def test_validate_report_rejects_small_universe() -> None:
@@ -95,6 +119,45 @@ def test_validate_report_rejects_duplicate_candidates() -> None:
     report["candidates"] = [{"ticker": "1111.T"}, {"ticker": "1111.T"}]
     with pytest.raises(RuntimeError, match="duplicate candidate"):
         validate_report(report)
+
+
+def test_validate_report_rejects_market_coverage_total_mismatch() -> None:
+    report = _healthy_report()
+    report["market_coverage"]["Growth"]["universe"] -= 1
+
+    with pytest.raises(RuntimeError, match="market coverage totals mismatch"):
+        validate_report(report)
+
+
+def test_validate_report_allows_low_coverage_in_one_market() -> None:
+    report = _healthy_report()
+    report.update(
+        price_data_count=3250,
+        technical_usable_count=3000,
+        latest_price_date_count=3150,
+    )
+    report["market_coverage"] = {
+        "Prime": {
+            "universe": 1800,
+            "price_data": 1800,
+            "technical_usable": 1700,
+            "latest_date_count": 1750,
+        },
+        "Standard": {
+            "universe": 1400,
+            "price_data": 1300,
+            "technical_usable": 1200,
+            "latest_date_count": 1250,
+        },
+        "Growth": {
+            "universe": 500,
+            "price_data": 150,
+            "technical_usable": 100,
+            "latest_date_count": 150,
+        },
+    }
+
+    validate_report(report)
 
 
 def test_validate_report_rejects_missing_reproducibility_metadata() -> None:

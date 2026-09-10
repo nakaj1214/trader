@@ -20,7 +20,7 @@
 
 ### yfinance単独依存（重要度: 中、既知）
 
-価格取得を非公式スクレイピング系ライブラリに全面依存している。障害検知の代替経路だった `compare_close_series` は死んでいたため削除済みで、現状は「yfinanceが部分的に壊れて古い/誤ったデータを返し続ける」ケースを検知する手段がない。
+価格取得を、Yahoo非公式・非保証のpublic API wrapper（personal use前提）であるyfinanceに全面依存している（「非公式スクレイピング系ライブラリ」という表現は不正確。yfinance自身はYahoo Finance公開APIのラッパーであり、Yahooから公認・保証されていないという位置付け）。個人研究の範囲を超える用途で使う場合は利用条件を別途確認する必要がある。障害検知の代替経路だった `compare_close_series` は死んでいたため削除済みで、現状は「yfinanceが部分的に壊れて古い/誤ったデータを返し続ける」ケースを検知する手段がない。
 
 ### `STRATEGY_VERSION` 変更時の運用手順が未整備（重要度: 低、既知）
 
@@ -32,9 +32,9 @@
 
 `.github/workflows/forward_validation.yml` は週次でsummaryを `actions/upload-artifact`（90日保持）にアップロードするようになったが、それを人が定期的に確認する運用フロー（カレンダーリマインダー等）は文書化されていない。仕組みはあるが、見る習慣が定着しなければ実質的に機能しない。
 
-### Position Exit Monitorのアラート重複が未対策
+### Position Exit Monitorのアラート重複（対応済み）
 
-[`scripts/run_position_monitor.py:160`](../../scripts/run_position_monitor.py#L160) に `ponytail:` コメントで明記されている通り、1日3回（09:03 / 12:35 / 15:35 JST）の各実行でTrailing Stop条件が継続して成立していると、毎回同じ銘柄でSlack通知が飛ぶ。現状「実行本数が少ないから許容」という判断だが、保有銘柄数が増えると通知疲れのリスクがある。永続的な重複排除（例: 状況シートに前回triggered状態を保存し、状態遷移時のみ通知）を検討する価値がある。
+過去の`scripts/run_position_monitor.py`は、1日3回（09:03 / 12:35 / 15:35 JST）の各実行でTrailing Stop条件が継続して成立していると、毎回同じ銘柄でSlack通知が飛ぶ実装だった。現在は「状況」シートに前回`triggered`状態と`last_notified_at`を保存し、状態遷移時（未トリガー→トリガー）のみ通知する方式に修正済み。
 
 ### Google Sheetsの書き込みが非原子的
 
@@ -42,7 +42,7 @@
 
 ### 寄り付き直後のTrailing Stop判定の質
 
-09:03 JST実行は寄り付き直後で板が薄く/歪みやすい時間帯であり、この時点の「今日の始値」を使ったStop判定は他の2回（12:35・15:35）より信頼度が下がりうる。best-effort運用として明記済みだが、寄り付き直後のtriggeredはより慎重に扱う旨を通知文言に含めることを検討してもよい。
+東証は寄り付きを板寄せ方式で決定するため、「板が薄く/歪みやすいので始値の品質が低い」という説明は正確ではない。09:03 JST実行の実質的な問題は、寄り付きから3分しか経っておらず当日の観測期間が短いこと、および1分足データの取得元（yfinance）とその鮮度への依存が大きいことにある。best-effort運用として明記済みだが、寄り付き直後のtriggeredはより慎重に扱う旨を通知文言に含めることを検討してもよい。
 
 ## 判断ロジックの学術的妥当性チェック
 
@@ -50,11 +50,11 @@
 
 | ロジック | 該当箇所 | 評価 |
 |---|---|---|
-| 52週高値ブレイクアウト加点 | `breakout_52w` | **整合**。George & Hwang (2004) *"The 52-Week High and Momentum Investing"* は52週高値からの近さが伝統的モメンタムより強い予測力を持つと報告しており、直接的な裏付けがある |
-| 20日/60日モメンタム加点 | `return_20d` / `return_60d` | **一部不整合**。Jegadeesh & Titman (1993) の古典的モメンタム研究は「同業種内の相対順位（クロスセクショナル）」でモメンタムを測定する。本ロジックは**絶対リターン閾値**であり、市場全体の地合い（ベータ）と銘柄固有モメンタムを分離できていない。相対リターン化（TOPIX比較）がより文献に忠実 |
+| 52週高値ブレイクアウト加点 | `breakout_52w` | **方向的に整合（直接的裏付けではない）**。実装は `current >= high52 * 0.99` であり「52週高値からの1%以内の近さ」に近く、厳密な「ブレイクアウト」ではない（変数名・呼称の修正はREQ-018で対応）。George & Hwang (2004) *"The 52-Week High and Momentum Investing"* は52週高値への**近さ**が伝統的モメンタムより強い予測力を持つと報告しており、この「近さ」の部分に方向的な裏付けがある。0.99という具体的閾値・配点自体は文献が検証したものではない |
+| 20日/60日モメンタム加点 | `return_20d` / `return_60d` | **一部不整合**。Jegadeesh & Titman (1993) の古典的モメンタム研究は、過去リターンに基づき個別株のwinner/loserポートフォリオを形成する**クロスセクショナル**モメンタム戦略であり、「同業種内の相対順位」を測るものではない（業種モメンタムを扱う代表的研究はMoskowitz & Grinblatt (1999)）。本ロジックは**絶対リターン閾値**であり、市場全体の地合い（ベータ）と銘柄固有モメンタムを分離できていない。相対リターン化（TOPIX比較）は市場ベータ除去の実務的な候補ではあるが、「J&Tに忠実だから」という論拠は誤りであり、日本市場でのモメンタムの外的妥当性（Fama & French 2012は日本でモメンタムが例外的に弱いと報告）も別途検証が必要 |
 | 極端な急騰への減点（20日+80%以上、OVEREXTENDED判定） | `extreme_runup_penalty`, `_classify` | **整合**。Jegadeesh (1990) や Lehmann (1990) の短期リバーサル研究は、極端な短期急騰が部分的に反転する傾向を示しており、方向性は妥当。ただし50%/80%/100%という具体的閾値自体は学術的に較正されたものではなくヒューリスティック |
-| 出来高急増への加点 | `volume_ratio` | **要注意**。Lee & Swaminathan (2000) の "momentum life cycle" 仮説では、出来高を伴う急騰銘柄はむしろ将来の反転（グラマー化）リスクが高いとされ、本ロジックの「出来高増加=常に加点」という単純な扱いとは緊張関係がある |
-| 上方修正・黒字転換・営業利益加速への加点 | `_fundamental_features`, fundamental score | **整合**。PEAD（Bernard & Thomas 1989）や Piotroski F-score (2000) が示す「業績モメンタム・キャッシュフロー健全性の改善が将来リターンを予測する」という知見と方向性が一致する |
+| 出来高急増への加点 | `volume_ratio` | **要注意（単純な良悪二分ではない）**。Lee & Swaminathan (2000) はturnover水準とモメンタムの持続性・反転の両方に関係することを示しており、出来高増加を一律「反転リスク」と単純化するのは正確ではない。実務的には`Return × Volume × Holding Horizon`の相互作用として捉えるべきで、本ロジックの「出来高増加=常に加点」という単純な扱いは、この相互作用の一側面のみを見ている可能性がある |
+| 上方修正・黒字転換・営業利益加速への加点 | `_fundamental_features`, fundamental score | **方向性は近いが直接的根拠ではない**。PEAD（Bernard & Thomas 1989）は決算発表**直後**の異常リターン継続を扱う現象だが、J-Quants Freeの財務データは約12週遅延するため「決算発表直後のPEAD」を利用しているとは言えない（参考程度）。Piotroski F-score (2000)は高Book-to-Market銘柄を対象としたValue Investing研究であり、Traderの「爆発前inflection」を直接裏付けるものではない（方向性が近い程度）。業績モメンタムの改善が将来リターンに関係するという大きな方向性自体は妥当 |
 | Trailing Stop（HWM基準、確定High起点） | `position_exit.py`, `inflection_backtest.py` | **整合、かつ検証方針も妥当**。Kaminski & Lo (2014) *"When Do Stop-Loss Rules Stop Losses?"* は、トレイリングストップの有効性が資産のトレンド性/平均回帰性に強く依存し、レジームによって結果が反転しうることを示した。プロジェクト自身が「優位性確認までは検証用アラート」と位置付けている姿勢は、この文献の含意と整合的 |
 | 流動性フィルタ（売買代金1億円以上） | `min_turnover_jpy` | **整合**。Amihud (2002) の非流動性指標研究などが示す通り、低流動性銘柄は価格インパクト・約定不能リスクが高く、フィルタ自体は標準的な実務 |
 | 税率20.315%（税引前をデフォルト表示） | `tax_rate_pct` | **事実として正確**。日本の株式譲渡益課税（申告分離課税）の実際の税率（所得税15.315%+住民税5%）と一致 |
@@ -63,15 +63,15 @@
 
 ### 最も重要な指摘
 
-**モメンタムスコアを絶対リターンではなく相対リターン（対TOPIXまたは業種平均）にすべき**という点が、学術的観点から見た最大のギャップである。現状の設計では、forward validationがTOPIX比較で「優位性」を測っているにもかかわらず、シグナル生成側は市場全体の上昇局面をそのまま銘柄固有シグナルとして拾ってしまう可能性があり、両者の整合性（市場ベータ由来の見かけ上の優位性ではないか）を切り分けられない。forward validationの結果を見る際は、対TOPIXの超過リターンだけでなく、**市場全体が上昇していた期間かどうか**を層別して確認することを推奨する。
+**モメンタムスコアを絶対リターンではなく相対リターン（対TOPIXまたは業種平均）にすることは検証すべき有力な仮説の一つ**である。現状の設計では、forward validationがTOPIX比較で「優位性」を測っているにもかかわらず、シグナル生成側は市場全体の上昇局面をそのまま銘柄固有シグナルとして拾ってしまう可能性があり、両者の整合性（市場ベータ由来の見かけ上の優位性ではないか）を切り分けられない。ただし、Fama & French (2012)の国際比較では日本市場のモメンタムプレミアムは他地域より弱いと報告されており、米国研究のみを根拠に相対化を最優先で本番反映するのは時期尚早である。forward validationの結果を見る際は、対TOPIXの超過リターンだけでなく、**市場全体が上昇していた期間かどうか**を層別して確認しつつ、絶対/TOPIX相対/業種相対の各方式をshadowで比較検証することを推奨する。
 
 ## 優先度まとめ
 
-1. モメンタムスコアの相対リターン化（対TOPIX/業種平均）を検討し、forward validation結果を市場地合い別に層別する
-2. Position Exit Monitorのアラート重複排除（状態遷移時のみ通知）
+1. モメンタムスコアの相対化（対TOPIX/業種平均）をabsolute/TOPIX相対/業種相対のshadow A/B/Cとして検証し、forward validation結果を市場地合い別に層別する
+2. ~~Position Exit Monitorのアラート重複排除（状態遷移時のみ通知）~~ → 対応済み
 3. yfinance単独依存のリスク軽減策（監視強化 or 代替ソース検討）
 4. `STRATEGY_VERSION` 切替時のrunbook整備
-5. 分割時のVolume歪み、Google Sheets書き込みの非原子性は優先度低のまま許容可能
+5. 分割時のVolume歪み、Google Sheets書き込みの非原子性は優先度低のまま許容可能（Google Sheets書き込みの原子化はREQ-026で対応済み）
 
 ## 検証
 
@@ -82,6 +82,8 @@
 ## 参考文献・一次情報
 
 - Jegadeesh, N., & Titman, S. (1993). *Returns to Buying Winners and Selling Losers: Implications for Stock Market Efficiency.*
+- Moskowitz, T. J., & Grinblatt, M. (1999). *Do Industries Explain Momentum?*
+- Fama, E. F., & French, K. R. (2012). *Size, Value, and Momentum in International Stock Returns.*
 - Jegadeesh, N. (1990). *Evidence of Predictable Behavior of Security Returns.*
 - Lehmann, B. (1990). *Fads, Martingales, and Market Efficiency.*
 - George, T. J., & Hwang, C.-Y. (2004). *The 52-Week High and Momentum Investing.*

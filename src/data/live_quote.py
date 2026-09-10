@@ -1,4 +1,5 @@
 """Best-effort market data for the manual position exit monitor."""
+
 from __future__ import annotations
 
 import math
@@ -7,11 +8,15 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
 import pandas as pd
 import yfinance as yf
 
+from src.data.market_calendar import TSE_CALENDAR
+
 JST = ZoneInfo("Asia/Tokyo")
-STALE_QUOTE_THRESHOLD_MINUTES = 60
+STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION = 10
+STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION = 60
 
 
 @dataclass(frozen=True)
@@ -57,9 +62,7 @@ def _split_ratios(frame: pd.DataFrame) -> dict[date, float]:
         if "Stock Splits" in frame
         else pd.Series(0.0, index=frame.index)
     )
-    if values.isna().any() or any(
-        not math.isfinite(float(value)) or float(value) < 0 for value in values
-    ):
+    if values.isna().any() or any(not math.isfinite(float(value)) or float(value) < 0 for value in values):
         raise ValueError("split ratios must be finite and non-negative")
     ratios: dict[date, float] = {}
     for timestamp, value in values.items():
@@ -87,9 +90,7 @@ def split_adjust_ohlc(history: pd.DataFrame, as_of: date) -> pd.DataFrame:
         if column not in frame:
             continue
         frame[column] = [
-            float(value) / _later_split_factor(ratios, timestamp.date(), as_of)
-            if pd.notna(value)
-            else float("nan")
+            float(value) / _later_split_factor(ratios, timestamp.date(), as_of) if pd.notna(value) else float("nan")
             for timestamp, value in pd.to_numeric(frame[column], errors="coerce").items()
         ]
     return frame
@@ -119,21 +120,22 @@ def fetch_split_adjusted_history(
             pd.Series(dtype=float),
         )
 
+    if not {"High", "Close"}.issubset(history.columns):
+        raise ValueError("daily history is missing High or Close")
     frame = split_adjust_ohlc(history, current_date)
     row_dates = pd.Series(frame.index.date, index=frame.index)
     adjusted_entry /= _later_split_factor(_split_ratios(frame), purchase_date, current_date)
-    prior_mask = row_dates < current_date
+    prior_mask = (row_dates > purchase_date) & (row_dates < current_date)
     prior = frame.loc[prior_mask]
-    if prior.empty:
-        if purchase_date < current_date:
-            raise ValueError("prior confirmed daily history is missing")
-        return SplitAdjustedHistory(
-            adjusted_entry,
-            pd.Series(dtype=float),
-            pd.Series(dtype=float),
-        )
-    if not {"High", "Close"}.issubset(prior.columns):
-        raise ValueError("daily history is missing High or Close")
+    calendar = xcals.get_calendar(TSE_CALENDAR)
+    expected_dates = {
+        timestamp.date()
+        for timestamp in calendar.sessions_in_range(purchase_date.isoformat(), current_date.isoformat())
+        if purchase_date < timestamp.date() < current_date
+    }
+    actual_dates = set(prior.index.date)
+    if actual_dates != expected_dates:
+        raise ValueError("prior confirmed daily history is missing")
 
     return SplitAdjustedHistory(
         entry_price=adjusted_entry,
@@ -142,8 +144,8 @@ def fetch_split_adjusted_history(
     )
 
 
-def fetch_today_quote(ticker: str) -> TodayQuote | None:
-    """Build a coherent quote from timestamped one-minute bars."""
+def fetch_today_bars(ticker: str) -> pd.DataFrame | None:
+    """Return today's timestamped one-minute bars in JST."""
     try:
         frame = yf.Ticker(ticker).history(
             period="1d",
@@ -159,16 +161,36 @@ def fetch_today_quote(ticker: str) -> TodayQuote | None:
             return None
         frame = frame.copy()
         frame.index = _jst_index(frame.index)
+        frame = frame.sort_index()
         now = _now_jst()
         today = frame.loc[[timestamp.date() == now.date() for timestamp in frame.index]]
         if today.empty or today.index[-1] > now:
             return None
-        opening = _positive(today["Open"].iloc[0])
-        high = _positive(pd.to_numeric(today["High"], errors="coerce").max())
-        low = _positive(pd.to_numeric(today["Low"], errors="coerce").min())
-        last = _positive(today["Close"].iloc[-1])
-        if not low <= min(opening, last) <= max(opening, last) <= high:
-            return None
-        return TodayQuote(opening, high, low, last, today.index[-1].isoformat())
+        return today
     except Exception:  # noqa: BLE001 - provider and malformed response failures are equivalent here
         return None
+
+
+def build_today_quote(bars: pd.DataFrame) -> TodayQuote | None:
+    """Build a coherent aggregate quote from one-minute bars."""
+    try:
+        if bars.empty or not {"Open", "High", "Low", "Close"}.issubset(bars.columns):
+            return None
+        frame = bars.sort_index()
+        if pd.DatetimeIndex(frame.index).tz is None:
+            return None
+        opening = _positive(frame["Open"].iloc[0])
+        high = _positive(pd.to_numeric(frame["High"], errors="coerce").max())
+        low = _positive(pd.to_numeric(frame["Low"], errors="coerce").min())
+        last = _positive(frame["Close"].iloc[-1])
+        if not low <= min(opening, last) <= max(opening, last) <= high:
+            return None
+        return TodayQuote(opening, high, low, last, frame.index[-1].isoformat())
+    except Exception:  # noqa: BLE001 - malformed bars are unusable as a quote
+        return None
+
+
+def fetch_today_quote(ticker: str) -> TodayQuote | None:
+    """Build a coherent quote from timestamped one-minute bars."""
+    bars = fetch_today_bars(ticker)
+    return None if bars is None else build_today_quote(bars)

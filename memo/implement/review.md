@@ -1,23 +1,26 @@
-# Phase 2 実装計画レビュー（最終）
+# Phase 4A 実装レビュー
 
-確認日: 2026-09-09
-対象: `memo/implement/proposal.md` REQ-008〜013, 015, 016 / 更新後の `memo/implement/plan.md`
+確認日: 2026-09-10
+対象: `memo/implement/proposal.md` REQ-023〜026 / `memo/implement/plan.md` / 実装差分
 
 ## 判定
 
-**実装可。追加指摘なし。**
+**PASS。blocking issueなし。**
 
 ## 確認結果
 
-- REQ-008〜013, 015, 016の要件と受入条件が実装ステップ・テスト・完了条件へ対応している。
-- Paired benchmarkはtrade単位で実entry/exit日を使い、欠損補完後の日付逆転も拒否する設計になっている。
-- Peak Giveback、Peak Capture Ratio、Early Exit Returnは`TradeResult`から明細・集計まで一貫して扱える。
-- Cluster bootstrapはdate/ticker依存、固定seed、クラスタ不足を扱い、score bandとregimeの件数は評価母集団と一致する。
-- 20営業日regime用の過去価格取得、21本のClose定義、0%・データ不足時の分類が明記されている。
-- Explosion Recallは4分類の共有価格取得、baseline価格欠損、空集合、最終report接続、CI実行まで定義されている。
-- 既存artifactの`groups`配下への構造変更に本番コード上のconsumerはなく、計画記載どおり許容可能。
+- REQ-023: 当日1分足を1回だけ取得し、全バー検証後に時系列でStop判定してからHWMを更新する。entry日・当日のdaily rowを除外し、確定日足の部分欠落もTSE session集合との比較でfail-closedにする。
+- REQ-024: 取引時間中と大引け後30分以内は10分、それ以外は60分のstale閾値を使う。15:35実行時の14:40 quoteはstale、15:30 quoteは正常となる結合経路を確認した。
+- REQ-025: `(ticker, entry_date)`で前回状態を参照し、継続triggerの通知を抑止する。stale/errorでは状態を維持し、Slack失敗時に未通知状態を保存して次回runで再送する。
+- REQ-026: 「状況」シートの消去・grid拡張・全件書込みを1回の`spreadsheets.batchUpdate`へまとめ、値型を明示して数式解釈を防ぐ。
+- REQ-027は`plan_req027.md`へ分離済みで、今回の実装対象外。
 
-## 実装時の留意事項
+## 検証
 
-- `src/evaluation/inflection_learning.py`が実装着手前にmainへ入っていないことを計画どおり再確認する。
-- 実データ実行時間を測定し、現行30分のActions timeoutを超える場合だけ延長する。
+- 全テスト: 182 passed、coverage 91.58%
+- 対象Ruff: PASS
+- 対象mypy（CI同様の`--ignore-missing-imports`）: PASS
+- 独立コードレビュー: PASS
+- Google Sheets、Slack、yfinanceはテストでmockし、実サービスへの副作用なし
+
+Harnessの`verify.py`は既存の`.codex/harness/commands.json`が未初期化のため実行不能だった。代わりにリポジトリ既定の全pytest、Ruff、mypyを直接実行した。

@@ -87,6 +87,7 @@ python -m pip install -e ".[dev]"
 | `test.yml` | Python regression、ruff、現行経路の mypy と coverage |
 | `inflection_shadow.yml` | 平日の日次 scan、暗号化 snapshot の commit、失敗時 Slack 通知 |
 | `forward_validation.yml` | 週次および関連 PR の forward validation |
+| `position_monitor.yml` | 平日3回（9:03/12:35/15:35 JST、best-effort）のPosition Exit Monitor。保有銘柄（Googleスプレッドシート）のTrailing Stop状況を評価しSlack通知（実装済み・本番運用中） |
 
 ローカルの主な確認コマンド:
 

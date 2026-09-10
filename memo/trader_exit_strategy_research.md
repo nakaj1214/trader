@@ -5,11 +5,12 @@
 - 初回調査日: 2026-09-08
 - 最終確認日: 2026-09-08
 - 今回の変更: 実コードとの照合、検証上の注意点、外部サービス、Trailing Exitの実装状況を反映
-- 追記（同日）: 証券会社（SBI証券・手動売買）、台帳（Googleスプレッドシート）、通知（Slack）、実行基盤（GitHub Actions・平日3回/日・best-effort）を決定し、実装計画 [`memo/implement/plan.md`](implement/plan.md) を作成・レビュー反映済み（未実装）。これに伴い6章・12章・13章・14章を更新した。
+- 追記（同日）: 証券会社（SBI証券・手動売買）、台帳（Googleスプレッドシート）、通知（Slack）、実行基盤（GitHub Actions・平日3回/日・best-effort）を決定し、実装計画 [`memo/implement/plan.md`](implement/plan.md) を作成・レビュー反映済み。これに伴い6章・12章・13章・14章を更新した。
+- 追記（2026-09-10）: Position Exit Monitor（`scripts/run_position_monitor.py`、`.github/workflows/position_monitor.yml`）は**実装済み・本番運用中**。以降、状態表記は `未実装 / 実装済み / 検証中 / 本番採用` の4段階で統一する。
 
 ## 1. 結論
 
-現在の `trader` は、**上昇前の買い候補を発見し、固定期間と単純なTrailing Stopを将来検証する仕組み**である。ライブの保有ポジション、高値更新、分割利確、売却アラートを管理する仕組みはまだない。
+現在の `trader` は、**上昇前の買い候補を発見し、固定期間と単純なTrailing Stopを検証する仕組み**である。ライブの保有ポジション監視・高値更新・売却アラート（Position Exit Monitor）は**実装済み**。段階利確（複数回に分けた部分利確）を管理する仕組みはまだない。
 
 「最高値そのもので売る」ことは将来情報なしには不可能であるため、目標は **最高値を更新している間は保有し、事前に定めたピークアウト条件で退出して、利益の返上を抑えること**に置く。
 
@@ -18,7 +19,7 @@
 - 終値ベース指標に加え、日中 High/Low ベースの MFE/MAE とTrailing Stopの売却結果を記録する。
 - 旧パイプラインの損切り機能は `archive/legacy/` にあり、現行経路では使われない。
 - 最初に作るべきものはリアルタイム発注ではなく、日足 High/Low を使う Exit 専用バックテストである。
-- 保有銘柄の売却タイミング通知（Position Exit Monitor）は、証券会社API連携や自動売買を行わず、Googleスプレッドシートを台帳、Slackを通知先とする構成で実装計画済みである（[`memo/implement/plan.md`](implement/plan.md)、未実装）。バックテストで検証済みのTrailing Stop判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）をライブ監視にもそのまま適用し、実勢価格と現在値の鮮度を扱う専用の取得契約を設ける設計にレビューで修正済み。
+- 保有銘柄の売却タイミング通知（Position Exit Monitor）は、証券会社API連携や自動売買を行わず、Googleスプレッドシートを台帳、Slackを通知先とする構成で**実装済み・本番運用中**（`scripts/run_position_monitor.py`、実装計画は[`memo/implement/plan.md`](implement/plan.md)）。バックテストで検証済みのTrailing Stop判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）をライブ監視にもそのまま適用し、実勢価格と現在値の鮮度を扱う専用の取得契約を設ける設計にレビューで修正済み。
 
 ## 2. 現在の本番フロー
 
@@ -119,7 +120,7 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 
 固定率のTrailing Stopは実装済みで、売却線を前日までの確定済みHigh Water Markから計算する。当日Highで線を引き上げて同日Lowで売る未来情報混入は行わず、gap時はStop価格ではなく当日始値で退出する。ATR / Chandelierは未実装である。
 
-ライブ監視版（Position Exit Monitor、計画: [`memo/implement/plan.md`](implement/plan.md)）は、backtestと同じ判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）を無期限ポジションへ適用する設計にした。Close最大値・最新Closeだけで判定する簡易版は、backtestで検証した戦略と別物になるためレビューで却下した。既定のTrailing Stop率（15%）は、forward validationでout-of-sample優位性が確認できるまで「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
+ライブ監視版（Position Exit Monitor、実装済み: `scripts/run_position_monitor.py`。実装計画は[`memo/implement/plan.md`](implement/plan.md)）は、backtestと同じ判定式（前日確定Highを起点とするHWM、当日Open gap／Low到達）を無期限ポジションへ適用する設計にした。Close最大値・最新Closeだけで判定する簡易版は、backtestで検証した戦略と別物になるためレビューで却下した。既定のTrailing Stop率（15%）は、forward validationでout-of-sample優位性が確認できるまで「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
 
 ### 8.2 段階利確 + Trailing
 
@@ -181,7 +182,7 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 | 後回し | [J-Quants API TDnet 文書アドオン](https://www.jpx.co.jp/corporate/news/news-releases/6020/20260518-01.html) | 下方修正など適時開示を Exit の補助イベントにする | 日中配信だが、まず価格ベースの Exit を検証し、追加価値を分離評価してから使う |
 | 不採用 | [J-Quants Pro](https://www.jpx.co.jp/markets/other-data-services/j-quants-pro/) | 法人向けの長期・高機能データ | 法人向けで現段階の個人用 shadow 検証には過剰 |
 
-推奨する最短経路は、**既存の日足データでExitルールを比較 → Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日3回/日、best-effort）でPosition Exit Monitorを実装 → 必要な取引だけJ-Quants分足/Tickで再検証**である。broker APIの実装は行わない（自動売買をしない方針のため）。
+採用した経路は、**既存の日足データでExitルールを比較 → Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日3回/日、best-effort）でPosition Exit Monitorを実装（実装済み） → 必要な取引だけJ-Quants分足/Tickで再検証**である。broker APIの実装は行わない（自動売買をしない方針のため）。
 
 ## 13. 推奨する調査・実装順序
 
@@ -193,7 +194,7 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 | 一部完了 | ポジション単位評価 | 同一銘柄の重複signalは統合済み。銘柄間の資金制約・資産曲線は未実装 |
 | A | out-of-sample / forward validation | パラメータ決定期間と評価期間を分離する |
 | B | 必要箇所だけ分足/Tick 再検証 | 日足で曖昧な約定と日中 Exit を確認する |
-| 計画確定・未実装 | 人間確認付き売却アラート（Position Exit Monitor） | Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日9:03/12:35/15:35 JST、best-effort）の構成で実装計画をレビュー反映済み（[`memo/implement/plan.md`](implement/plan.md)）。実勢価格と調整後終値の尺度不一致、現在値の鮮度、backtestとの判定式一致、全銘柄失敗時のfail-open防止をレビューで修正済み。着手待ち |
+| 実装済み | 人間確認付き売却アラート（Position Exit Monitor） | Googleスプレッドシート台帳＋yfinance best-effort現在値＋Slack通知＋GitHub Actions（平日9:03/12:35/15:35 JST、best-effort）の構成で実装済み・本番運用中（`scripts/run_position_monitor.py`、実装計画は[`memo/implement/plan.md`](implement/plan.md)）。実勢価格と調整後終値の尺度不一致、現在値の鮮度、backtestとの判定式一致、全銘柄失敗時のfail-open防止をレビューで修正済み |
 | 不採用 | 証券API発注 | SBI証券を選定し自動売買を行わない方針としたため対象外。売買は常にユーザーが手動実行する |
 
 ## 14. 残っている問題と判断
@@ -204,11 +205,11 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 2. MFE/MAE は実装済みで、Trailing結果と併せて比較できる。
 3. gap時の始値退出と通常・悲観の総執行コスト比較は実装済み。制限値幅、板の流動性による未約定はデータ不足のため残る。
 4. 同一銘柄の重複保有は `position_summary` で除外済み。銘柄間の資金制約とportfolio drawdownはまだ表さない。
-5. 保有銘柄の状態を管理する ledger と、結果を人へ届ける consumer は、Googleスプレッドシート＋Slackによる実装計画（[`memo/implement/plan.md`](implement/plan.md)）を作成・レビュー反映済みだが、まだ実装していない。
+5. 保有銘柄の状態を管理し、結果を人へ届けるconsumer（Position Exit Monitor、Googleスプレッドシート＋Slack）は**実装済み**（実装計画: [`memo/implement/plan.md`](implement/plan.md)）。実売買履歴を残すTrade Ledgerは、実売買が発生してから記録対象が生まれるため未着手（`memo/implement/plan_req027.md`参照）。
 6. 日次 GitHub Actions は真のリアルタイム監視には使えないため、上記計画では平日3回/日（best-effort、定刻保証なし）への妥協点で運用する。分単位・秒単位の反応が必要になった場合は常駐プロセス等への切り替えを別途検討する。
 7. Entry 側の欠損年度を複数年 YoY と扱う問題は修正済み。
 
-したがって、次はsnapshotを蓄積し、実装済みTrailingが固定期間基準よりout-of-sampleで改善するかを確認しつつ、Position Exit Monitorの実装（計画: [`memo/implement/plan.md`](implement/plan.md)）に着手できる。優位性が確認できるまでATR等のルール追加、自動売却は行わない。Position Exit Monitorの既定Trailing Stop率（15%）も、優位性確認前は「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
+したがって、次はsnapshotを蓄積し、実装済みTrailingが固定期間基準よりout-of-sampleで改善するかを確認する。Position Exit Monitor自体は実装済み・運用中のため、優位性が確認できるまでATR等のルール追加、自動売却は行わない。Position Exit Monitorの既定Trailing Stop率（15%）も、優位性確認前は「検証済みの売り時シグナル」ではなく「検証用アラート」として扱う。
 
 ## 15. 確認した主なリポジトリファイル
 
@@ -223,7 +224,7 @@ scanner は、20日上昇率が +50%以上、または60日上昇率が +100%以
 - `archive/legacy/src/enrichment/sizing_enricher.py`
 - `archive/legacy/dashboard/js/index.js`
 - `archive/legacy/dashboard/js/stock.js`
-- `memo/implement/plan.md`（Position Exit Monitor 実装計画）
+- `memo/implement/plan.md`（Position Exit Monitor 実装計画。実装済み）
 - `memo/implement/review.md`（上記計画のレビュー、ブロッカー4件・反映済み）
 
 ## 16. 本レポートの適用範囲

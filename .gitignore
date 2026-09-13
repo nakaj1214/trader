@@ -35,3 +35,6 @@ artifacts/
 trader/
 # Adaptive Codex Harness writable runtime/state
 /.harness/
+
+# 個人用メモ（非公開、git管理外）
+/memo/local/

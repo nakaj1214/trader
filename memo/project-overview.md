@@ -38,7 +38,7 @@ GitHub Actions（平日 16:40 JST）
 | yfinance 一括取得 | `src/data/yfinance_prices.py` |
 | 東証営業日判定 | `src/data/market_calendar.py` |
 | snapshot 暗号化 | `src/data/snapshot_crypto.py` |
-| forward validation | `src/evaluation/inflection_forward.py`, `src/evaluation/inflection_backtest.py` |
+| forward validation | `src/evaluation/inflection_forward.py`, `src/evaluation/inflection_backtest.py`, `src/evaluation/inflection_portfolio.py` |
 
 スコアは、売上・営業利益・利益率・黒字転換・上方修正などのファンダメンタル、20日 / 60日リターン・出来高・52週高値または取得可能な上場来期間の高値などのモメンタム、過熱・営業 CF などのリスクを合成します。ニュースや材料は point-in-time-safe な取得経路がないため、本番スコアには含めません。
 
@@ -65,6 +65,8 @@ dashboard/data/inflection_candidates.enc
 REQ-018適用後のsnapshotはstrategy v3 / schema 4として`inflection/v3/`へ分離します。既存v2 snapshotは保持しますがv3のforward validationには混在させないため、評価系列は非連続です。
 
 週次検証は暗号化済み snapshot から `EARLY_CANDIDATE` のみを読み、翌営業日始値で entry、5 / 20 / 60 営業日保有、往復コスト 0.2%、TOPIX ETF (`1306.T`) 比較という固定ルールで評価します。
+
+ポートフォリオ評価は `EARLY_CANDIDATE` の60営業日保有・通常コストだけを対象に、初期資金300万円、最大8銘柄、1銘柄12.5%の固定配分で算出します。これらはユーザー未確認の既定値です。セクター上限、100株単位、ADVによる発注制限は未実装で、個別銘柄の終値欠損は日数上限なしで前方補完します。CAGRとMax Drawdownは十分なsnapshot蓄積後にのみ意味を持ちます。
 
 ## 設定・依存関係
 

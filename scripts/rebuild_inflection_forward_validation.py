@@ -38,6 +38,7 @@ from src.evaluation.inflection_forward import (
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
+from src.evaluation.inflection_portfolio import simulate_portfolio
 from src.evaluation.inflection_recall import compute_tracked_pool_explosion_recall
 
 ROUND_TRIP_COST_PCT = 0.2
@@ -50,6 +51,9 @@ DEFAULT_REQUEST_INTERVAL_SECONDS = 0.5
 TOTAL_RETURN_ADJUSTED = "total_return_adjusted"
 SPLIT_ONLY = "split_only"
 PRICE_HASH_SCHEMA_VERSION = 1
+PORTFOLIO_INITIAL_CAPITAL_JPY = 3_000_000.0
+PORTFOLIO_MAX_POSITIONS = 8
+PORTFOLIO_POSITION_SIZE_PCT = 1 / PORTFOLIO_MAX_POSITIONS
 
 
 def _fetch_adjusted_histories(
@@ -427,7 +431,16 @@ def main() -> int:
         "strategy_version": all_observations[0]["strategy_version"],
         "report_schema_version": all_observations[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",
-        "portfolio_interpretation": False,
+        "portfolio_interpretation": True,
+        "portfolio_interpretation_note": (
+            "portfolio_summary simulates EARLY_CANDIDATE signals only, with a 60-session holding "
+            "period and base transaction cost. Other horizon/exit combinations remain trade-level "
+            "evaluations. Same-day close proceeds are not reused for open entries. Sector limits are "
+            "not modeled; market exposure is diagnostic only. CAGR and drawdown are not meaningful "
+            "until sufficient snapshots accumulate. Open positions are valued with hypothetical "
+            "liquidation cost, and missing closes are forward-filled without a day limit. Initial "
+            "capital, maximum positions, and allocation are unconfirmed defaults; see config."
+        ),
         "entry_rule": "next_trading_day_open",
         "price_adjustment": {
             "horizons": TOTAL_RETURN_ADJUSTED,
@@ -443,6 +456,8 @@ def main() -> int:
             "order_book_depth_not_modeled",
             "trading_halts_not_modeled",
             "price_limit_fill_probability_not_modeled",
+            "position_capacity_not_modeled",
+            "lot_size_not_modeled",
         ],
         "same_ticker_overlap_policy": "one_open_position_per_ticker",
         "benchmark": {
@@ -480,6 +495,28 @@ def main() -> int:
             [str(signal["signal_date"]) for signal in signals],
         )
     report["groups"] = groups
+    portfolio_signals = [
+        observation
+        for observation in all_observations
+        if observation["classification"] == "EARLY_CANDIDATE"
+    ]
+    portfolio_trades = simulate_signals(
+        portfolio_signals,
+        histories,
+        holding_days=60,
+        round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+        apply_tax=False,
+    )
+    report["portfolio_summary"] = simulate_portfolio(
+        portfolio_signals,
+        portfolio_trades,
+        histories,
+        pd.DatetimeIndex(benchmark_history.index),
+        initial_capital_jpy=PORTFOLIO_INITIAL_CAPITAL_JPY,
+        max_positions=PORTFOLIO_MAX_POSITIONS,
+        position_size_pct=PORTFOLIO_POSITION_SIZE_PCT,
+        round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+    )
 
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)

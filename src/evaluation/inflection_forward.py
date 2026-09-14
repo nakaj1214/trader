@@ -102,6 +102,8 @@ def load_inflection_signals(
                 "date": market_date,
                 "score": score,
                 "classification": classification,
+                "market": candidate.get("market"),
+                "avg_turnover_20d_jpy": candidate.get("avg_turnover_20d_jpy"),
                 "strategy_version": strategy_version,
                 "report_schema_version": schema_version,
                 "source_commit_sha": source_commit,

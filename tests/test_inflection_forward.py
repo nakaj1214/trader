@@ -54,7 +54,13 @@ def _payload() -> dict:
         "data_policy": {"jquants_plan": "free", "jquants_data_delay_weeks": 12},
         "runtime_versions": {"yfinance": "1.7.0", "pandas": "3.0.5"},
         "candidates": [
-            {"ticker": "1111.T", "classification": "EARLY_CANDIDATE", "score": 80.0},
+            {
+                "ticker": "1111.T",
+                "classification": "EARLY_CANDIDATE",
+                "score": 80.0,
+                "market": "Prime",
+                "avg_turnover_20d_jpy": 50_000_000.0,
+            },
             {"ticker": "2222.T", "classification": "WATCH", "score": 60.0},
         ],
     }
@@ -75,6 +81,8 @@ def test_load_inflection_signals_filters_to_early_candidates(tmp_path) -> None:
             "date": "2026-09-08",
             "score": 80.0,
             "classification": "EARLY_CANDIDATE",
+            "market": "Prime",
+            "avg_turnover_20d_jpy": 50_000_000.0,
             "strategy_version": "jp-inflection-shadow-v1",
             "report_schema_version": 3,
             "source_commit_sha": "abc123",
@@ -307,6 +315,20 @@ def test_price_hashes_are_stable_and_only_common_changed_dates_are_reported() ->
     assert _changed_price_rows(previous, {"1111.T": {"split_only": appended}}) == [
         {"ticker": "1111.T", "price_basis": "split_only", "date": "2026-09-09"}
     ]
+
+
+def test_load_inflection_signals_keeps_optional_market_fields_backward_compatible(tmp_path) -> None:
+    snapshot_dir = tmp_path / "inflection"
+    snapshot_dir.mkdir()
+    payload = _payload()
+    payload["candidates"][0].pop("market")
+    payload["candidates"][0].pop("avg_turnover_20d_jpy")
+    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+
+    signal = load_inflection_signals(snapshot_dir, encryption_secret=SECRET)[0]
+
+    assert signal["market"] is None
+    assert signal["avg_turnover_20d_jpy"] is None
 
 
 def test_load_inflection_signals_accepts_v3_schema4_snapshot(tmp_path) -> None:
@@ -620,3 +642,10 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     assert report["groups"]["early_candidate"]["signal_count"] == 1
     assert report["groups"]["watch"]["signal_count"] == 1
     assert report["groups"]["none"]["signal_count"] == 1
+    assert report["portfolio_interpretation"] is True
+    portfolio = report["portfolio_summary"]
+    assert portfolio["entered_position_count"] == 1
+    assert portfolio["completed_trade_count"] == 1
+    assert portfolio["open_positions_at_cutoff_count"] == 0
+    assert portfolio["config"]["round_trip_cost_pct"] == 0.2
+    assert portfolio["equity_curve"]

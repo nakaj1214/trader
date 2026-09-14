@@ -8,10 +8,12 @@ on:
       - "src/evaluation/inflection_forward.py"
       - "src/evaluation/inflection_portfolio.py"
       - "src/evaluation/inflection_recall.py"
+      - "src/evaluation/inflection_learning.py"
       - "src/data/live_quote.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
       - "scripts/rebuild_inflection_forward_validation.py"
+      - "scripts/rebuild_inflection_learning.py"
       - "dashboard/data/inflection/**"
       - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
@@ -19,6 +21,7 @@ on:
       - "tests/test_inflection_forward.py"
       - "tests/test_inflection_portfolio.py"
       - "tests/test_inflection_recall.py"
+      - "tests/test_inflection_learning.py"
       - "tests/test_live_quote.py"
       - ".github/workflows/forward_validation.yml"
   schedule:
@@ -62,10 +65,12 @@ jobs:
             tests/test_inflection_forward.py \
             tests/test_inflection_portfolio.py \
             tests/test_inflection_recall.py \
+            tests/test_inflection_learning.py \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.evaluation.inflection_forward \
             --cov=src.evaluation.inflection_portfolio \
             --cov=src.evaluation.inflection_recall \
+            --cov=src.evaluation.inflection_learning \
             --cov=src.data.snapshot_crypto \
             --cov=src.strategy.inflection \
             --cov-fail-under=80 \
@@ -96,6 +101,21 @@ jobs:
         with:
           name: inflection-forward-summary
           path: artifacts/inflection_forward_validation_summary.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Build inflection learning report
+        if: github.event_name == 'schedule'
+        env:
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
+        run: python scripts/rebuild_inflection_learning.py
+
+      - name: Preserve aggregate learning summary
+        if: github.event_name == 'schedule'
+        uses: actions/upload-artifact@v7
+        with:
+          name: inflection-learning-summary
+          path: artifacts/inflection_learning_summary.json
           if-no-files-found: ignore
           retention-days: 90
 

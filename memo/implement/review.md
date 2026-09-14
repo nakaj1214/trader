@@ -1,25 +1,27 @@
-# REQ-014 実装修正計画レビュー（5回目）
+# REQ-036 実装・最終レビュー（5回目）
 
 確認日: 2026-09-14
 
-対象: `memo/implement/plan_req014.md`
+対象: `memo/implement/plan_req036.md`
 
 ## 判定
 
 **VERDICT: PASS**
 
-blocking issueはない。前回までの指摘に対し、計画は以下を整合させている。
+前回指摘したboolean完了条件の矛盾は解消済み。更新計画にblocking issueはなく、計画どおり実装した最終差分にも追加のblocking findingはない。
 
-- `exit_date`の有無をentry選択に使わず、未成熟positionを評価基準日まで資金・slotへ反映するpoint-in-time設計
-- `entered_positions`と`completed_trades`を分離し、Equity Curve・Turnover・exposure・trade summaryの母集団を明確化
-- 未決済positionの仮想清算価値を、既存の完了tradeと同じentry元本基準の往復cost控除へ統一
-- costのfinite/range検証、config出力、値上がり・値下がりを含む回帰テスト4b〜4e
-- `memo/project-overview.md`と`forward_validation.yml`を具体的な変更対象に確定
-- 既知の`ffill`制約、未確認パラメータ、限定されたportfolio対象範囲をレポートへ明記
+## 実装確認
 
-## 実装後確認
+- schema 4限定・複数strategy version許容・必須booleanのfail-closed拒否を実装した。
+- optional数値の非finite正規化、実entry/exit日によるbenchmark比較と重複排除、高値factorと予測ミス理由の分離を実装した。
+- yfinanceのlogger/stdout/stderr秘匿、件数のみの失敗通知、空snapshotでもフル・公開summaryを生成するCLIを実装した。
+- 週次workflow配線、公開summaryだけのartifact化、`memo/project-overview.md`への運用方針追記を実装した。
 
-- point-in-time・cost・未決済positionの修正と、回帰テスト4b〜4e、レポート・文書・CI配線を反映済み。
-- 本計画に沿った実装依頼をもって、セクター上限・dashboard配線をREQ-014bへ分離する方針を承認済みとする。
-- forward-validation対象テスト88件、coverage 91.95%、Ruff、mypy（`--ignore-missing-imports`）はPASS。
-- 外部価格取得と生成物更新を伴う実データoperator-runは未実施。
+## 検証状況
+
+- `tests/test_inflection_learning.py`: 41 passed、対象module coverage 92.14%
+- 既存回帰 `tests/test_inflection_forward.py tests/test_inflection_strategy.py`: 42 passed
+- workflow相当の対象群: 127 passed、coverage 91.88%
+- Ruff format/check、mypy: PASS
+- `scripts/rebuild_inflection_learning.py`: v3 snapshot 0件でフル・公開summaryの両方を生成し正常終了
+- テスト内のyfinanceは全てmockし、外部APIアクセスなし

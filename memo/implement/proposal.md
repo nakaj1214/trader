@@ -307,6 +307,37 @@
 
 ---
 
+## 別ブランチからの機能移植（自己改善学習）
+
+> 入力元: `origin/feat/self-learning-postmortem`ブランチ（2026-09-08にmainから分岐、2026-09-09で開発停止、未マージ）。
+> 単純なmergeは不可（分岐後に双方が大きく発散: mainはREQ-018でv3 snapshot分離・`near_52w_high`/`near_listing_high`分割・REQ-014ポートフォリオ評価などを独立実装済み）。
+> 現行mainの構造に合わせた**移植**として要件化する。
+
+### REQ-036: 自己改善学習（Inflection Self-Learning Postmortem）が未実装
+
+- **対象ファイル**:
+  - 新規: `src/evaluation/inflection_learning.py`, `scripts/rebuild_inflection_learning.py`, `tests/test_inflection_learning.py`
+  - 参照のみ（変更なし想定）: `src/evaluation/inflection_backtest.py`（`simulate_signal`）, `src/evaluation/inflection_forward.py`（`BENCHMARK_TICKER`, `benchmark_returns_by_signal_date`, `SnapshotLoadError`）
+  - 確認要: `.github/workflows/forward_validation.yml`または新規workflow
+- **Before（現状）**: 過去のshadow snapshot（`dashboard/data/inflection/v3/*.enc`）は forward validation のTrailing Stop/horizon別集計にのみ使われており、「どの予測が外れたか」「どのfactorが実際に爆発的上昇と相関していたか」を事後にまとめて学習する仕組みがない。EARLY_CANDIDATE以外の候補（WATCH等）も評価対象外のまま捨てられている。
+- **After（期待）**: `origin/feat/self-learning-postmortem`ブランチの設計を移植し、以下を実現する。
+  - `load_inflection_learning_observations()`的な関数が、EARLY_CANDIDATE以外も含む全deep-scan candidateをsnapshotから読み込む。
+  - 各観測を5/20/60/120営業日後まで事後評価し（TOPIX相対の超過リターン、`EXPLOSION_MAX_RETURN_PCT`基準の爆発判定、`_prediction_miss_reasons`相当の予測ミス理由）、`factor_labels`（classification/market/score帯/リターン帯/出来高帯/reasons）ごとに統計を集計する。
+  - 統計的に十分な観測数（`PROMOTION_MIN_OBSERVATIONS`相当）とlift基準を満たすfactorのみを「次期strategy versionへの昇格候補」としてレポートに記録し、**本番のスコアリング・戦略重みを自動更新しない**（`automatic_production_weight_update: False`と同等の設計を維持する）。
+  - `public_learning_summary()`相当のticker非公開集計版を、dashboard等の公開先に出す場合は分離する。
+- **既知の非互換（移植時に必ず対応すること）**:
+  1. ブランチのコードは`candidate.breakout_52w`を前提にしているが、現行mainには存在しない（`near_52w_high`/`near_listing_high`に分割済み）。factor labelの生成ロジックをこの2フィールドに合わせて書き換える。
+  2. ブランチのコードは`dashboard/data/inflection/*.enc`を直接globしているが、現行mainはREQ-018以降`dashboard/data/inflection/v3/`配下に保存し、v2とv3は非連続として扱っている（forward validationと同じ前提）。学習対象をv3ディレクトリに向け、v2/v3混在時の扱い（forward validationに倣い分離するか、v3のみ対象にするか）を決める。
+  3. CI配線先（`forward_validation.yml`へ相乗りするか専用workflowにするか）を決める。相乗りする場合はCI予算（`timeout-minutes`）への影響を見積もる。
+- **受入条件**:
+  - `src/evaluation/inflection_learning.py`が現行mainのsnapshot形式（v3、`near_52w_high`/`near_listing_high`）から観測を読み込み、例外なく学習レポートを生成する。
+  - 昇格候補（`lessons`相当）が本番の`score_inflection()`等へ自動反映されないことをテストで保証する。
+  - `tests/test_inflection_learning.py`が既存のテスト規約（実APIに接続しない合成データ）で移植され、`pytest`が成功する。
+  - CI配線（週次実行）が確定し、実行時間・coverage設定に新規ファイルが含まれる。
+- **備考**: `[要確認: v2/v3混在時の扱い（forward validationと同じ「v3のみ対象・非連続を明記」でよいか）]` `[要確認: CI配線先はforward_validation.ymlへの相乗りか専用workflowか]` `[要確認: public_learning_summaryの出力先（dashboard新規ページか、既存artifactへの追加か）]`
+
+---
+
 ## 完了済み・保留中
 
 ### 完了済み

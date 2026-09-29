@@ -9,6 +9,7 @@ from src.screening.inflection_live import (
     LIVE_MEASURABLE_MAX_SCORE,
     REPORT_SCHEMA_VERSION,
     STRATEGY_VERSION,
+    PriceDataRetryExhausted,
     _classify,
     _fundamental_features,
     _normalize_available_score,
@@ -210,8 +211,13 @@ def test_fundamentals_do_not_treat_a_two_year_gap_as_yoy() -> None:
 
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
     prices = {"1111.T": _price_frame()}
+    expected_date = str(prices["1111.T"].index[-1].date())
     with (
         patch("src.screening.inflection_live.fetch_price_data", return_value=prices) as fetch,
+        patch(
+            "src.screening.inflection_live.expected_tse_session_date",
+            return_value=expected_date,
+        ) as expected_session,
         patch.dict("os.environ", {"GITHUB_SHA": "abc123", "JQUANTS_PLAN": "free"}),
     ):
         report = scan_japan_inflection(
@@ -221,6 +227,7 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
         )
 
     fetch.assert_called_once_with(["1111.T"], 252)
+    assert expected_session.call_args.args[0] == report["generated_at"]
     assert report["universe_count"] == 1
     assert report["price_data_count"] == 1
     assert report["technical_usable_count"] == 1
@@ -249,6 +256,9 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
 
 def test_scan_reports_market_coverage_by_stable_market_code() -> None:
     client = FakeJQuantsClient()
+    current = _price_frame()
+    short = current.tail(20)
+    expected_date = str(current.index[-1].date())
     with (
         patch.object(
             client,
@@ -257,29 +267,32 @@ def test_scan_reports_market_coverage_by_stable_market_code() -> None:
                 {"Code": "11110", "Mkt": "0111", "MktNm": "プライム"},
                 {"Code": "22220", "Mkt": "0112", "MktNm": "スタンダード"},
                 {"Code": "33330", "Mkt": "0113", "MktNm": "グロース"},
+                {"Code": "44440", "Mkt": "0113", "MktNm": "グロース"},
             ],
         ),
         patch(
             "src.screening.inflection_live.fetch_price_data",
-            return_value={"1111.T": _price_frame(), "2222.T": _price_frame(20)},
+            return_value={"1111.T": current, "2222.T": short, "3333.T": short},
         ),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
     ):
         report = scan_japan_inflection(client=client, deep_candidates=0)
 
     assert report["market_coverage"] == {
         "Prime": {"universe": 1, "price_data": 1, "technical_usable": 1, "latest_date_count": 1},
-        "Standard": {"universe": 1, "price_data": 1, "technical_usable": 0, "latest_date_count": 0},
-        "Growth": {"universe": 1, "price_data": 0, "technical_usable": 0, "latest_date_count": 0},
+        "Standard": {"universe": 1, "price_data": 1, "technical_usable": 0, "latest_date_count": 1},
+        "Growth": {"universe": 2, "price_data": 1, "technical_usable": 0, "latest_date_count": 1},
     }
-    assert report["universe_count"] == 3
-    assert report["price_data_count"] == 2
+    assert report["universe_count"] == 4
+    assert report["price_data_count"] == 3
     assert report["technical_usable_count"] == 1
-    assert report["latest_price_date_count"] == 1
+    assert report["latest_price_date_count"] == 3
 
 
-def test_scan_reports_latest_date_distribution_and_stale_tickers() -> None:
+def test_scan_retries_only_stale_tickers_and_recovers() -> None:
     current = _price_frame()
     stale = _price_frame().iloc[:-1]
+    expected_date = str(current.index[-1].date())
     client = FakeJQuantsClient()
     with (
         patch.object(
@@ -292,13 +305,142 @@ def test_scan_reports_latest_date_distribution_and_stale_tickers() -> None:
         ),
         patch(
             "src.screening.inflection_live.fetch_price_data",
-            return_value={"1111.T": current, "2222.T": stale},
+            side_effect=[{"1111.T": current, "2222.T": stale}, {"2222.T": current}],
+        ) as fetch,
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict(
+            "os.environ",
+            {"INFLECTION_PRICE_RETRY_COUNT": "1", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"},
         ),
     ):
         report = scan_japan_inflection(client=client, deep_candidates=0)
 
-    assert report["latest_date_histogram"] == {
-        str(current.index[-1].date()): 1,
-        str(stale.index[-1].date()): 1,
+    assert fetch.call_args_list[1].args == (["2222.T"], 252)
+    assert report["latest_date_histogram"] == {expected_date: 2}
+    assert report["stale_tickers_sample"] == []
+
+
+def test_scan_retries_missing_tickers_when_price_coverage_is_low() -> None:
+    current = _price_frame()
+    expected_date = str(current.index[-1].date())
+    client = FakeJQuantsClient()
+    issues = [
+        {"Code": f"{number}{number}{number}{number}0", "Mkt": "0111", "MktNm": "Prime"}
+        for number in range(1, 5)
+    ]
+    with (
+        patch.object(client, "listed_issues", return_value=issues),
+        patch(
+            "src.screening.inflection_live.fetch_price_data",
+            side_effect=[
+                {"1111.T": current, "2222.T": current},
+                {"3333.T": current},
+            ],
+        ) as fetch,
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict(
+            "os.environ",
+            {"INFLECTION_PRICE_RETRY_COUNT": "1", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"},
+        ),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=0)
+
+    assert fetch.call_args_list[1].args == (["3333.T", "4444.T"], 252)
+    assert report["price_data_count"] == 3
+    assert report["latest_price_date_count"] == 3
+
+
+def test_scan_recovers_on_second_retry() -> None:
+    current = _price_frame()
+    stale = current.iloc[:-1]
+    expected_date = str(current.index[-1].date())
+    client = FakeJQuantsClient()
+    with (
+        patch.object(
+            client,
+            "listed_issues",
+            return_value=[
+                {"Code": "11110", "Mkt": "0111", "MktNm": "Prime"},
+                {"Code": "22220", "Mkt": "0112", "MktNm": "Standard"},
+            ],
+        ),
+        patch(
+            "src.screening.inflection_live.fetch_price_data",
+            side_effect=[
+                {"1111.T": current, "2222.T": stale},
+                {"2222.T": stale},
+                {"2222.T": current},
+            ],
+        ) as fetch,
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict(
+            "os.environ",
+            {"INFLECTION_PRICE_RETRY_COUNT": "2", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0,0"},
+        ),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=0)
+
+    assert fetch.call_count == 3
+    assert report["latest_price_date_count"] == 2
+
+
+def test_scan_raises_diagnostic_error_after_retries_are_exhausted() -> None:
+    current = _price_frame()
+    stale = current.iloc[:-1]
+    expected_date = str(current.index[-1].date())
+    client = FakeJQuantsClient()
+    with (
+        patch.object(
+            client,
+            "listed_issues",
+            return_value=[
+                {"Code": "11110", "Mkt": "0111", "MktNm": "Prime"},
+                {"Code": "22220", "Mkt": "0112", "MktNm": "Standard"},
+            ],
+        ),
+        patch(
+            "src.screening.inflection_live.fetch_price_data",
+            side_effect=[
+                {"1111.T": current, "2222.T": stale},
+                {"2222.T": stale},
+                {"2222.T": stale},
+            ],
+        ),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict(
+            "os.environ",
+            {"INFLECTION_PRICE_RETRY_COUNT": "2", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0,0"},
+        ),
+        pytest.raises(PriceDataRetryExhausted) as raised,
+    ):
+        scan_japan_inflection(client=client, deep_candidates=0)
+
+    assert raised.value.details == {
+        "retry_exhausted": "true",
+        "expected_date": expected_date,
+        "universe": "2",
+        "missing": "0",
+        "price_data": "2",
+        "price_coverage": "100.0%",
+        "latest_coverage": "50.0%",
+        "failed_gate": "latest_coverage",
+        "attempts": "3",
     }
-    assert report["stale_tickers_sample"] == ["2222.T"]
+
+
+@pytest.mark.parametrize(
+    ("count", "waits"),
+    [("-1", ""), ("invalid", ""), ("2", "0"), ("1", "nan")],
+)
+def test_scan_rejects_invalid_retry_configuration(count: str, waits: str) -> None:
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "INFLECTION_PRICE_RETRY_COUNT": count,
+                "INFLECTION_PRICE_RETRY_WAIT_SECONDS": waits,
+            },
+        ),
+        pytest.raises(ValueError, match="retry configuration"),
+    ):
+        scan_japan_inflection(client=FakeJQuantsClient())

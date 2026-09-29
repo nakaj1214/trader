@@ -33,6 +33,15 @@ PROMOTION_MIN_OBSERVATIONS = 30
 PROMOTION_POSITIVE_LIFT = 1.35
 PROMOTION_NEGATIVE_LIFT = 0.75
 
+# schema 3 (jp-inflection-shadow-v2) used a single breakout_52w flag; schema 4
+# (jp-inflection-shadow-v3+) split it into near_52w_high/near_listing_high. Both
+# are accepted so old snapshots remain usable as learning material, but schema 3
+# rows never populate the schema-4 fields (or vice versa) so the two are never
+# silently conflated.
+LEGACY_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
+SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION)
+
 
 def _optional_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
@@ -52,8 +61,11 @@ def load_inflection_learning_observations(
     """Load every deep-scan candidate, not only EARLY_CANDIDATE signals.
 
     Strategy versions are retained per observation so learning survives strategy
-    upgrades. Only schema 4 is supported; candidate schema changes must also be
-    reflected here and in ``load_inflection_signals``.
+    upgrades. Schema 3 (legacy breakout_52w) and schema 4 (near_52w_high /
+    near_listing_high) are both supported; a schema-3 row never populates the
+    schema-4 fields and vice versa, so their differing definitions are never
+    conflated. New candidate schema changes must also be reflected here and in
+    ``load_inflection_signals``.
     """
     if not snapshot_dir.exists():
         return []
@@ -78,7 +90,7 @@ def load_inflection_learning_observations(
             or not source_commit
             or isinstance(schema_version, bool)
             or not isinstance(schema_version, int)
-            or schema_version != 4
+            or schema_version not in SUPPORTED_SCHEMA_VERSIONS
             or market_date != path.stem
             or not isinstance(storage, dict)
             or storage.get("encrypted") is not True
@@ -106,10 +118,18 @@ def load_inflection_learning_observations(
                 raise SnapshotLoadError(f"Candidate identity/score missing: {path.name}")
             if not isfinite(score) or not 0.0 <= score <= 100.0:
                 raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
-            near_52w_high = candidate.get("near_52w_high")
-            near_listing_high = candidate.get("near_listing_high")
-            if not isinstance(near_52w_high, bool) or not isinstance(near_listing_high, bool):
-                raise SnapshotLoadError(f"Invalid candidate high-proximity flags: {path.name}")
+            if schema_version == CURRENT_SCHEMA_VERSION:
+                near_52w_high = candidate.get("near_52w_high")
+                near_listing_high = candidate.get("near_listing_high")
+                if not isinstance(near_52w_high, bool) or not isinstance(near_listing_high, bool):
+                    raise SnapshotLoadError(f"Invalid candidate high-proximity flags: {path.name}")
+                legacy_breakout_52w = None
+            else:
+                legacy_breakout_52w = candidate.get("breakout_52w")
+                if not isinstance(legacy_breakout_52w, bool):
+                    raise SnapshotLoadError(f"Invalid legacy candidate breakout flag: {path.name}")
+                near_52w_high = None
+                near_listing_high = None
             key = (market_date, ticker)
             if key in observations:
                 continue
@@ -130,6 +150,7 @@ def load_inflection_learning_observations(
                 "volume_ratio_20d": _optional_float(candidate.get("volume_ratio_20d")),
                 "near_52w_high": near_52w_high,
                 "near_listing_high": near_listing_high,
+                "legacy_breakout_52w": legacy_breakout_52w,
                 "avg_turnover_20d_jpy": _optional_float(candidate.get("avg_turnover_20d_jpy")),
                 "reasons": [str(value) for value in reasons] if isinstance(reasons, list) else [],
             }
@@ -151,8 +172,6 @@ def factor_labels(observation: dict[str, Any]) -> list[str]:
     labels = [
         f"classification:{observation.get('classification')}",
         f"market:{observation.get('market') or 'unknown'}",
-        f"near_52w_high:{bool(observation.get('near_52w_high'))}",
-        f"near_listing_high:{bool(observation.get('near_listing_high'))}",
         "score_band:"
         + _bucket(
             _optional_float(observation.get("score")),
@@ -178,6 +197,15 @@ def factor_labels(observation: dict[str, Any]) -> list[str]:
             ("lt1", "1to1.25", "1.25to1.5", "1.5to2", "2to3", "ge3"),
         ),
     ]
+    near_52w_high = observation.get("near_52w_high")
+    if near_52w_high is not None:
+        labels.append(f"near_52w_high:{bool(near_52w_high)}")
+    near_listing_high = observation.get("near_listing_high")
+    if near_listing_high is not None:
+        labels.append(f"near_listing_high:{bool(near_listing_high)}")
+    legacy_breakout_52w = observation.get("legacy_breakout_52w")
+    if legacy_breakout_52w is not None:
+        labels.append(f"legacy_breakout_52w:{bool(legacy_breakout_52w)}")
     for reason in observation.get("reasons", []):
         labels.append(f"reason:{reason}")
     return labels
@@ -426,8 +454,15 @@ def build_learning_report(
     observations: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
     benchmark_history: pd.DataFrame,
+    *,
+    promotion_strategy_version: str,
 ) -> dict[str, Any]:
-    """Build cumulative knowledge while gating promotions on the latest strategy."""
+    """Build cumulative knowledge from every strategy, but gate promotions on
+    ``promotion_strategy_version`` only. This must be passed explicitly (e.g. the
+    current production strategy) rather than inferred from the newest observation,
+    since a stale or legacy snapshot with a later signal_date would otherwise
+    silently become the promotion target.
+    """
     evaluated = evaluate_learning_observations(observations, histories, benchmark_history)
     strategy_versions = sorted(
         {str(row.get("strategy_version") or "") for row in observations if row.get("strategy_version")}
@@ -443,7 +478,7 @@ def build_learning_report(
     promotion_baselines: dict[str, Any] = {}
     promotion_factors: dict[str, list[dict[str, Any]]] = {}
     promotion_counts: dict[str, int] = {}
-    latest_rows = [row for row in evaluated if row.get("strategy_version") == latest_strategy_version]
+    promotion_rows = [row for row in evaluated if row.get("strategy_version") == promotion_strategy_version]
 
     for horizon in LEARNING_HORIZONS:
         horizon_key = f"h{horizon}"
@@ -453,7 +488,7 @@ def build_learning_report(
         independent_counts[horizon_key] = len(independent)
         factors[horizon_key] = _factor_statistics(independent, horizon=horizon, baseline=baseline)
 
-        latest_independent = _independent_rows(latest_rows, horizon)
+        latest_independent = _independent_rows(promotion_rows, horizon)
         promotion_baseline = _horizon_summary(latest_independent, horizon)
         promotion_baselines[horizon_key] = promotion_baseline
         promotion_counts[horizon_key] = len(latest_independent)
@@ -483,7 +518,7 @@ def build_learning_report(
         "generated_at": datetime.now(UTC).isoformat(),
         "strategy_version": latest_strategy_version,
         "strategy_versions": strategy_versions,
-        "promotion_scope_strategy_version": latest_strategy_version,
+        "promotion_scope_strategy_version": promotion_strategy_version,
         "observation_count": len(observations),
         "learning_unit": "same-ticker observations are de-overlapped independently per horizon",
         "horizons": list(LEARNING_HORIZONS),
@@ -504,14 +539,14 @@ def build_learning_report(
             "positive_explosion_lift": PROMOTION_POSITIVE_LIFT,
             "negative_explosion_lift": PROMOTION_NEGATIVE_LIFT,
             "automatic_production_weight_update": False,
-            "scope": "latest_strategy_version_only",
+            "scope": "explicit_promotion_strategy_version_only",
             "reason": "prevent small-sample overfitting, policy-confounding and self-reinforcing strategy drift",
         },
         "limitations": [
             "Learns only from the deep-scan candidates stored in historical snapshots; stocks outside that pool are invisible.",
             "Separate near-52-week and near-listing-high factors may take longer to reach the promotion sample threshold.",
             "Factor attribution is associative, not proof of causality.",
-            "Cumulative factor statistics may span multiple strategy versions; promotion decisions use only the latest strategy version.",
+            "Cumulative factor statistics may span multiple strategy versions; promotion decisions use only the explicitly configured promotion strategy version.",
             "News/TDnet/EDINET catalyst evidence is not yet connected point-in-time, so true event-cause attribution is unavailable.",
             f"Benchmark is {BENCHMARK_TICKER}; order-book depth, halts and price-limit fill probability remain unmodeled.",
         ],

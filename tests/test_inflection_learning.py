@@ -80,6 +80,27 @@ def _payload(
     }
 
 
+def _legacy_candidate(ticker: str = "1111.T", classification: str = "EARLY_CANDIDATE") -> dict[str, Any]:
+    """A schema-3 (jp-inflection-shadow-v2) candidate: breakout_52w, no near_*_high split."""
+    candidate = _candidate(ticker, classification)
+    del candidate["near_52w_high"]
+    del candidate["near_listing_high"]
+    candidate["breakout_52w"] = True
+    return candidate
+
+
+def legacy_payload(
+    market_date: str = "2026-01-05",
+    *,
+    candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return _payload(
+        market_date,
+        strategy_version="jp-inflection-shadow-v2",
+        candidates=candidates if candidates is not None else [_legacy_candidate()],
+    ) | {"report_schema_version": 3}
+
+
 def _write_snapshot(directory: Path, payload: dict[str, Any]) -> None:
     market_date = str(payload["latest_price_date"])
     (directory / f"{market_date}.enc").write_text(
@@ -121,13 +142,93 @@ def test_loader_allows_multiple_strategy_versions_with_schema_four(tmp_path: Pat
         observations,
         {"1111.T": _history([100.0] * 150), "2222.T": _history([100.0] * 150)},
         _history([100.0] * 150),
+        promotion_strategy_version="jp-inflection-shadow-v4",
     )
 
     assert report["strategy_versions"] == ["jp-inflection-shadow-v3", "jp-inflection-shadow-v4"]
     assert report["promotion_scope_strategy_version"] == "jp-inflection-shadow-v4"
 
 
-@pytest.mark.parametrize("schema_version", [None, 3, 4.0, "4", 5, True])
+def test_promotion_scope_is_explicit_not_latest_observation(tmp_path: Path) -> None:
+    """A newer legacy snapshot must not silently become the promotion target."""
+    _write_snapshot(
+        tmp_path,
+        _payload("2026-01-05", strategy_version="jp-inflection-shadow-v3", candidates=[_candidate()]),
+    )
+    _write_snapshot(
+        tmp_path,
+        legacy_payload(
+            "2026-01-06",
+            candidates=[_legacy_candidate("2222.T", "WATCH")],
+        ),
+    )
+
+    observations = load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+    report = build_learning_report(
+        observations,
+        {"1111.T": _history([100.0] * 150), "2222.T": _history([100.0] * 150)},
+        _history([100.0] * 150),
+        promotion_strategy_version="jp-inflection-shadow-v3",
+    )
+
+    assert report["strategy_versions"] == ["jp-inflection-shadow-v2", "jp-inflection-shadow-v3"]
+    assert report["promotion_scope_strategy_version"] == "jp-inflection-shadow-v3"
+    assert report["observation_count"] == 2
+
+
+def test_loader_reads_legacy_schema_three_without_mapping_to_near_high_fields(tmp_path: Path) -> None:
+    _write_snapshot(tmp_path, legacy_payload())
+
+    observations = load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+
+    assert len(observations) == 1
+    row = observations[0]
+    assert row["strategy_version"] == "jp-inflection-shadow-v2"
+    assert row["report_schema_version"] == 3
+    assert row["legacy_breakout_52w"] is True
+    assert row["near_52w_high"] is None
+    assert row["near_listing_high"] is None
+
+    labels = factor_labels(row)
+    assert "legacy_breakout_52w:True" in labels
+    assert not any(label.startswith("near_52w_high:") for label in labels)
+    assert not any(label.startswith("near_listing_high:") for label in labels)
+
+
+def test_loader_rejects_legacy_candidate_missing_breakout_flag(tmp_path: Path) -> None:
+    candidate = _legacy_candidate()
+    del candidate["breakout_52w"]
+    _write_snapshot(tmp_path, legacy_payload(candidates=[candidate]))
+
+    with pytest.raises(SnapshotLoadError, match="legacy candidate breakout flag"):
+        load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+
+
+def test_legacy_only_snapshots_produce_no_promotion_candidates_for_current_strategy(
+    tmp_path: Path,
+) -> None:
+    """Regression test for the bug in memo/trader_self_learning_legacy_data_issue_2026-09-14.md:
+    legacy v2 data must never become the promotion target just because v3 snapshots
+    are missing or fail to load.
+    """
+    _write_snapshot(tmp_path, legacy_payload())
+
+    observations = load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+    report = build_learning_report(
+        observations,
+        {"1111.T": _history([100.0] * 150)},
+        _history([100.0] * 150),
+        promotion_strategy_version="jp-inflection-shadow-v3",
+    )
+
+    assert report["strategy_versions"] == ["jp-inflection-shadow-v2"]
+    assert report["promotion_scope_strategy_version"] == "jp-inflection-shadow-v3"
+    assert report["observation_count"] == 1
+    assert all(count == 0 for count in report["promotion_independent_observation_counts"].values())
+    assert report["lessons"] == []
+
+
+@pytest.mark.parametrize("schema_version", [None, 4.0, "4", 5, True])
 def test_loader_rejects_unsupported_schema(tmp_path: Path, schema_version: object) -> None:
     payload = _payload()
     payload["report_schema_version"] = schema_version
@@ -346,6 +447,7 @@ def test_learning_report_never_auto_applies_and_public_summary_has_no_tickers() 
         [observation],
         {"1111.T": _history([100.0] * 150)},
         _history([100.0] * 150),
+        promotion_strategy_version="jp-inflection-shadow-v3",
     )
 
     assert report["promotion_gate"]["automatic_production_weight_update"] is False

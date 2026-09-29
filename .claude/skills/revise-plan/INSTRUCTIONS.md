@@ -1,6 +1,6 @@
 # 計画書レビュー反映 — 詳細手順
 
-`docs/implement/review.md` の Blocking 指摘を `docs/implement/plan.md` に反映するスキル。
+`docs/memo/review.md` の Blocking 指摘を `docs/memo/plan.md` に反映するスキル。
 Non-blocking は適用しない。review.md の判定トークンは変更しない。
 
 ---
@@ -9,7 +9,7 @@ Non-blocking は適用しない。review.md の判定トークンは変更しな
 
 ### Step 1: review.md を読む
 
-`docs/implement/review.md` を読み、以下を確認する:
+`docs/memo/review.md` を読み、以下を確認する:
 
 - 判定トークン（最終行: `APPROVED` / `CHANGES_REQUIRED`）
 - **Blocking（必須修正）** の一覧
@@ -21,7 +21,7 @@ Non-blocking は適用しない。review.md の判定トークンは変更しな
 
 ### Step 2: plan.md を読む
 
-`docs/implement/plan.md` を読み、各 Blocking 指摘が plan.md のどの箇所に対応するかを特定する。
+`docs/memo/plan.md` を読み、各 Blocking 指摘が plan.md のどの箇所に対応するかを特定する。
 
 ---
 

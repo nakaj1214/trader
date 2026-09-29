@@ -108,7 +108,7 @@ jobs:
         if: github.event_name == 'schedule'
         env:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
-        run: python scripts/rebuild_inflection_learning.py
+        run: python scripts/rebuild_inflection_learning.py --promotion-strategy-version jp-inflection-shadow-v3
 
       - name: Preserve aggregate learning summary
         if: github.event_name == 'schedule'

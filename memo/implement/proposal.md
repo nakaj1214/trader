@@ -1,7 +1,7 @@
 # 実装要件書（memo/research 統合）
 
 > このファイルは `memo/research/` 配下の3文書を統合・構造化したものです。
-> `docs/implement/proposal.md` の代わりに `memo/implement/proposal.md` として作成しています。
+> `docs/memo/proposal.md` の代わりに `memo/implement/proposal.md` として作成しています。
 > 各要件は「具体的な Before/After」「対象ファイル」「受入条件」を含みます。
 > `/create-plan` を実行する場合は入力パスを `memo/implement/proposal.md` に読み替えてください。
 
@@ -366,4 +366,4 @@
 
 ## 次のステップ
 
-`/create-plan` を実行する場合、本ファイル（`memo/implement/proposal.md`）を入力として渡してください（標準の `docs/implement/proposal.md` ではない点に注意）。要件数が多いため、Phase単位で分割して `/create-plan` を回すことを推奨します。
+`/create-plan` を実行する場合、本ファイル（`memo/implement/proposal.md`）を入力として渡してください（標準の `docs/memo/proposal.md` ではない点に注意）。要件数が多いため、Phase単位で分割して `/create-plan` を回すことを推奨します。

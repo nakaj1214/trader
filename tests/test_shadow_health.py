@@ -1,13 +1,37 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
-from scripts.run_inflection_shadow import OUT_DIR, persist_report, snapshot_date, validate_report
+from scripts.run_inflection_shadow import (
+    OUT_DIR,
+    main,
+    persist_report,
+    snapshot_date,
+    validate_report,
+)
 from src.data.snapshot_crypto import decrypt_json
+from src.screening.inflection_live import PriceDataRetryExhausted
 
 SECRET = "test-snapshot-secret"
+
+
+def _retry_exhausted() -> PriceDataRetryExhausted:
+    return PriceDataRetryExhausted(
+        {
+            "retry_exhausted": "true",
+            "expected_date": "2026-09-28",
+            "universe": "3704",
+            "missing": "1200",
+            "price_data": "2504",
+            "price_coverage": "67.6%",
+            "latest_coverage": "99.6%",
+            "failed_gate": "price_coverage",
+            "attempts": "3",
+        }
+    )
 
 
 def _healthy_report() -> dict:
@@ -219,3 +243,39 @@ def test_persist_report_rejects_filename_date_that_differs_from_market_date(tmp_
             latest_path=tmp_path / "latest.enc",
             date="2026-09-08",
         )
+
+
+def test_main_writes_retry_diagnostics_to_github_output_without_persisting(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "github-output"
+    error = _retry_exhausted()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    with (
+        patch("scripts.run_inflection_shadow.snapshot_encryption_secret", return_value=SECRET),
+        patch("scripts.run_inflection_shadow.scan_japan_inflection", side_effect=error),
+        patch("scripts.run_inflection_shadow.persist_report") as persist,
+        pytest.raises(PriceDataRetryExhausted) as raised,
+    ):
+        main()
+
+    assert raised.value is error
+    persist.assert_not_called()
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        f"{key}={value}" for key, value in error.details.items()
+    ]
+
+
+def test_main_preserves_retry_error_without_github_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = _retry_exhausted()
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    with (
+        patch("scripts.run_inflection_shadow.snapshot_encryption_secret", return_value=SECRET),
+        patch("scripts.run_inflection_shadow.scan_japan_inflection", side_effect=error),
+        pytest.raises(PriceDataRetryExhausted) as raised,
+    ):
+        main()
+
+    assert raised.value is error

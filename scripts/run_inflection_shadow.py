@@ -1,6 +1,7 @@
 """Run the production Japanese inflection scanner and persist an immutable daily snapshot."""
 from __future__ import annotations
 
+import os
 from datetime import date as calendar_date
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,12 @@ from zoneinfo import ZoneInfo
 
 from src.data.market_calendar import expected_tse_session_date
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
-from src.screening.inflection_live import scan_japan_inflection
+from src.screening.inflection_live import (
+    MIN_LATEST_DATE_COVERAGE,
+    MIN_PRICE_COVERAGE,
+    PriceDataRetryExhausted,
+    scan_japan_inflection,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "dashboard" / "data" / "inflection" / "v3"
@@ -17,9 +23,7 @@ LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.enc"
 JST = ZoneInfo("Asia/Tokyo")
 
 MIN_UNIVERSE_COUNT = 3000
-MIN_PRICE_COVERAGE = 0.70
 MIN_TECHNICAL_COVERAGE = 0.60
-MIN_LATEST_DATE_COVERAGE = 0.80
 MARKET_NAMES = ("Prime", "Standard", "Growth")
 MARKET_COVERAGE_FIELDS = ("universe", "price_data", "technical_usable", "latest_date_count")
 
@@ -173,7 +177,13 @@ def persist_report(
 
 def main() -> None:
     encryption_secret = snapshot_encryption_secret()
-    report = scan_japan_inflection()
+    try:
+        report = scan_japan_inflection()
+    except PriceDataRetryExhausted as exc:
+        if output_path := os.getenv("GITHUB_OUTPUT"):
+            with Path(output_path).open("a", encoding="utf-8") as output:
+                output.writelines(f"{key}={value}\n" for key, value in exc.details.items())
+        raise
     snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
 
     counts = report.get("classification_counts", {})

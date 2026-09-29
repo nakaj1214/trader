@@ -1,27 +1,34 @@
-# REQ-036 実装・最終レビュー（5回目）
+# JP Inflection Shadow Scan 再試行機能 計画レビュー
 
-確認日: 2026-09-14
+レビュー日: 2026-09-29
 
-対象: `memo/implement/plan_req036.md`
+対象: `memo/implement/plan.md`
 
-## 判定
+## 結論
 
-**VERDICT: PASS**
+前回の残件2点が計画に反映されていないため、実装は見送ります。
 
-前回指摘したboolean完了条件の矛盾は解消済み。更新計画にblocking issueはなく、計画どおり実装した最終差分にも追加のblocking findingはない。
+## 指摘事項
 
-## 実装確認
+### P2: provider 層の変更は不要
 
-- schema 4限定・複数strategy version許容・必須booleanのfail-closed拒否を実装した。
-- optional数値の非finite正規化、実entry/exit日によるbenchmark比較と重複排除、高値factorと予測ミス理由の分離を実装した。
-- yfinanceのlogger/stdout/stderr秘匿、件数のみの失敗通知、空snapshotでもフル・公開summaryを生成するCLIを実装した。
-- 週次workflow配線、公開summaryだけのartifact化、`memo/project-overview.md`への運用方針追記を実装した。
+Section 6 は依然として `src/data/yfinance_prices.py` へ stale 再取得・置換処理を追加し、`tests/test_yfinance_prices.py` も変更対象にしています。
 
-## 検証状況
+既存 `fetch_price_data()` は任意の ticker subset を取得できます。期待営業日を知る scanner 側で、既存関数の結果を更新するだけで足ります。
 
-- `tests/test_inflection_learning.py`: 41 passed、対象module coverage 92.14%
-- 既存回帰 `tests/test_inflection_forward.py tests/test_inflection_strategy.py`: 42 passed
-- workflow相当の対象群: 127 passed、coverage 91.88%
-- Ruff format/check、mypy: PASS
-- `scripts/rebuild_inflection_learning.py`: v3 snapshot 0件でフル・公開summaryの両方を生成し正常終了
-- テスト内のyfinanceは全てmockし、外部APIアクセスなし
+```python
+prices.update(fetch_price_data(retry_tickers, lookback_days))
+```
+
+`src/data/yfinance_prices.py` と `tests/test_yfinance_prices.py` を修正対象から外してください。
+
+### P2: J-Quants retry は今回の対象外
+
+Section 10 の「J-Quants 一時通信エラー | 必要に応じて別 retry」も未変更です。回数・待機・対象例外・テストが定義されておらず、今回の Yahoo 株価再試行とは独立した要件です。
+
+今回は「即 Failure」と明記し、J-Quants retry は別計画にしてください。
+
+## 修正条件
+
+1. stale 再取得は scanner から既存 `fetch_price_data()` を再利用する。
+2. J-Quants retry は今回の対象から外す。

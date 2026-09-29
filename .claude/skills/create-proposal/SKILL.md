@@ -1,8 +1,8 @@
 ---
 name: create-proposal
 description: >
-  docs/implement/prompt.md（ユーザーの自由な依頼文）を読み込み、構造化した
-  docs/implement/proposal.md（実装要件書）を生成する。品質チェック（7項目）で
+  docs/memo/prompt.md（ユーザーの自由な依頼文）を読み込み、構造化した
+  docs/memo/proposal.md（実装要件書）を生成する。品質チェック（7項目）で
   曖昧な記述・繰り返し失敗パターン・具体性不足を検出し、必要に応じてリライトする。
   create-plan とは独立したスキル。「要件を整理して」「proposalを作って」
   「prompt.mdから要件書を作って」と言われたときにトリガーする。
@@ -12,8 +12,8 @@ metadata:
 
 # Create Proposal
 
-`docs/implement/prompt.md`（ユーザーの依頼文）を読み込み、
-構造化した `docs/implement/proposal.md`（実装要件書）を生成する。
+`docs/memo/prompt.md`（ユーザーの依頼文）を読み込み、
+構造化した `docs/memo/proposal.md`（実装要件書）を生成する。
 
 create-plan とは独立しており、単体で実行できる。
 生成後は `/create-plan` で計画書に変換できる。

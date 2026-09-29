@@ -1,7 +1,7 @@
 ---
 name: propose-one
 description: >
-  docs/implement/prompt.md から課題を1つだけ選び、create-proposal → create-plan を順に実行する。
+  docs/memo/prompt.md から課題を1つだけ選び、create-proposal → create-plan を順に実行する。
   「1個ずつ確実に修正」のワークフローを強制し、複数課題を同時に扱うことで生じる混乱を防ぐ。
   「1つだけ実装して」「一個ずつ進めて」「propose-one」「最初のタスクだけ」と言われたときにトリガーする。
   create-proposal + create-plan の単一課題版ラッパー。

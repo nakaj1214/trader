@@ -8,7 +8,9 @@ Outputs are research candidates only. They are not BUY recommendations.
 """
 from __future__ import annotations
 
+import math
 import os
+import time
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -18,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from src.data.jquants_v2_client import JQuantsV2Client
+from src.data.market_calendar import expected_tse_session_date
 from src.data.yfinance_prices import fetch_price_data
 from src.strategy.inflection import InflectionFeatures, score_inflection
 
@@ -32,6 +35,19 @@ STRATEGY_VERSION = "jp-inflection-shadow-v3"
 REPORT_SCHEMA_VERSION = 4
 DEFAULT_JQUANTS_PLAN = "free"
 DEFAULT_FREE_DELAY_WEEKS = 12
+MIN_PRICE_COVERAGE = 0.70
+MIN_LATEST_DATE_COVERAGE = 0.80
+DEFAULT_PRICE_RETRY_COUNT = 2
+DEFAULT_PRICE_RETRY_WAIT_SECONDS = "180,420"
+
+
+class PriceDataRetryExhausted(RuntimeError):
+    def __init__(self, details: dict[str, str]) -> None:
+        self.details = details
+        super().__init__(
+            "DATA_HEALTH: price data retries exhausted: "
+            + ", ".join(f"{key}={value}" for key, value in details.items())
+        )
 
 
 @dataclass(frozen=True)
@@ -275,6 +291,21 @@ def _package_versions() -> dict[str, str]:
     return result
 
 
+def _price_retry_waits() -> list[float]:
+    count_text = os.getenv("INFLECTION_PRICE_RETRY_COUNT", str(DEFAULT_PRICE_RETRY_COUNT))
+    waits_text = os.getenv(
+        "INFLECTION_PRICE_RETRY_WAIT_SECONDS", DEFAULT_PRICE_RETRY_WAIT_SECONDS
+    )
+    try:
+        count = int(count_text)
+        waits = [] if not waits_text.strip() else [float(value) for value in waits_text.split(",")]
+    except ValueError as exc:
+        raise ValueError("invalid inflection price retry configuration") from exc
+    if count < 0 or len(waits) != count or any(wait < 0 or not math.isfinite(wait) for wait in waits):
+        raise ValueError("invalid inflection price retry configuration")
+    return waits
+
+
 def scan_japan_inflection(
     *,
     client: JQuantsV2Client | None = None,
@@ -282,6 +313,9 @@ def scan_japan_inflection(
     deep_candidates: int = 25,
     min_turnover_jpy: float = 100_000_000,
 ) -> dict[str, Any]:
+    generated_at = datetime.now(UTC).isoformat()
+    expected_date = expected_tse_session_date(generated_at)
+    retry_waits = _price_retry_waits()
     client = client or JQuantsV2Client()
     if not client.is_available():
         raise RuntimeError("JQUANTS_API_KEY is required for the production JP universe")
@@ -307,10 +341,71 @@ def scan_japan_inflection(
             raise RuntimeError(f"DATA_HEALTH: unexpected market code: {market_code}") from exc
 
     prices = fetch_price_data(tickers, lookback_days)
+    latest_dates: dict[str, str] = {}
+    for attempt in range(len(retry_waits) + 1):
+        latest_dates = {
+            ticker: latest_date
+            for ticker, frame in prices.items()
+            if (latest_date := _latest_close_date(frame)) is not None
+        }
+        price_data = len(prices)
+        fresh = sum(value == expected_date for value in latest_dates.values())
+        price_coverage = price_data / len(tickers) if tickers else 0.0
+        latest_coverage = fresh / price_data if price_data else 0.0
+        failed_gates = [
+            name
+            for name, failed in (
+                ("price_coverage", price_coverage < MIN_PRICE_COVERAGE),
+                ("latest_coverage", latest_coverage < MIN_LATEST_DATE_COVERAGE),
+            )
+            if failed
+        ]
+        if not failed_gates:
+            if attempt:
+                print(
+                    "DATA_HEALTH_RECOVERED: "
+                    f"attempt={attempt} universe={len(tickers)} missing={len(tickers) - price_data} "
+                    f"price_data={price_data} price_coverage={price_coverage:.1%} "
+                    f"fresh={fresh} latest_coverage={latest_coverage:.1%}"
+                )
+            break
+
+        retry_tickers = [
+            ticker
+            for ticker in tickers
+            if ticker not in prices or latest_dates.get(ticker) != expected_date
+        ]
+        if attempt == len(retry_waits):
+            raise PriceDataRetryExhausted(
+                {
+                    "retry_exhausted": "true",
+                    "expected_date": expected_date,
+                    "universe": str(len(tickers)),
+                    "missing": str(len(tickers) - price_data),
+                    "price_data": str(price_data),
+                    "price_coverage": f"{price_coverage:.1%}",
+                    "latest_coverage": f"{latest_coverage:.1%}",
+                    "failed_gate": ",".join(failed_gates),
+                    "attempts": str(attempt + 1),
+                }
+            )
+        if not retry_tickers:
+            break
+        wait = retry_waits[attempt]
+        print(
+            "DATA_HEALTH_RETRY: "
+            f"attempt={attempt + 1}/{len(retry_waits)} expected_date={expected_date} "
+            f"universe={len(tickers)} missing={len(tickers) - price_data} "
+            f"price_data={price_data} price_coverage={price_coverage:.1%} "
+            f"fresh={fresh} latest_coverage={latest_coverage:.1%} "
+            f"failed_gate={','.join(failed_gates)} wait={wait:g}s"
+        )
+        time.sleep(wait)
+        prices.update(fetch_price_data(retry_tickers, lookback_days))
+
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable_count = 0
     liquid_candidate_count = 0
-    latest_dates: dict[str, str] = {}
 
     for ticker, df in prices.items():
         market_code = str(ticker_meta[ticker].get("Mkt") or "")
@@ -405,27 +500,24 @@ def scan_japan_inflection(
     for item in candidates:
         counts[item.classification] = counts.get(item.classification, 0) + 1
 
-    latest_price_date = max(latest_dates.values()) if latest_dates else None
-    latest_price_date_count = (
-        sum(value == latest_price_date for value in latest_dates.values()) if latest_price_date else 0
-    )
-    if latest_price_date:
-        for ticker, value in latest_dates.items():
-            if value == latest_price_date:
-                market_code = str(ticker_meta[ticker].get("Mkt") or "")
-                market_coverage[JP_MARKET_NAMES[market_code]]["latest_date_count"] += 1
+    latest_price_date = expected_date
+    latest_price_date_count = sum(value == expected_date for value in latest_dates.values())
+    for ticker, value in latest_dates.items():
+        if value == expected_date:
+            market_code = str(ticker_meta[ticker].get("Mkt") or "")
+            market_coverage[JP_MARKET_NAMES[market_code]]["latest_date_count"] += 1
     latest_date_histogram = dict(
         sorted(Counter(latest_dates.values()).items(), reverse=True)[:5]
     )
     stale_tickers_sample = sorted(
-        ticker for ticker, value in latest_dates.items() if value != latest_price_date
+        ticker for ticker, value in latest_dates.items() if value != expected_date
     )[:20]
 
     return {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "strategy_version": STRATEGY_VERSION,
         "source_commit_sha": os.getenv("GITHUB_SHA") or "local-or-unknown",
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": generated_at,
         "mode": "shadow",
         "universe": "TSE Prime + Standard + Growth",
         "universe_count": len(tickers),

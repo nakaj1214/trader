@@ -1,7 +1,7 @@
 # Create Proposal — 詳細手順
 
-`docs/implement/prompt.md`（ユーザーの自由な依頼文）を読み込み、
-構造化した `docs/implement/proposal.md`（実装要件書）を生成する。
+`docs/memo/prompt.md`（ユーザーの自由な依頼文）を読み込み、
+構造化した `docs/memo/proposal.md`（実装要件書）を生成する。
 
 品質チェック（7項目）を実施し、基準を満たさない場合はリライトする。
 create-plan とは独立しており、本スキル単体で完結する。
@@ -12,15 +12,15 @@ create-plan とは独立しており、本スキル単体で完結する。
 
 | File | Role |
 |------|------|
-| `docs/implement/prompt.md` | Input: ユーザーの依頼文（読み取り専用） |
-| `docs/implement/proposal.md` | Output: 構造化された実装要件書 |
+| `docs/memo/prompt.md` | Input: ユーザーの依頼文（読み取り専用） |
+| `docs/memo/proposal.md` | Output: 構造化された実装要件書 |
 
 ---
 
 ## Step 1: prompt.md を読む
 
 ```
-docs/implement/prompt.md
+docs/memo/prompt.md
 ```
 
 ファイルが存在しなければ「prompt.md が見つかりません」と報告して終了。
@@ -50,7 +50,7 @@ Glob: **/stock*.js
 ## Step 3: proposal.md を生成する
 
 prompt.md の内容を以下の構造化テンプレートに当てはめて
-`docs/implement/proposal.md` を生成する。
+`docs/memo/proposal.md` を生成する。
 
 ### テンプレート
 
@@ -196,7 +196,7 @@ HTML コメントで囲まれた要件が整理されているか。
 
 ### 5-2. 該当箇所をリライトして proposal.md を上書きする
 
-元の依頼文は `docs/implement/prompt.md` に残っているためバックアップ不要。
+元の依頼文は `docs/memo/prompt.md` に残っているためバックアップ不要。
 
 ---
 
@@ -217,7 +217,7 @@ proposal.md の内容をユーザーに提示し、以下を確認する:
 ## 要件書作成完了
 
 ### 作成ファイル
-- docs/implement/proposal.md
+- docs/memo/proposal.md
 
 ### 品質チェック
 - PASS: N/7

@@ -143,20 +143,33 @@ def main() -> int:
     )
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
     parser.add_argument("--snapshot-dir", default="dashboard/data/inflection/v3")
+    parser.add_argument("--legacy-snapshot-dir", default="dashboard/data/inflection")
+    parser.add_argument(
+        "--promotion-strategy-version",
+        default="jp-inflection-shadow-v3",
+        help="Strategy version that promotion statistics are scoped to. Other "
+        "strategy versions (e.g. legacy snapshots) still feed cumulative analysis "
+        "but never become promotion candidates.",
+    )
     parser.add_argument("--output", default="artifacts/inflection_learning.json")
     parser.add_argument("--summary-output", default="artifacts/inflection_learning_summary.json")
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
     snapshot_dir = repo_root / args.snapshot_dir
-    encrypted_snapshots = list(snapshot_dir.glob("????-??-??.enc")) if snapshot_dir.exists() else []
-    observations = (
-        load_inflection_learning_observations(
-            snapshot_dir,
+    legacy_snapshot_dir = repo_root / args.legacy_snapshot_dir
+
+    def _load(directory: Path) -> list[dict[str, Any]]:
+        if not directory.exists() or not list(directory.glob("????-??-??.enc")):
+            return []
+        return load_inflection_learning_observations(
+            directory,
             encryption_secret=snapshot_encryption_secret(),
         )
-        if encrypted_snapshots
-        else []
+
+    observations = sorted(
+        _load(legacy_snapshot_dir) + _load(snapshot_dir),
+        key=lambda row: (str(row["signal_date"]), str(row["ticker"])),
     )
 
     histories: dict[str, pd.DataFrame] = {}
@@ -171,7 +184,12 @@ def main() -> int:
         benchmark_history = all_histories[BENCHMARK_TICKER]
         histories = {ticker: history for ticker, history in all_histories.items() if ticker != BENCHMARK_TICKER}
 
-    report = build_learning_report(observations, histories, benchmark_history)
+    report = build_learning_report(
+        observations,
+        histories,
+        benchmark_history,
+        promotion_strategy_version=args.promotion_strategy_version,
+    )
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -12,7 +12,6 @@ from src.data.live_quote import (
     fetch_split_adjusted_history,
     fetch_today_bars,
     fetch_today_quote,
-    split_adjust_ohlc,
 )
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -30,30 +29,12 @@ def _daily_history(dates: list[str]) -> pd.DataFrame:
     )
 
 
-def test_split_adjusts_all_ohlc_without_dividend_adjustment() -> None:
-    index = pd.DatetimeIndex(["2026-09-01", "2026-09-03"], tz=JST)
-    history = pd.DataFrame(
-        {
-            "Open": [100.0, 55.0],
-            "High": [110.0, 60.0],
-            "Low": [90.0, 50.0],
-            "Close": [100.0, 55.0],
-            "Dividends": [10.0, 0.0],
-            "Stock Splits": [0.0, 2.0],
-        },
-        index=index,
-    )
-
-    adjusted = split_adjust_ohlc(history, NOW.date())
-
-    assert adjusted.loc[index[0], ["Open", "High", "Low", "Close"]].tolist() == pytest.approx([50.0, 55.0, 45.0, 50.0])
-    assert adjusted.loc[index[1], "Close"] == 55.0
-    assert adjusted["Dividends"].tolist() == [10.0, 0.0]
-
-
 def test_split_history_excludes_entry_and_current_dates() -> None:
     dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"]
+    # Yahoo returns auto_adjust=False rows already split-adjusted as of fetch time
+    # (e.g. 7203.T closed 2077 the day before its 2021-09-29 1:5 split, raw ~10,000).
     history = _daily_history(dates)
+    history["High"] = [20.0, 21.0, 22.0, 23.0, 24.0, 25.0]
     history.loc[pd.Timestamp("2026-09-03", tz=JST), "Stock Splits"] = 2.0
     history.loc[pd.Timestamp("2026-09-08", tz=JST), "Stock Splits"] = 3.0
     ticker = Mock()
@@ -66,7 +47,7 @@ def test_split_history_excludes_entry_and_current_dates() -> None:
 
     assert result.entry_price == pytest.approx(100.0 / 6.0)
     assert [timestamp.date().isoformat() for timestamp in result.daily_highs.index] == dates[1:-1]
-    assert result.daily_highs.tolist() == pytest.approx([20.0, 40.0, 40.0, 40.0])
+    assert result.daily_highs.tolist() == pytest.approx([21.0, 22.0, 23.0, 24.0])
 
 
 def test_entry_day_allows_empty_raw_history() -> None:

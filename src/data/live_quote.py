@@ -82,21 +82,6 @@ def _later_split_factor(ratios: dict[date, float], value_date: date, as_of: date
     return _positive(factor)
 
 
-def split_adjust_ohlc(history: pd.DataFrame, as_of: date) -> pd.DataFrame:
-    """Put raw OHLC rows on one split-only price scale as of the given date."""
-    frame = history.copy()
-    frame.index = _jst_index(frame.index)
-    ratios = _split_ratios(frame)
-    for column in ("Open", "High", "Low", "Close"):
-        if column not in frame:
-            continue
-        frame[column] = [
-            float(value) / _later_split_factor(ratios, timestamp.date(), as_of) if pd.notna(value) else float("nan")
-            for timestamp, value in pd.to_numeric(frame[column], errors="coerce").items()
-        ]
-    return frame
-
-
 def fetch_split_adjusted_history(
     ticker: str,
     entry_date: str,
@@ -123,7 +108,10 @@ def fetch_split_adjusted_history(
 
     if not {"High", "Close"}.issubset(history.columns):
         raise ValueError("daily history is missing High or Close")
-    frame = split_adjust_ohlc(history, current_date)
+    # Yahoo already returns auto_adjust=False OHLC split-adjusted as of fetch time;
+    # only the user's raw entry price needs the later split ratios.
+    frame = history.copy()
+    frame.index = _jst_index(frame.index)
     row_dates = pd.Series(frame.index.date, index=frame.index)
     adjusted_entry /= _later_split_factor(_split_ratios(frame), purchase_date, current_date)
     prior_mask = (row_dates > purchase_date) & (row_dates < current_date)

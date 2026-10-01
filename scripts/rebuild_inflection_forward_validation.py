@@ -19,7 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.data.live_quote import split_adjust_ohlc
 from src.data.snapshot_crypto import decrypt_json, encrypt_json, snapshot_encryption_secret
 from src.evaluation.inflection_backtest import (
     simulate_signals,
@@ -108,8 +107,7 @@ def _fetch_adjusted_histories(
                 finally:
                     provider_logger.disabled = was_disabled
                 if not history.empty and required_columns.issubset(history.columns):
-                    if price_basis == SPLIT_ONLY:
-                        history = split_adjust_ohlc(history, pd.Timestamp(history.index[-1]).date())
+                    # auto_adjust=False OHLC from Yahoo is already split-adjusted (split-only basis).
                     histories[ticker] = history
                     break
                 failure = "empty or missing adjusted OHLC"

@@ -294,13 +294,14 @@ def test_forward_price_fetch_suppresses_provider_ticker_log(caplog: pytest.LogCa
     assert provider_logger.disabled is was_disabled
 
 
-def test_forward_split_only_fetch_requests_actions_and_adjusts_splits() -> None:
+def test_forward_split_only_fetch_keeps_yahoo_split_adjusted_ohlc() -> None:
+    # Yahoo's auto_adjust=False rows before a split are already divided by the ratio.
     history = pd.DataFrame(
         {
-            "Open": [100.0, 55.0],
-            "High": [110.0, 60.0],
-            "Low": [90.0, 50.0],
-            "Close": [100.0, 55.0],
+            "Open": [50.0, 55.0],
+            "High": [55.0, 60.0],
+            "Low": [45.0, 50.0],
+            "Close": [50.0, 55.0],
             "Stock Splits": [0.0, 2.0],
         },
         index=pd.to_datetime(["2026-09-09", "2026-09-10"]),

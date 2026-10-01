@@ -146,9 +146,9 @@ def test_quote_exactly_at_stale_boundary_is_accepted() -> None:
     assert status.triggered is False
 
 
-def test_in_session_quote_uses_ten_minute_stale_threshold() -> None:
+def test_in_session_quote_uses_twenty_minute_stale_threshold() -> None:
     accepted = _evaluate(
-        _quote(as_of_at=(NOW - timedelta(minutes=9)).isoformat()),
+        _quote(as_of_at=(NOW - timedelta(minutes=19)).isoformat()),
         [],
         in_session=True,
     )
@@ -156,7 +156,7 @@ def test_in_session_quote_uses_ten_minute_stale_threshold() -> None:
     assert accepted.triggered is False
     with pytest.raises(StaleQuoteError, match="stale"):
         _evaluate(
-            _quote(as_of_at=(NOW - timedelta(minutes=11)).isoformat()),
+            _quote(as_of_at=(NOW - timedelta(minutes=21)).isoformat()),
             [],
             in_session=True,
         )

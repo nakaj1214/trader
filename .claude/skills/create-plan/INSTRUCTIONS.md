@@ -4,8 +4,8 @@
 
 | File | Role |
 |------|------|
-| `docs/memo/proposal.md` | Input: ユーザーが書いた要件書（読み取り専用） |
-| `docs/memo/plan.md` | Output: 実装計画書（Claude が作成・更新） |
+| `memo/implement/proposal.md` | Input: ユーザーが書いた要件書（読み取り専用） |
+| `memo/implement/plan.md` | Output: 実装計画書（Claude が作成・更新） |
 | `docs/tests/{feature}.test.js` または `docs/tests/{feature}.test.html` | Output: 挙動確認テストファイル |
 
 ---
@@ -42,10 +42,10 @@ proposal.md を読み、課題が**調査型**（原因不明のバグ・動作�
 
 ## Step 1: Read Proposal
 
-Read `docs/memo/proposal.md`.
+Read `memo/implement/proposal.md`.
 
 If the file does not exist, stop and tell the user:
-> `docs/memo/proposal.md` が見つかりません。先にファイルを作成してください。
+> `memo/implement/proposal.md` が見つかりません。先にファイルを作成してください。
 
 ---
 
@@ -115,7 +115,7 @@ plan.md に書く前に、以下を自問する:
 
 ---
 
-Based on proposal.md, create `docs/memo/plan.md` using the format below.
+Based on proposal.md, create `memo/implement/plan.md` using the format below.
 
 ```markdown
 ## 実装計画: {Title}
@@ -166,7 +166,7 @@ Step 4（テストファイル作成）はユーザーの明示的な指示が�
 ```
 ## plan.md 作成完了
 
-- docs/memo/plan.md を作成しました。
+- memo/implement/plan.md を作成しました。
 
 内容を確認後、続けてテストファイルの作成を行う場合はその旨お伝えください。
 ```
@@ -256,7 +256,7 @@ function assert(label, condition) {
 ## 計画作成完了
 
 ### 作成ファイル
-- docs/memo/plan.md
+- memo/implement/plan.md
 - docs/tests/{feature}.test.*（挙動確認）
 
 ### テスト結果

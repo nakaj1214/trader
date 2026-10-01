@@ -15,8 +15,8 @@ import yfinance as yf
 from src.data.market_calendar import TSE_CALENDAR
 
 JST = ZoneInfo("Asia/Tokyo")
-# ponytail: provisional until observed yfinance latency supports tightening or relaxing it.
-STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION = 10
+# yfinance TSE 1m bars lag ~15 min (measured 2026-10-01); 20 leaves one bar of slack.
+STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION = 20
 STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION = 60
 
 

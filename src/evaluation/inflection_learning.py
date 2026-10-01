@@ -562,6 +562,7 @@ def public_learning_summary(report: dict[str, Any]) -> dict[str, Any]:
         "strategy_versions",
         "promotion_scope_strategy_version",
         "observation_count",
+        "price_unavailable_ticker_count",
         "learning_unit",
         "horizons",
         "explosion_definition_max_return_pct",

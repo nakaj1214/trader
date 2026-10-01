@@ -265,7 +265,7 @@ def test_slack_http_failure_saves_retryable_state_then_propagates(
         (datetime(2026, 9, 8, 15, 30, tzinfo=JST), "ok"),
     ],
 )
-def test_run_uses_ten_minute_threshold_during_close_grace(
+def test_run_uses_twenty_minute_threshold_during_close_grace(
     monkeypatch: pytest.MonkeyPatch,
     quote_time: datetime,
     expected_status: str,

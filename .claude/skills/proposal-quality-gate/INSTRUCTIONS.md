@@ -1,6 +1,6 @@
 # Proposal Quality Gate — 詳細手順
 
-create-plan の前段として `docs/memo/proposal.md` の品質を検査し、
+create-plan の前段として `memo/implement/proposal.md` の品質を検査し、
 計画作成が失敗しやすい記述パターンを検出したら、計画ではなく proposal 自体をリライトするスキル。
 
 ---
@@ -30,7 +30,7 @@ proposal.md を読む
 ## Step 1: proposal.md を読む
 
 ```
-docs/memo/proposal.md
+memo/implement/proposal.md
 ```
 
 ファイルが存在しなければ「proposal.md が見つかりません」と報告して終了。
@@ -164,8 +164,8 @@ HTML コメント `<!-- ... -->` で囲まれた要件が大量にある場合 F
 
 ### 3-2. proposal.md を構造化テンプレートでリライト
 
-以下のテンプレートに当てはめて `docs/memo/proposal.md` を**上書き**する。
-元の内容は `docs/memo/proposal_original_YYYYMMDD.md` にバックアップする。
+以下のテンプレートに当てはめて `memo/implement/proposal.md` を**上書き**する。
+元の内容は `memo/implement/proposal_original_YYYYMMDD.md` にバックアップする。
 
 #### テンプレート
 

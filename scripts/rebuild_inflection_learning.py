@@ -31,6 +31,7 @@ LEARNING_PRICE_BATCH_SIZE = 50
 LEARNING_PRICE_MAX_RETRIES = 2
 LEARNING_PRICE_RETRY_BACKOFF_SECONDS = 2.0
 LEARNING_PRICE_BATCH_INTERVAL_SECONDS = 0.5
+MAX_PRICE_FAILURE_RATIO = 0.05  # keep in sync with rebuild_inflection_forward_validation.py
 
 
 def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, batch_size: int) -> pd.DataFrame:
@@ -132,7 +133,8 @@ def _fetch_learning_histories(
         if offset + batch_size < len(tickers):
             sleep(batch_interval_seconds)
 
-    if failures:
+    # Same delisting tolerance as forward validation.
+    if len(failures) > len(tickers) * MAX_PRICE_FAILURE_RATIO:
         raise RuntimeError(f"Learning price retrieval failed for {len(failures)} ticker(s)")
     return histories
 
@@ -181,6 +183,8 @@ def main() -> int:
             {"ticker": BENCHMARK_TICKER, "date": observation["signal_date"]} for observation in observations
         )
         all_histories = _fetch_learning_histories(price_rows, max_horizon=max_horizon)
+        if BENCHMARK_TICKER not in all_histories:
+            raise RuntimeError("Learning benchmark price retrieval failed")
         benchmark_history = all_histories[BENCHMARK_TICKER]
         histories = {ticker: history for ticker, history in all_histories.items() if ticker != BENCHMARK_TICKER}
 
@@ -190,6 +194,7 @@ def main() -> int:
         benchmark_history,
         promotion_strategy_version=args.promotion_strategy_version,
     )
+    report["price_unavailable_ticker_count"] = len({str(row["ticker"]) for row in observations} - set(histories))
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

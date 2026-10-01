@@ -492,6 +492,30 @@ def test_learning_price_fetcher_batches_tickers(monkeypatch: pytest.MonkeyPatch)
     assert calls == [["1111.T", "2222.T"], ["3333.T"]]
 
 
+def test_learning_price_fetcher_tolerates_single_delisted_ticker(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = pd.date_range("2026-01-02", periods=10, freq="B")
+
+    def fake_download(tickers: str, **kwargs: object) -> pd.DataFrame:
+        del kwargs
+        names = [name for name in tickers.split() if name != "0000.T"]
+        values = {
+            (ticker, column): [100.0] * len(index) for ticker in names for column in ("Open", "High", "Low", "Close")
+        }
+        frame = pd.DataFrame(values, index=index)
+        frame.columns = pd.MultiIndex.from_tuples(frame.columns)
+        return frame
+
+    monkeypatch.setattr("yfinance.download", fake_download)
+    rows = [{"ticker": f"{code:04d}.T", "date": "2026-01-05"} for code in range(20)]
+
+    histories = _fetch_learning_histories(
+        rows, max_horizon=5, max_retries=0, batch_interval_seconds=0.0, sleep=lambda _: None
+    )
+
+    assert "0000.T" not in histories
+    assert len(histories) == 19
+
+
 def test_learning_price_failure_hides_provider_details(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

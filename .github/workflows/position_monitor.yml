@@ -2,9 +2,9 @@ name: Position Exit Monitor
 
 on:
   schedule:
-    # 09:03, 12:35 and 15:35 JST, Monday-Friday. Scheduled runs are best-effort.
-    - cron: '3 0 * * 1-5'
-    - cron: '35 3 * * 1-5'
+    # 09:20, 12:50 and 15:35 JST (after yfinance's ~15 min 1m-bar delay), Monday-Friday. Scheduled runs are best-effort.
+    - cron: '20 0 * * 1-5'
+    - cron: '50 3 * * 1-5'
     - cron: '35 6 * * 1-5'
   workflow_dispatch:
 

@@ -8,7 +8,7 @@
 ## Step 1: prompt.md を読んで課題を選択する
 
 ```
-docs/memo/prompt.md を読む
+memo/implement/prompt.md を読む
 ```
 
 - 課題が複数ある場合: リストアップして**どれを実施するかユーザーに確認する**（自動選択しない）
@@ -48,7 +48,7 @@ docs/memo/prompt.md を読む
 `create-proposal` スキルの INSTRUCTIONS.md を読み、以下の条件で実行する:
 
 - **入力**: prompt.md の中から選択した1課題のみを対象にする
-- **出力**: `docs/memo/proposal.md`（REQ-001 テンプレート形式）
+- **出力**: `memo/implement/proposal.md`（REQ-001 テンプレート形式）
 - **品質チェック**: 7項目を通常通り実施する
 
 ### 重要なルール
@@ -73,7 +73,7 @@ proposal.md を作成しました。確認後、`/create-plan` で計画書の�
 
 - 選択した課題以外の変更を plan に含めない
 - 「ついでに〜も直す」は禁止
-- prompt.md の他の課題は `docs/memo/prompt.md` に残したまま手をつけない
+- prompt.md の他の課題は `memo/implement/prompt.md` に残したまま手をつけない
 - plan 生成後は自動実行しない（`/implement-plans` で明示的に実行）
 - create-proposal のテンプレート・品質チェックを省略しない
 - **create-plan はユーザーの明示的な指示があるまで自動実行しない**

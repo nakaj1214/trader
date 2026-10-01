@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -246,6 +246,28 @@ def test_forward_price_fetch_failure_hides_candidate_ticker() -> None:
             )
 
     assert "1111.T" not in str(error.value)
+
+
+def test_forward_price_fetch_tolerates_single_delisted_ticker() -> None:
+    history = pd.DataFrame(
+        {"Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.0]},
+        index=pd.to_datetime(["2026-09-09"]),
+    )
+
+    def fake_ticker(ticker: str) -> MagicMock:
+        mock = MagicMock()
+        if ticker == "0000.T":
+            mock.history.side_effect = RuntimeError("delisted")
+        else:
+            mock.history.return_value = history
+        return mock
+
+    rows = [{"ticker": f"{code:04d}.T", "date": "2026-09-08"} for code in range(20)]
+    with patch("yfinance.Ticker", side_effect=fake_ticker):
+        result = _fetch_adjusted_histories(rows, max_horizon=5, max_retries=0, request_interval_seconds=0)
+
+    assert "0000.T" not in result
+    assert len(result) == 19
 
 
 def test_forward_price_fetch_suppresses_provider_ticker_log(caplog: pytest.LogCaptureFixture) -> None:

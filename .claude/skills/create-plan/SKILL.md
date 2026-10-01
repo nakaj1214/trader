@@ -1,7 +1,7 @@
 ---
 name: create-plan
 description: |
-  Reads docs/memo/proposal.md and creates docs/memo/plan.md.
+  Reads memo/implement/proposal.md and creates memo/implement/plan.md.
   Then creates a test file (docs/tests/{feature}.test.js or .test.html) and verifies behavior.
   Reports results and stops — does NOT auto-start implement-plans.
   Codex レビューループ版は /codex-loop-create-plan を使うこと。
@@ -12,7 +12,7 @@ metadata:
 
 # Create Plan
 
-`docs/memo/proposal.md` を読み込み、`docs/memo/plan.md` を作成する。
+`memo/implement/proposal.md` を読み込み、`memo/implement/plan.md` を作成する。
 その後テストファイルを作成して挙動を確認し、結果を報告して停止する（自動実装しない）。
 
 詳細な手順: [INSTRUCTIONS.md](INSTRUCTIONS.md)

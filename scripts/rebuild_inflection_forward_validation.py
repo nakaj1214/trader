@@ -54,6 +54,7 @@ PRICE_HASH_SCHEMA_VERSION = 1
 PORTFOLIO_INITIAL_CAPITAL_JPY = 3_000_000.0
 PORTFOLIO_MAX_POSITIONS = 8
 PORTFOLIO_POSITION_SIZE_PCT = 1 / PORTFOLIO_MAX_POSITIONS
+MAX_PRICE_FAILURE_RATIO = 0.05
 
 
 def _fetch_adjusted_histories(
@@ -124,8 +125,12 @@ def _fetch_adjusted_histories(
         if index + 1 < len(ticker_dates):
             sleep(request_interval_seconds)
 
-    if failures:
+    # Delisted (TOB/MBO) names stop returning prices; tolerate a few so one delisting
+    # cannot block every later report, but fail closed on a provider-wide outage.
+    if len(failures) > len(ticker_dates) * MAX_PRICE_FAILURE_RATIO:
         raise RuntimeError(f"Forward price retrieval failed for {len(failures)} ticker(s)")
+    if failures:
+        print(json.dumps({"price_unavailable_ticker_count": len(failures), "price_basis": price_basis}))
     return histories
 
 
@@ -426,8 +431,12 @@ def main() -> int:
     )
 
     recall = compute_tracked_pool_explosion_recall(all_observations, histories)
+    observed_tickers = {str(row["ticker"]) for row in all_observations}
     report: dict[str, object] = {
         "signal_count": len(all_observations),
+        "price_unavailable_ticker_count": len(
+            observed_tickers - (set(histories) & set(split_histories))
+        ),
         "strategy_version": all_observations[0]["strategy_version"],
         "report_schema_version": all_observations[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",

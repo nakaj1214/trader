@@ -12,7 +12,7 @@ Phase 0: memo/implement/prompt.md を読む（毎回・キャッシュ不可）
 Phase 1: 現象の記録（事実のみ）
 Phase 2: 仮説の列挙（最大3つ + 検証方法）
 Phase 3: 証拠収集（レイヤー別の検証手段で実行）
-Phase 4: 診断結果を docs/memo/proposal.md に書き出す（確認あり）
+Phase 4: 診断結果を memo/implement/proposal.md に書き出す（確認あり）
 Phase 5: 修正（原因確定後のみ着手可能）
 ```
 
@@ -20,7 +20,7 @@ Phase 5: 修正（原因確定後のみ着手可能）
 
 ---
 
-## Phase 0: docs/memo/prompt.md の読み込み
+## Phase 0: memo/implement/prompt.md の読み込み
 
 スキル開始時に **毎回** `memo/implement/prompt.md` を Read ツールで読み込む。キャッシュに頼らない。
 

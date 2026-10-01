@@ -1,543 +1,117 @@
-# JP Inflection Shadow Scan 再試行機能 実装計画書
-
-## 1. 目的
-
-現在の `JP Inflection Shadow Scan` は、Yahoo Finance から最新営業日の株価が十分取得できなかった場合、
-
-```text
-DATA_HEALTH: latest market-date coverage too low
-```
-
-として失敗します。
-
-安全装置そのものは正しいため、`MIN_LATEST_DATE_COVERAGE = 0.80` は変更しません。
-
-今回追加するのは、一時的な外部データ遅延に対して自動再試行を行い、それでも回復しない場合だけ Slack 通知する仕組みです。
-
-```text
-初回取得
-  ↓
-最新データ不足
-  ↓
-対象銘柄だけ再取得
-  ↓
-まだ不足
-  ↓
-もう一度再取得
-  ↓
-それでも不足
-  ↓
-失敗確定 → Slack通知
-```
-
----
-
-## 2. 基本方針
-
-| 項目 | 方針 |
-|---|---|
-| 最大試行回数 | 3回（初回 + 再試行2回） |
-| 再試行対象 | 全銘柄ではなく未取得銘柄・stale銘柄（最終日が期待営業日と不一致）のみ |
-| 待機時間 | 1回目 3分、2回目 7分 |
-| 最新判定 | 東証の期待営業日と比較（scan開始時に一度だけ確定した基準時刻を使用） |
-| 合格条件 | 価格取得率 70%以上 かつ 最新日カバレッジ 80%以上（既存の二つの health gate を両方満たす） |
-| Slack通知 | 3回すべて失敗した場合のみ |
-| 不完全データ保存 | しない |
-| Snapshot commit | 正常時のみ |
-| 想定外エラー | 原則として即失敗。外部データ由来の一時障害のみ再試行 |
-
-GitHub Actions 自体を複数回 Re-run するのではなく、1回の Workflow 内部で回復処理まで完結させます。
-
----
-
-## 3. 処理フロー
-
-```text
-GitHub Actions
-        │
-        ▼
-JP Inflection Shadow Scan開始
-        │
-        ▼
-J-Quantsから対象銘柄一覧取得
-        │
-        ▼
-Yahoo Financeから株価取得
-        │
-        ▼
-期待する東証営業日を算出（scan開始時に一度だけ確定）
-        │
-        ▼
-価格取得率・最新日カバレッジ確認
-        │
-        ├── 両閾値OK（70%以上 かつ 80%以上）
-        │      │
-        │      ▼
-        │   通常分析へ
-        │
-        └── いずれか未達
-               │
-               ▼
-          3分待機
-               │
-               ▼
-     未取得・stale銘柄だけ再取得
-               │
-               ▼
-          カバレッジ再確認
-               │
-        ┌──────┴──────┐
-     両閾値OK       いずれか未達
-        │              │
-        ▼              ▼
-      続行          7分待機
-                       │
-                       ▼
-             未取得・stale銘柄再取得
-                       │
-                       ▼
-                  最終確認
-                       │
-              ┌────────┴────────┐
-           両閾値OK           いずれか未達
-              │                  │
-              ▼                  ▼
-            続行              FAILURE
-                                  │
-                                  ▼
-                              Slack通知
-```
-
----
-
-## 4. 最重要の変更点
-
-現在の `fetch_price_data()` は、
-
-- 銘柄データそのものが取得できなかった場合は再試行する
-- データは取得できたが最終日が古い場合は取得成功として扱う
-
-という動作です。
-
-今回のように、
-
-```text
-データは取得できた
-↓
-ただし最終行が前営業日のまま
-↓
-最新営業日のデータが未反映
-```
-
-というケースも再試行対象にします。
-
-加えて、そもそも取得できなかった銘柄（未取得銘柄）も再試行対象に含めます。現行の最新日カバレッジは `latest_date_count / price_data_count` で計算され、分母の `price_data_count` は取得できた銘柄数のみです。そのため未取得銘柄は分母に含まれず、例えば3,700銘柄中2,500銘柄しか取得できなくてもその全てが最新営業日なら最新日カバレッジは100%となり、再試行されずに後段の `validate_report()` が価格取得率70%未満で失敗します。これを防ぐため、価格取得率（`price_data_count / universe_count`）が70%未満の場合も再試行対象とし、再取得対象は「未取得銘柄 + stale銘柄」とします。
-
-例:
-
-```text
-expected_date = 2026-09-28
-
-2026-09-28 : 3
-2026-09-25 : 3686
-```
-
-この場合は、
-
-```text
-fresh = 3
-stale = 3686
-coverage = 0.1%
-```
-
-として、`stale_tickers` のみ再取得します。
-
-再取得は `src/screening/inflection_live.py` から既存の `fetch_price_data(retry_tickers, lookback_days)` を呼び出し、`prices.update(fetch_price_data(retry_tickers, lookback_days))` で結果を置き換えるだけで実現します。`fetch_price_data()` は任意の ticker subset 取得と missing/invalid ticker の短時間 retry を既に持っているため、`src/data/yfinance_prices.py` 自体は変更しません。
-
----
-
-## 5. 再試行を行う位置
-
-現状は概ね以下です。
-
-```text
-Yahoo Finance取得
-↓
-テクニカル計算
-↓
-候補25銘柄抽出
-↓
-J-Quants財務情報取得
-↓
-report生成
-↓
-validate_report()
-↓
-失敗
-```
-
-これを以下に変更します。
-
-```text
-Yahoo Finance取得
-↓
-株価日付チェック
-↓
-必要なら再取得
-↓
-正常になったことを確認
-↓
-テクニカル計算
-↓
-J-Quants
-↓
-report生成
-↓
-validate_report()
-```
-
-Yahoo Finance 側の一時障害が明らかな場合、不要な後続処理を実行せず早い段階で回復を試みます。
-
-期待営業日の判定に使う基準時刻（`generated_at`）は scan 開始時に timezone 付きで一度だけ確定し、以下の両方で同じ値を使用します。東証引け時刻をまたぐ手動実行などで、早期の再試行判定と終了時の最終判定が矛盾しないようにするためです。
-
-- 再試行前後の `expected_tse_session_date()`
-- report の `generated_at` と最終 `validate_report()`
-
-再試行枯渇時は、価格データ取得の失敗だけを表す専用例外（`attempts`（総試行回数）を含む診断値を持つ、例: `PriceDataRetryExhausted`）を送出します。`run_inflection_shadow.py` はこの例外だけを捕捉し、環境変数 `GITHUB_OUTPUT` が設定されている場合のみ診断情報を追記してから再送出します。`GITHUB_OUTPUT` が未設定（ローカル実行など）の場合は output への書き込みを行わず、専用例外をそのまま再送出します。APIキー未設定やコード例外など他の失敗はこの例外を経由せず、即座に失敗として扱われます（`$GITHUB_OUTPUT` は書かれません）。
-
----
-
-## 6. 修正対象
-
-| ファイル | 変更内容 |
-|---|---|
-| `src/screening/inflection_live.py` | `MIN_PRICE_COVERAGE`・`MIN_LATEST_DATE_COVERAGE` を定義（single source of truth）。期待営業日判定、coverage計算（`universe`, `missing`, `price_coverage`, `latest_coverage`）、再試行制御、起動時の retry環境変数検証（不正なら即Failure、`PriceDataRetryExhausted`にしない）、再試行枯渇時に総試行回数 `attempts` を含む診断値を持つ専用例外（例: `PriceDataRetryExhausted`）の送出 |
-| `scripts/run_inflection_shadow.py` | `MIN_PRICE_COVERAGE`・`MIN_LATEST_DATE_COVERAGE` は `inflection_live` から import して使用（重複定義しない）。`PriceDataRetryExhausted` のみを捕捉し、`GITHUB_OUTPUT` が設定されている場合だけ診断情報（`expected_date`, `universe`, `missing`, `price_data`, `price_coverage`, `latest_coverage`, 未達gate, `attempts`）を書き出して再送出する（未設定なら書かずそのまま再送出）。それ以外の例外は output を書かず即失敗させる |
-| `.github/workflows/inflection_shadow.yml` | scan step に `id: scan` を付与。Slack通知 step の条件を `failure() && steps.scan.outputs.retry_exhausted == 'true' && env.SLACK_WEBHOOK_URL != ''` に限定し、本文に `$GITHUB_OUTPUT` の診断情報（`steps.scan.outputs.attempts` を含む）を含める |
-| `tests/test_inflection_live.py` | coverage回復テスト追加、`PriceDataRetryExhausted` の送出条件テスト追加、stale/未取得銘柄の再取得に既存 `fetch_price_data()` を使うテスト追加 |
-| `tests/test_shadow_health.py` | 最終的に異常データを拒否することを確認 |
-
----
-
-## 7. 再試行設定
-
-再試行回数と待機時間は環境変数化します。
-
-```text
-INFLECTION_PRICE_RETRY_COUNT=2
-INFLECTION_PRICE_RETRY_WAIT_SECONDS=180,420
-```
-
-意味:
-
-```text
-初回
-↓
-180秒（3分）
-↓
-Retry #1
-↓
-420秒（7分）
-↓
-Retry #2
-```
-
-コード内に固定値で埋め込まず、将来調整できるようにします。
-
-起動時に以下を検証し、不正なら待機せず設定エラーとして即 Failure とします。この失敗は `PriceDataRetryExhausted` にせず、Slack 通知対象にも含めません（外部データ障害と区別するため）。
-
-- retry count は 0 以上の整数
-- wait は retry count と同数
-- 各 wait は 0 以上の数値
-
----
-
-## 8. ログ改善
-
-### 初回異常時
-
-```text
-DATA_HEALTH_RETRY:
-attempt=1/2
-expected_date=2026-09-28
-universe=3704
-missing=1200
-price_data=2504
-price_coverage=67.6%
-fresh=3
-latest_coverage=0.1%
-failed_gate=price_coverage,latest_coverage
-wait=180s
-```
-
-### Retry #1 後
-
-```text
-DATA_HEALTH_RETRY:
-attempt=2/2
-expected_date=2026-09-28
-universe=3704
-missing=54
-price_data=3650
-price_coverage=98.5%
-fresh=2450
-latest_coverage=67.1%
-failed_gate=latest_coverage
-wait=420s
-```
-
-### 回復時
-
-```text
-DATA_HEALTH_RECOVERED:
-attempt=2
-universe=3704
-missing=14
-price_data=3690
-price_coverage=99.6%
-fresh=3690
-latest_coverage=100.0%
-```
-
-GitHub Actions のログだけで、どの段階でどこまで回復したか、どの gate（`price_coverage` / `latest_coverage`）が未達だったか確認できるようにします。
-
----
-
-## 9. Slack 通知方針
-
-途中の失敗では通知しません。
-
-```text
-初回失敗
-→ 通知なし
-
-Retry #1失敗
-→ 通知なし
-
-Retry #2成功
-→ 通知なし
-→ Workflow Success
-```
-
-価格データの再試行が3回とも枯渇した場合（`retry_exhausted == 'true'`）のみ、
-
-```text
-Workflow Failure (retry_exhausted=true)
-↓
-Slack通知
-```
-
-とします。APIキー未設定・schema不整合・コード例外など他の failure では通知しません。Workflow step の条件を `failure() && steps.scan.outputs.retry_exhausted == 'true' && env.SLACK_WEBHOOK_URL != ''` に限定することで実現します。
-
-### 通知例
-
-```text
-⚠️ JP Inflection Shadow Scan FAILED
-
-株価データの取得が回復しませんでした。
-
-expected: 2026-09-28
-universe: 3704
-missing: 1200
-price_data: 2504
-price_coverage: 67.6% (< 70%)
-latest_coverage: 99.6% (>= 80%)
-failed_gate: price_coverage
-attempts: 3  ({{ steps.scan.outputs.attempts }} を参照。固定値ではなく `INFLECTION_PRICE_RETRY_COUNT` に応じて可変)
-
-GitHub Actions:
-https://github.com/.../actions/runs/...
-```
-
-未達だった gate（`price_coverage` / `latest_coverage`）を明示し、最新日カバレッジが正常でも価格取得率不足で失敗した場合に誤った理由を通知しないようにします。
-
----
-
-## 10. エラー種別ごとの扱い
-
-| エラー | 処理 |
-|---|---|
-| Yahoo 最新日不足 | 自動再試行 |
-| Yahoo 一時通信失敗 | 自動再試行 |
-| 一部 ticker 取得失敗 | 現在の ticker 単位 retry |
-| J-Quants 一時通信エラー | 今回の対象外。現状どおり即 Failure（回数・待機・対象例外が未定義のため、必要になれば別計画で対応） |
-| APIキー未設定 | 即 Failure |
-| 暗号化キー未設定 | 即 Failure |
-| Schema不整合 | 即 Failure |
-| コード例外 | 即 Failure |
-| retry設定（環境変数）不正 | 即 Failure（設定エラー、`PriceDataRetryExhausted`にせずSlack通知対象外） |
-
-「待てば直る可能性がある外部データ障害」だけを再試行対象にします。
-
----
-
-## 11. 安全装置
-
-以下の閾値は維持します。`MIN_PRICE_COVERAGE` と `MIN_LATEST_DATE_COVERAGE` は `src/screening/inflection_live.py` に定義し、`scripts/run_inflection_shadow.py` はそこから import して使う single source of truth とします（値を複製しません）。
-
-```python
-MIN_UNIVERSE_COUNT = 3000
-MIN_PRICE_COVERAGE = 0.70
-MIN_TECHNICAL_COVERAGE = 0.60
-MIN_LATEST_DATE_COVERAGE = 0.80
-```
-
-また、再試行中の不完全データについては以下を行いません。
-
-```text
-inflection_candidates.enc 更新
-snapshot 作成
-Git commit
-```
-
-正常性確認後にのみ保存します。
-
----
-
-## 12. 必須テスト
-
-### 1. 初回正常
-
-```text
-99% coverage
-→ retryなし
-→ success
-```
-
-### 2. 1回目で回復
-
-```text
-0.1%
-→ Retry #1
-→ 99%
-→ success
-```
-
-### 3. 2回目で回復
-
-```text
-0.1%
-→ 60%
-→ 99%
-→ success
-```
-
-### 4. 最後まで回復しない
-
-```text
-0.1%
-→ 5%
-→ 10%
-→ failure
-→ Slack通知対象
-```
-
-### 5. stale銘柄のみ再取得
-
-```text
-3704銘柄中100銘柄だけ stale
-→ 100銘柄だけ再取得
-```
-
-### 6. 保存防止
-
-最終 Failure の場合、
-
-```text
-snapshot
-latest
-```
-
-を更新しないこと。
-
-### 7. 休日
-
-土日・東証休場日は直前営業日を正常な最新日として扱うこと。
-
-### 8. 設定ミス
-
-APIキーや暗号化キーの異常は待機せず即 Failure とすること。`INFLECTION_PRICE_RETRY_COUNT` / `INFLECTION_PRICE_RETRY_WAIT_SECONDS` が不正（負数・非整数・個数不一致）な場合も同様に、待機・再試行せず即 Failure とし、`PriceDataRetryExhausted` にせず Slack 通知対象にも含めないこと。
-
-### 9. 未取得銘柄を含むカバレッジ回復
-
-```text
-3704銘柄中1200銘柄が未取得（price_dataに含まれない）
-→ price_coverage = 2504 / 3704 = 67.6%（< 70%）のため最新日カバレッジが100%でも再試行される
-→ 未取得銘柄を再取得
-→ price_coverage 70%以上・latest_coverage 80%以上で success
-```
-
-### 10. 想定外エラーでは通知しない
-
-```text
-APIキー未設定などscan前に失敗
-→ retry_exhausted は書き込まれない
-→ Slack通知されない（Workflow Failureのみ）
-```
-
-### 11. GITHUB_OUTPUT 未設定環境
-
-```text
-ローカル実行など GITHUB_OUTPUT 未設定
-→ 再試行枯渇時、output書き込みをスキップ
-→ PriceDataRetryExhausted をそのまま再送出（元の例外を握り潰さない）
-```
-
----
-
-## 13. 完成後の動作イメージ
-
-```text
-初回取得
-latest coverage = 0.1%
-
-↓ 自動判断
-
-3分待機
-
-↓
-
-Retry #1
-latest coverageを再確認
-
-↓ まだ不足
-
-7分待機
-
-↓
-
-Retry #2
-
-├─ 回復
-│   → 通常処理
-│   → snapshot保存
-│   → Success
-│   → Slackなし
-│
-└─ 回復しない
-    → snapshot保存しない
-    → Workflow Failure
-    → Slack通知
-```
-
----
-
-## 14. 完了条件
-
-以下をすべて満たしたら実装完了とします。
-
-- 価格取得率または最新日カバレッジが閾値未満のとき自動再試行される（未取得銘柄が多い場合を含む）
-- 未取得銘柄・stale銘柄のみ再取得される
-- 期待営業日の基準時刻（`generated_at`）が scan開始時に一度だけ確定され、再試行判定と最終reportで同一の値が使われる
-- 初回の一時的な外部データ遅延では Slack 通知されない
-- 価格データの再試行が3回とも枯渇した場合（`retry_exhausted == 'true'`）のみ Slack 通知される。APIキー未設定・schema不整合・コード例外など他の failure では通知されない
-- Slack通知・ログの診断情報に `universe`, `missing`, `price_coverage`, `latest_coverage`, 未達 gate が含まれ、最新日カバレッジが正常でも価格取得率不足で失敗した場合に誤った理由が通知されない
-- 価格データ再試行枯渇のみを表す専用例外で失敗詳細が `run_inflection_shadow.py` へ伝搬し、他の例外はこの経路を通らない（終了コードは維持される）
-- `GITHUB_OUTPUT` が未設定（ローカル実行など）でも `PriceDataRetryExhausted` が握り潰されずそのまま再送出される
-- `price_coverage = price_data / universe`・`latest_coverage = fresh / price_data` の定義と閾値（70%・80%）が計画・ログ・Slack通知例・テストで統一されている
-- Slack通知の `attempts` は `PriceDataRetryExhausted` → `$GITHUB_OUTPUT` → `steps.scan.outputs.attempts` を経由した実際の総試行回数であり、`INFLECTION_PRICE_RETRY_COUNT` の変更時も固定値化・誤報しない
-- retry環境変数（`INFLECTION_PRICE_RETRY_COUNT` / `INFLECTION_PRICE_RETRY_WAIT_SECONDS`）が不正な場合は起動時に即Failureとなり、`PriceDataRetryExhausted` にもSlack通知対象にもならない
-- 不完全な snapshot が保存されない
-- `MIN_LATEST_DATE_COVERAGE = 0.80` と `MIN_PRICE_COVERAGE = 0.70` は `src/screening/inflection_live.py` に単一定義され、`scripts/run_inflection_shadow.py` はそれを import して使う
-- 既存テストと追加テストがすべて通る
-- 正常時の既存 Workflow の挙動を壊さない
+## 実装計画: snapshot schema 5（生特徴量の保存＋対照群）— REQ-037 / REQ-038
+
+> 入力: [proposal.md](proposal.md)
+> 以前の plan.md（価格取得の再試行、実装済み）は [plan_price_retry.md](plan_price_retry.md) に移した。
+
+### 目的
+日次 scan の snapshot に、学習で必要な生特徴量・スコア内訳・開示日・業種（REQ-037）と、流動性フィルタ通過銘柄からの無作為な対照群（REQ-038）を保存する。スコア計算・分類・候補選定は変えず、v3 の蓄積データはそのまま評価に使い続ける。
+
+### スコープ
+- 含むもの:
+  - `REPORT_SCHEMA_VERSION` を 4 → 5 に変更（`STRATEGY_VERSION` は v3 のまま）
+  - candidate への `features`、`score_details`、`pre_score`、`sector33_code`、`sector33_name` の追加
+  - report への `control_sample`、`control_sample_size`、`control_sample_seed` の追加、`scan_parameters.control_sample_size` の追加
+  - forward loader（schema 4/5 の混在を許可）、learning loader（schema 5 の受け入れと新フィールドの読み込み）、`validate_report`（schema 5 の検査）の対応
+  - 上記のテスト
+- 含まないもの:
+  - 対照群を使った学習・評価（learning のベースライン、forward の control グループ）
+  - 新しい特徴量（最大日次リターンなど）の追加
+  - スコア計算・分類の変更
+  - workflow の変更（実行時間は直近 11.5〜15.3 分。最悪でも約31分で、45分の制限内）
+
+### 影響範囲（変更/追加予定ファイル）
+- `src/screening/inflection_live.py`: schema 5 の出力、candidate の評価処理の関数化、対照群の抽出
+- `src/evaluation/inflection_forward.py`: schema 互換グループ {4, 5} の導入
+- `src/evaluation/inflection_learning.py`: `SUPPORTED_SCHEMA_VERSIONS` に 5 を追加、新フィールドの検査と読み込み
+- `scripts/run_inflection_shadow.py`: `validate_report` に schema 5 の検査を追加
+- `tests/test_inflection_live.py`、`tests/test_inflection_forward.py`、`tests/test_inflection_learning.py`、`tests/test_shadow_health.py`: 既存アサーションの更新とテストの追加
+
+### 実装ステップ
+
+#### Step 1: candidate の評価処理を関数化する（挙動は変えない）
+- [ ] **最初に**、受入条件 3b の期待値（Step 7 の forward テストの項）を、変更前のコードで固定する
+- [ ] `scan_japan_inflection` のループ本体（[inflection_live.py:441-496](../../src/screening/inflection_live.py#L441-L496)）を、`_evaluate_candidate(ticker, tech, pre_score, *, client, ticker_meta, fundamental_limitation) -> LiveCandidate` に切り出す
+- [ ] `preselected` を切り詰める前の一覧（流動性フィルタを通過した全銘柄の `(pre_score, ticker, tech)`）を `liquid` として残す
+**検証**: この段階で `pytest tests/test_inflection_live.py` が無変更のまま PASS する（純粋なリファクタリング）
+
+#### Step 2: REQ-037 — candidate に生特徴量などを追加する
+- [ ] `LiveCandidate` に次のフィールドを追加する: `features: dict[str, Any]`、`score_details: dict[str, float]`、`pre_score: float`、`sector33_code: str | None`、`sector33_name: str | None`
+- [ ] `features` のキーは次の8つに固定する: `revenue_growth_yoy_pct`、`operating_profit_growth_yoy_pct`、`operating_margin_change_pctpt`、`turned_profitable`、`upward_revision_pct`、`negative_operating_cashflow`、`latest_actual_disclosure_date`、`latest_disclosure_date`。`_fundamental_features()` の戻り値から取り、欠けている場合は数値と日付を `None`、真偽値を `False` にする（モジュール定数 `FEATURE_KEYS` で一覧化する）
+- [ ] `score_details` = `raw.details` ＋ `{"fundamental": raw.fundamental, "momentum": raw.momentum, "risk_penalty": raw.risk_penalty}`
+- [ ] `sector33_code` / `sector33_name` は master 行の `S33` / `S33Nm` から取る。空文字や欠損は `None` にする
+- [ ] `REPORT_SCHEMA_VERSION = 5`
+**検証**: fake client を使った scan で、candidate の `features` が `_fundamental_features()` と一致する。財務がない場合でも8キーがそろう
+
+#### Step 3: REQ-038 — 対照群を抽出して保存する
+- [ ] モジュール定数 `DEFAULT_CONTROL_SAMPLE_SIZE = 25` を置き、`scan_japan_inflection(..., control_sample_size: int = DEFAULT_CONTROL_SAMPLE_SIZE)` を追加する。`0` を許可し（負数は `ValueError`）、0 のときは抽出も財務取得も行わず `control_sample=[]` とする
+- [ ] seed = `int.from_bytes(hashlib.sha256(expected_date.encode()).digest()[:8], "big")`
+- [ ] `random.Random(seed).sample(sorted(liquid の ticker), k=min(control_sample_size, len(liquid)))` で抽出する。ticker をソートしてから抽出するのは、`prices` の dict の順序に結果が依存しないようにするため
+- [ ] deep 側で評価済みの ticker は、`dict[str, LiveCandidate]` のキャッシュから再利用し、J-Quants を再度呼ばない
+- [ ] report に `control_sample`（`as_dict()` の list、ticker 順）、`control_sample_size`（要求数）、`control_sample_seed` を追加し、`scan_parameters["control_sample_size"]` を追加する
+- [ ] `candidates`、`deep_candidate_count`、`classification_counts` の計算は deep 側だけで行う（対照群を混ぜない）
+**検証**: 同じ入力での2回の scan で `control_sample` が一致する。重複銘柄の `financial_summary` 呼び出しが1回になる
+
+#### Step 4: forward loader の schema 互換性
+- [ ] [inflection_forward.py](../../src/evaluation/inflection_forward.py) に `COMPATIBLE_SCHEMA_GROUPS = ({4, 5},)` を置き、`_schema_family(version) -> frozenset[int]`（グループに属すればそのグループ、属さなければ `{version}`）で比較する
+- [ ] 混在の判定を `schema_version != expected_schema_version` から「family が異なる」に変える。strategy_version の不一致は従来どおり拒否する
+- [ ] signal の `report_schema_version` には、各 snapshot の実際の値を入れる（従来どおり）
+**検証**: 既存の `test_load_inflection_signals_rejects_mixed_versions`（strategy の不一致、schema 3↔4）は変更なしで PASS する。新規テストで 4↔5 の混在が成功する
+
+#### Step 5: learning loader の schema 5 対応
+- [ ] `CURRENT_SCHEMA_VERSION = 5`、`SUPPORTED_SCHEMA_VERSIONS = (3, 4, 5)` とし、`near_*` の bool 検査を schema 4 と 5 に適用する
+- [ ] schema 5 では、`features` と `score_details` が dict、`pre_score` が **bool を除く有限の数値**（`isinstance(x, (int, float)) and not isinstance(x, bool) and isfinite(x)`）であることを検査し、違反時は `SnapshotLoadError`。Step 6 の保存前検査と同じ条件にする
+- [ ] observation に `features`、`score_details`、`pre_score`、`sector33_code` を追加する（schema 3/4 では `None`）
+- [ ] `control_sample` は読み込まない（スコープ外）
+- [ ] `factor_labels` と集計は変更しない
+**検証**: schema 3/4/5 の混在ディレクトリを読み込める。schema 5 の不正な `features` を拒否する
+
+#### Step 6: validate_report の schema 5 検査
+- [ ] `report_schema_version >= 5` のとき、**candidates と control_sample の両方の全行**について、次を同じ関数（`_validate_schema5_row`）で検査する:
+  - 行が dict である
+  - `ticker` が非空の文字列である
+  - `features` と `score_details` が dict である
+  - `pre_score` が bool を除く有限の数値である（NaN と inf は拒否。Step 5 の learning 側と同じ条件）
+- [ ] 加えて、`control_sample` が list で、件数が `min(control_sample_size, liquid_candidate_count)` と一致し、ticker の重複がないことを検査する
+- [ ] 違反時は `RuntimeError("DATA_HEALTH: ...")`
+- [ ] schema 4 の report（既存の `_healthy_report`）は従来どおり通す
+**検証**: `tests/test_shadow_health.py` で、正常な schema 5 report が通ることを確認する。また、次のそれぞれが拒否されることを確認する:
+- candidate の `features` の欠落
+- `pre_score` が `NaN` / `inf` / `True`
+- control_sample の不正な行（`features=None`、`score_details` の欠落、`pre_score` の欠落、空の ticker）
+- 件数の不一致
+- ticker の重複
+
+#### Step 7: テストの更新・追加
+- [ ] `test_inflection_live.py`: `REPORT_SCHEMA_VERSION == 4` → `5` に変更
+- [ ] `test_inflection_live.py`: `deep_candidates=0` で財務取得を避けている既存の scan 呼び出し**すべて**（現時点で L279、L316、L346、L381、L416）に `control_sample_size=0` を追加する。対象には `test_scan_retries_only_stale_tickers_and_recovers`、`test_scan_retries_missing_tickers_when_price_coverage_is_low`、`test_scan_recovers_on_second_retry` を含む。これを行わないと、既定の対照群が `FakeJQuantsClient.financial_summary` の `code == "11110"` という assert に当たり、既存テストが失敗する
+- [ ] `test_inflection_live.py`: REQ-037 の受入条件 1・2、REQ-038 の受入条件 1〜4 のテストを追加する。対照群のテストでは、複数銘柄に対応し呼び出し回数を数える fake client（`MultiCodeFakeClient`）を新しく作って使う。`control_sample_size=0` のときに財務取得の回数が増えないこと（deep 側の分だけであること）も確認する
+- [ ] `test_inflection_forward.py`: 4↔5 の混在が成功するテスト
+- [ ] `test_inflection_forward.py`: **受入条件 3b**。実装に手を付ける前に、既存の `test_load_inflection_signals_accepts_v3_schema4_snapshot` を拡張し、固定の schema 4 入力に対して**現在の（変更前の）loader が返す signal の list 全体**を、リテラルの期待値として書き込む。この期待値をコミット前の現行コードで PASS させて固定する。その後の変更で、単独読み込みと schema 5 との混在読み込みの両方が、この期待値と一致することを確認する
+- [ ] `test_inflection_learning.py`: `test_loader_rejects_unsupported_schema` の parametrize から `5` を除き `6` を加える。schema 5 の読み込み、不正な `features` の拒否のテストを追加する
+- [ ] `test_shadow_health.py`: Step 6 のテスト
+**検証**: `.venv/bin/python -m pytest tests/ -q`、`ruff check src scripts tests`、test.yml の mypy 対象がすべて PASS する
+
+### 例外・エラーハンドリング方針
+- 書き込み側（scan）: 財務の欠損は `None` / `False` で埋め、エラーにしない（従来の欠損時の挙動と同じ）。J-Quants の通信エラーは従来どおり scan を失敗させる（対照群の取得だけを黙って省くことはしない。部分的に欠けた snapshot を残さないため）
+- 保存前（`validate_report`）: schema 5 の構造違反は `DATA_HEALTH` で fail closed にし、snapshot を書かない
+- 読み込み側（forward / learning）: 構造違反は従来どおり `SnapshotLoadError` で fail closed にする
+
+### テスト/検証方針
+- 自動テスト: `.venv/bin/python -m pytest tests/ -q`、`.venv/bin/ruff check src scripts tests`、`.venv/bin/mypy --ignore-missing-imports <test.yml の対象>`
+- 手動確認観点:
+  - [ ] マージ後の最初の日次 scan が成功し、`dashboard/data/inflection/v3/` に新しい snapshot が追加される（GitHub Actions のログで `snapshot_created=True` を確認）
+  - [ ] 実行時間が 45 分以内で、増分が約5分である
+  - [ ] 直後の週次 forward validation（schedule 実行）が、schema 4/5 の混在で成功する
+  - [ ] 【任意・鍵が必要】ローカルで最新の snapshot を復号し、`features` と `control_sample` が入っていることを確認する
+
+### リスクと対策
+1. リスク: 実データで master の `S33` が想定外の形式（数値型など）で返る → 対策: `str()` で文字列にし、空なら `None` とする。`validate_report` では業種を必須にしない
+2. リスク: 対照群の J-Quants 呼び出しでレート制限（429）に当たり、scan 全体が失敗する → 対策: 既存の `min_interval=12.2s` と再試行を使う。初回の本番実行後に失敗が出たら、`control_sample_size` を下げて対応する（定数1か所の変更）
+3. リスク: forward の schema 互換を緩めることで、本当に非互換な schema が混入する → 対策: 互換グループを {4, 5} に明示的に限定し、3↔4 の拒否テストは維持する。今後 schema を上げるときは、互換かどうかをこの定数で明示的に判断する
+4. リスク: マージから最初の scan までの間に schema 4 と 5 の手動実行が交ざる → 対策: 同じ日の snapshot は上書きしない既存仕様のままで問題ない（どちらも読める）
+
+### 完了条件
+- [ ] REQ-037 の受入条件 1〜6（3b を含む）を満たすテストが PASS する
+- [ ] REQ-038 の受入条件 1〜6 を満たすテストが PASS する
+- [ ] `pytest`、`ruff`、`mypy` がすべて PASS する
+- [ ] `STRATEGY_VERSION` が `jp-inflection-shadow-v3` のまま、保存先が `dashboard/data/inflection/v3/` のままである

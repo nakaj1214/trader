@@ -1,137 +1,162 @@
-## 実装計画: 価格取得の共通化と、自己学習の昇格判定の統計的補強 — REQ-042 / REQ-043 / REQ-044
+## 実装計画: 売却ルールの比較検証、相場環境の層別評価、stop 接近の事前警告 — REQ-045 / REQ-046 / REQ-047
 
 > 入力: [proposal.md](proposal.md)
-> 以前の plan.md（B1、REQ-039〜041、実装済み）は [plan_req039-041.md](plan_req039-041.md) に移した。
+> 以前の plan.md（REQ-042〜044、実装済み）は [plan_req042-044.md](plan_req042-044.md) に移した。
 
 ### 目的
-週次 CI の価格取得を、forward と learning で共通の1回のバッチ取得にまとめ、データが増えても30分の制限に収まるようにする（REQ-042）。自己学習の昇格判定に、有意性検定と多重比較の補正を入れる（REQ-043）。「爆発」の定義を1か所に集約し、ボラティリティで正規化した定義を診断用に併記する（REQ-044）。戦略、snapshot、本番のスコアは変えない。
+売却ルールの候補4つを、既存の trailing stop と同じ約定の仮定で比較できるようにする（REQ-045）。相場環境（トレンドとボラティリティ）を point-in-time で判定し、自己学習の factor と成績の層別集計に加える（REQ-046）。Position Monitor に、stop まで残り 3% 以下の事前警告を加える（REQ-047）。戦略、snapshot、Monitor の売却判定は変えない。
 
-### 前提（Step 0 で満たす）
-- A9 の修正は `d610dfa` でコミット済み（2026-10-01、別セッション）。REQ-042 は、このコミットの挙動（split only 基準 = `auto_adjust=False` の OHLC をそのまま使う）を基準にする。
+### 前提
+- REQ-042〜044 はコミット済み（`324a765`）。作業ツリーに未コミットのコード変更はない（2026-10-01 に `git status` と `git diff HEAD` で確認済み。残っているのは proposal/plan のリネームと新しい proposal.md だけ）。
 
 ### 提案からの変更点（調査で判明した事項）
-1. **split only 基準の定義が A9 で変わった。** 提案は「`history(auto_adjust=False, actions=True)` → `split_adjust_ohlc`」の値と一致させるとしていた。しかし A9 で `split_adjust_ohlc` は削除され、split only 基準は「**`auto_adjust=False` の OHLC をそのまま使う**」になった（Yahoo の値はすでに分割調整済みであるため）。REQ-042 は、この**A9 修正後の挙動**と一致させる。
-2. **total return 基準は、yfinance 自身の `yfinance.utils.auto_adjust()` で導出する。** これは `Adj Close / Close` の比を O/H/L に掛ける公開関数で、`history(auto_adjust=True)` が内部で使う処理と同じ。計算式をこちらで書き直さない。
-3. **取得期間は、forward と learning で共通の1つの期間にする**（review #1）。開始は「**legacy（`dashboard/data/inflection/`）と v3 の両方の snapshot のうち、最も早い日付** − 100日」、終了は「今日 + 1日」とする（提案は −45日）。100日は、REQ-044 のボラティリティの計算に必要な、シグナル日より前の60営業日分のリターン（61本の終値）に、祝日と余裕を足した値である。snapshot の日付はファイル名（`YYYY-MM-DD.enc`）から取れるので、復号せずに計算できる。この計算は共通の関数 `shared_price_window(snapshot_dirs, today)` に置き、forward と learning の両方が使う。**引数には、CLI で解決した実際の入力ディレクトリを渡す**（既定のディレクトリを関数の中で決め打ちしない。再レビュー #1）。既定の実行では、両方の処理が同じ2つのディレクトリ（`dashboard/data/inflection/v3/` と `dashboard/data/inflection/`）を渡すので、期間が一致する。forward が評価する対象は、これまでどおり v3 だけである（期間を揃えるのは取得だけ）。
-4. **Fisher の検定は両側にする**（提案は「方向別の片側」）。lift の向きを見てから片側検定の方向を選ぶと、事実上の検定数が倍になり、偽の昇格が増えるため。p 値は両側で計算し、方向は lift と超過リターンの符号で決める（現行の方向判定のまま）。
-5. **既存の取得テストは書き直しが必要である。** `tests/test_inflection_forward.py`（14か所）と `tests/test_inflection_learning.py`（7か所）は `yfinance.Ticker` または `yfinance.download` を直接モックしている。取得の経路が変わるので、テストの観点（再試行、5%の許容、銘柄名の秘匿、ログの抑制、取得期間）は維持したまま、新しいモジュールに対するテストへ移す。
-6. **価格ハッシュは、銘柄ごとに従来の取得期間で切り出したフレームから計算する**（review #2）。`_history_row_hashes` は、フレームの先頭行だけをその行自身の OHLC で正規化し、それ以外の行は前日の終値で正規化する。そのため、取得の開始を早めると、従来は先頭だった日付が途中の行になり、価格が同じでもハッシュが変わって、偽の「改訂」が記録される。そこで、評価やボラティリティには広い期間のフレームを使い、ハッシュの計算にだけ、従来と同じ開始日（その銘柄の最も早いシグナル日 − 10日、ベンチマークは − 45日）以降を切り出したフレームを渡す。`_changed_price_rows` は保存済みの日付と新しい日付の共通部分だけを比べるので、終了側が延びても改訂にはならない。
-7. **未完了の horizon では、ボラティリティ正規化の爆発を `None` にする**（review #3）。直近の観測では、σ を計算できる61本の過去の終値があっても、h60 などの最大リターンはまだ `None` である。`is_vol_explosion` は、最大リターン・σ のどちらかが `None` なら `None` を返す。learning は、horizon が未完了（`completed=False`）なら関数を呼ばずに `vol_explosive=None` とする。
+1. **取得期間の延長幅を 420日 から 460日 にする。** トレンドの判定（200日移動平均）とボラティリティの判定（252日分の20日ボラティリティの中央値）には、シグナル日より前に 252 + 20 + 1 = 273本の終値が必要である。2025-01〜2026-09 の各週について TSE の営業日を数えると、420日では最悪 276本（余裕3本）しかなく、Yahoo の欠損日が数日あるだけで最初のシグナルが `unknown` になる。460日なら最悪でも 303本ある。
+2. **既存の trailing stop と同じ約定の仮定を確実に保つため、`simulate_signal` の「売却後の指標計算」部分を共通関数として切り出し、新しいシミュレーターも同じ関数を使う。** 受入条件 1（新しいシミュレーターで trailing を表すと、既存と一致する）は、固定 seed の合成データ200通りで確かめる。
+3. **段階利確は、利確済みの数量と残りの数量を持つ状態として判定する**（review #2）。時系列が確定している寄付を先に処理し、寄付で利確しても、同じ日の残りの数量に対する stop の判定は続ける。「stop を先とみなす」（保守的な仮定）は、**寄付では利確が成立せず、日中に目標と stop の両方に触れて、順序が分からない場合だけ**に限る。利確は最初の1回だけで、以後は残りの数量の trailing だけを判定する。
+4. **ATR は、判定日の前日までの22日の True Range の単純平均とする**（Wilder 平滑化ではない。計算が単純で、先読みしないことをテストで確かめやすい）。保有開始前の価格も使う。22日分の履歴がない場合は、その trade を `insufficient_history` として未完了扱いにする。
+5. **複数回に分けて売る trade では、損益の計算と、最終の売却価格を分けて扱う**（review #1）。損益（粗利益・純利益）は、各売却の割合で加重平均する。`TradeResult.exit_date` と `exit_price` は**最後に売った日と、その実際の約定価格**とし、加重平均の価格は入れない。株価に関する指標（最大リターン、最大ドローダウン、MFE、MAE、ピークからの戻し、売却後のリターン）は、**ポジションの価値ではなく株価の動き**で測り、期間は最後に売った日までとする。売却後のリターンの基準は、最後の約定価格である。各回の売却は、`TradeResult` に追加する任意のフィールド `exit_legs`（`[[日付, 価格, 割合], ...]`、既定値 `None`）に記録する。1回で売る trade では、`exit_legs` は `None` のままで、他のすべての値は従来と同じになる。
 
 ### スコープ
-- 含むもの: REQ-042、REQ-043、REQ-044 と、それらのテスト
-- 含まないもの: 昇格の「連続複数週」条件、Beta-Binomial、ボラティリティ正規化の爆発を昇格判定に採用すること、workflow の制限時間の変更、戦略・snapshot・本番スコアの変更
+- 含むもの: REQ-045、REQ-046、REQ-047 と、それらのテスト
+- 含まないもの: 売却ルールの Monitor への採用、regime による戦略の切り替え、決算発表日と過熱の警告、Deflated Sharpe Ratio、パラメータの探索
 
 ### 影響範囲（変更/追加予定ファイル）
-- `src/data/forward_prices.py`（新規）: バッチ取得、2基準の導出、job 内キャッシュ、取得失敗の許容
-- `scripts/rebuild_inflection_forward_validation.py`: `_fetch_adjusted_histories` を新モジュールに置き換える（3回の取得 → 1回）
-- `scripts/rebuild_inflection_learning.py`: `_fetch_learning_histories` を新モジュールに置き換える（キャッシュを利用）
-- `src/evaluation/explosion.py`（新規）: 爆発の定義の定数と、ボラティリティ正規化の判定関数
-- `src/evaluation/inflection_learning.py`: Fisher 検定、BH 補正、Wilson 信頼区間、昇格条件、ボラティリティ正規化の爆発、定義の出力
-- `src/evaluation/inflection_recall.py`、`src/evaluation/inflection_backtest.py`: 定数を `explosion.py` から import する（値は変えない）
-- `tests/test_forward_prices.py`、`tests/test_explosion.py`（新規）、`tests/test_inflection_forward.py`、`tests/test_inflection_learning.py`（取得テストの移し替え、新しい判定のテスト）
-- `.github/workflows/test.yml`: mypy 対象に新規ファイルを追加
-- `.gitignore`: 変更不要（`artifacts/` は無視済み）
+- `src/evaluation/inflection_backtest.py`: `simulate_signal` の売却後の指標計算を `_finalize_trade()` に切り出す（挙動は変えない）
+- `src/evaluation/exit_rules.py`（新規）: 4つのルールと、1日ずつ判定するシミュレーター `simulate_exit_rule()`
+- `src/evaluation/inflection_report.py`: exit 比較の集計ブロックを関数にまとめ、新しいルールを追加する。`_report_breakdowns` に regime 別の成績を追加する
+- `src/evaluation/regime.py`（新規）: トレンドとボラティリティの判定
+- `src/evaluation/inflection_learning.py`: 評価時に regime の factor ラベルを付ける
+- `src/data/forward_prices.py`: `PRIOR_HISTORY_DAYS` を 100 → 460
+- `scripts/run_position_monitor.py`、`src/data/sheets_client.py`: 事前警告と `last_warned_at` 列
+- テスト: `tests/test_exit_rules.py`、`tests/test_regime.py`（新規。新しいモジュールにはそれぞれ専用のテストを置くのが、探しやすく、モジュールとの対応も明確なため）、`tests/test_inflection_backtest.py`、`tests/test_inflection_forward.py`、`tests/test_inflection_learning.py`、`tests/test_forward_prices.py`、`tests/test_run_position_monitor.py`、`tests/test_sheets_client.py`（既存を拡張）
+- `.github/workflows/test.yml`（mypy 対象）、`.github/workflows/forward_validation.yml`（起動パスとテスト一覧）
 
 ### 実装ステップ
 
-#### Step 0: 前提を満たす
-- [ ] 作業ツリーに、他のセッションの未コミットの変更（特に REQ-042 が変更するファイル）がないことを `git status` で確認する。あれば着手しない（ユーザーに報告して待つ）
-- [ ] `pytest tests/` が PASS することを確認する（着手前の基準線）
-**検証**: 作業ツリーに A9 の未コミット変更がない
+#### Step 1: `simulate_signal` の指標計算を切り出す（挙動は変えない）
+- [ ] `simulate_signal` のうち、売却が決まった後の処理（`realized_closes` の作成から `TradeResult` の生成まで: 粗利益、最大リターン、最大ドローダウン、MFE、MAE、ピークからの戻し、ピーク捕捉率、売却後のリターン）を、`_finalize_trade(ticker, signal_date, score, entry_date, entry_price, exits, window, highs, lows, closes, *, exit_reason, has_full_horizon, round_trip_cost_pct, apply_tax, tax_rate_pct)` に切り出す
+  - `exits` は `[(日付, 価格, 割合), ...]`。trailing では割合 1.0 の1件。粗利益は `Σ 割合 × (価格 / entry − 1)` とする（変更点 5）
+  - `exit_date` と `exit_price` は `exits` の最後の要素の日付と価格（実際の約定価格）。ピークからの戻しと売却後のリターンは、最後の約定価格を基準にする。最大リターン・最大ドローダウン・MFE・MAE は、entry から最後の売却日までの株価で測る
+  - `exits` が2件以上なら `exit_legs` に記録する。1件なら `None`（従来の出力と同じ）
+  - `TradeResult` に `exit_legs: list[list[Any]] | None = None` を末尾に追加する（既定値があるので、既存の生成箇所は変わらない）
+- [ ] `simulate_signal` は、売却の判定だけを行い、`_finalize_trade` を呼ぶ形にする
+**検証**: `tests/test_inflection_backtest.py` と `tests/test_inflection_forward.py` が無変更で PASS する
 
-#### Step 1: REQ-044 — 爆発の定義を集約する（値は変えない）
-- [ ] `src/evaluation/explosion.py` を作り、次を名前付きの定数として置く。それぞれの意味をコメントで明記する
-  - `HORIZON_MAX_RETURN_PCT = {5: 15.0, 20: 25.0, 60: 40.0, 120: 60.0}`（learning。horizon 別、保有期間中の最大リターン）
-  - `FIXED_MAX_RETURN_PCT = 50.0`（backtest の `explosive_50pct`。保有期間中の最大リターン）
-  - `TRACKED_POOL_THRESHOLD_PCT = 50.0` と `TRACKED_POOL_SEARCH_DAYS = 252`（recall。最初の観測日の終値から、252営業日以内に +50% の終値）
-  - `VOL_EXPLOSION_K = 3.0`、`VOL_LOOKBACK_SESSIONS = 60`
-- [ ] `explosion_definitions() -> dict` が、上記をレポートに出す形で返す
-- [ ] learning（`EXPLOSION_MAX_RETURN_PCT` は `HORIZON_MAX_RETURN_PCT` の別名として残し、既存の import を壊さない）、backtest（`explosive_50pct` と `summarize_trades` の50.0）、recall（引数の既定値）を、この定数に置き換える
-**検証**: 既存の learning・forward・recall・backtest のテストが変更なしで PASS する。`grep -nE "\b(15|25|40|60|50)\.0\b"` で、3つのモジュールに爆発の閾値が直書きで残っていないことを確かめる
+#### Step 2: REQ-045 — 売却ルールのシミュレーター
+- [ ] `exit_rules.py` に、ルールを frozen dataclass で定義する
+  - `TrailingRule(stop_pct)`（受入条件 1 の比較用）
+  - `ChandelierRule(atr_multiple=3.0, atr_window=22)`
+  - `MovingAverageBreakRule(ema_span=10, activation_gain_pct=20.0)`
+  - `TimeStopRule(check_day=15, min_gain_pct=5.0, then_trailing_pct=15.0)`
+  - `PartialTakeProfitRule(target_gain_pct=50.0, fraction=0.5, trailing_pct=15.0)`
+- [ ] `simulate_exit_rule(signal, history, rule, *, holding_days, round_trip_cost_pct)`:
+  - entry は `simulate_signal` と同じ（シグナル日の翌営業日の寄付）
+  - 保有0日目から1日ずつ判定する。判定の順序は既存の trailing と同じ（その日の寄付 → 日中の安値・高値 → 終値）
+  - **Chandelier**: stop = 前日までの HWM − 3.0 × 前日までの ATR(22)。寄付が stop 以下なら寄付で、安値が stop 以下なら stop 価格で売る。HWM はその日の判定のあとに高値で更新する
+  - **移動平均割れ**: 終値までの最大含み益（終値基準）が +20% 以上になった日以降、終値が10日 EMA（`ewm(span=10, adjust=False)`、保有開始前の終値も使う）を下回ったら、**翌営業日の寄付**で売る。その日が最大保有日数の最終日なら、その日の終値で売る
+  - **時間 stop**: 15営業日目（保有0日目から数えて14日目）の終値で含み益が +5% 未満なら、翌営業日の寄付で売る。そうでなければ、翌日から trailing 15%（HWM は entry と15日目までの高値の最大値から始める）
+  - **段階利確**（変更点 3）: 状態として「残りの割合」（初め 1.0）と「利確済みか」を持つ。trailing 15% の stop は、前日までの HWM から計算し、残りの数量にかけ続ける。1日の判定は次の順に行う
+    1. 寄付が stop 以下: 残りを全量、寄付で売って終了
+    2. まだ利確しておらず、寄付が +50% 以上: 半分を寄付で売り、利確済みにする（**この日の判定は続ける**）
+    3. 日中:
+       - 利確済み（前の日まで、または手順2で利確した）で、安値が stop 以下: 残りを stop 価格で売って終了
+       - まだ利確しておらず、安値が stop 以下かつ高値が +50% 以上（順序が不明）: stop を先とみなし、残りを全量 stop 価格で売って終了
+       - まだ利確しておらず、高値だけが +50% 以上: 半分を +50% の価格で売り、利確済みにする
+       - まだ利確しておらず、安値だけが stop 以下: 全量を stop 価格で売って終了
+    4. 終了していなければ、その日の高値で HWM を更新する
+    - 例（review #2）: entry=100、前日までの HWM=140（stop=119）、当日の O/H/L=160/165/115 → 半分を 160（寄付）、残りを 119（stop）で売る
+    - 利確は1回だけ。利確済みの後に再び +50% 以上になっても、追加では売らない
+  - 最大保有日数に達したら、その日の終値で残りを売る
+  - 判定の途中で将来の日足がなくなり、売却が決まっていなければ、既存と同じく未完了（`horizon_matured=False`、損益 `None`）
+  - ATR の履歴が足りなければ `exit_reason="insufficient_history"` の未完了とする（変更点 4）
+  - O/H/L のいずれかに NaN があれば、既存の trailing と同じく `ValueError`
+  - 結果は `_finalize_trade` で `TradeResult` を作る。`exit_reason` には、ルールに応じた値（`chandelier_stop`、`chandelier_gap`、`ma_break`、`time_stop`、`partial_then_trailing_stop` など）を入れる
+**検証**: 受入条件 REQ-045 の 1〜4、6
 
-#### Step 2: REQ-044 — ボラティリティ正規化の爆発（診断用）
-- [ ] `explosion.py` に `realized_volatility(closes, signal_date, lookback=60) -> float | None` を置く。シグナル日**以前**の終値だけから、日次の対数リターンの標準偏差を計算する。終値が `lookback + 1` 本に満たなければ `None` を返す
-- [ ] `is_vol_explosion(max_return_pct: float | None, sigma: float | None, horizon, k) -> bool | None` を置く。条件は `log(1 + max_return_pct/100) ≥ k × σ × √horizon`（リターンを対数に揃えて比較する）。**`max_return_pct` と `sigma` のどちらかが `None` なら `None` を返す**（変更点 7）
-- [ ] learning の `evaluate_learning_observations` で、各 horizon の結果に `vol_explosive` を追加し、観測に `realized_volatility_60d` を追加する。**horizon が未完了（`completed=False`）なら、関数を呼ばずに `vol_explosive=None` とする。** 昇格判定と既存の `explosive` は変えない
-- [ ] learning と forward のレポートに `explosion_definitions` を追加する。learning の公開サマリーにも含める
-**検証**: 受入条件 REQ-044 の 3〜5
+#### Step 3: REQ-045 — exit 比較に新しいルールを追加する
+- [ ] `_build_group_report` の exit 比較のブロック（1つのルール × 保有日数について、通常コストと stress コストの集計を作る部分）を、`_exit_strategy_report(trades, stress_trades, *, rule, holding_days, benchmark_history)` にまとめる。既存の9通りは、この関数を使って同じ値を作る
+- [ ] 新しい4つのルールを、最大保有日数 126 で追加する。キーは `chandelier_3atr22_h126`、`ma10_break_after20_h126`、`time15d_5pct_then_trail15_h126`、`partial50_half_then_trail15_h126`。`rule` の欄に、パラメータを含むルールの説明を入れる
+**検証**: 受入条件 REQ-045 の 5（既存の9通りの値が変わらない。リファクタの前後で `_build_group_report` の出力を比べる回帰テストを追加する）
 
-#### Step 3: REQ-043 — Fisher 検定、BH 補正、Wilson 信頼区間
-- [ ] `inflection_learning.py` に、標準ライブラリだけで次の3つを実装する
-  - `fisher_exact_two_sided(a, b, c, d) -> float`: 超幾何分布（`math.comb`）。観測した表以下の確率を持つ表の確率の合計を p 値とする。浮動小数の比較には相対誤差 1e-7 の許容を入れる（scipy と同じ扱い）
-  - `benjamini_hochberg(p_values) -> list[float]`: 昇順に並べて `p × m / 順位` を計算し、後ろから累積最小を取り、1 で上限を切る。入力と同じ順序で返す
-  - `wilson_interval(successes, n, z=1.96) -> tuple[float, float] | None`: n = 0 なら `None`
-- [ ] `_factor_statistics` で、各 factor について「その factor を持つ観測」と「同じ horizon の独立観測のうち、その factor を持たない観測」の爆発の有無で2×2表を作り、`fisher_p_value` と `explosion_rate_ci95`（Wilson）を加える
-- [ ] `build_learning_report` で、**昇格対象（`promotion_strategy_version` の行）の全 factor × 全 horizon** の p 値に BH 補正をかけ、各 factor の統計に `bh_q_value` を書き戻す。BH の family は、2×2表が作れたすべての検定とし、件数が30未満の factor も含める（少ないほうに寄せず、保守的にする）
-- [ ] 昇格の条件に `bh_q_value ≤ PROMOTION_MAX_Q_VALUE`（0.10）を加える。件数、lift、超過リターンの符号の条件は現行どおり
-- [ ] 累積統計（全 strategy version の `factor_statistics`）にも、`fisher_p_value` と Wilson 区間を付ける。BH 補正は昇格対象だけにかける（累積統計は昇格に使わないため）
-- [ ] `promotion_gate` に、`test: "fisher_exact_two_sided"`、`correction: "benjamini_hochberg"`、`max_q_value`、`tests_in_family` を記録する
-**検証**: 受入条件 REQ-043 の 1〜6。Fisher は、教科書の例（Fisher の紅茶の例 3,1,1,3 → 両側 p = 0.4857）と、手で計算した小さい表で値を確かめる。BH は既知の例（p = [0.01, 0.04, 0.03, 0.005] → q = [0.02, 0.04, 0.04, 0.02]）で確かめる
+#### Step 4: REQ-046 — 相場環境の判定
+- [ ] `regime.py` に次を置く。どちらも `signal_date` 以前の終値だけを使う
+  - `trend_regime(closes, signal_date) -> "up" | "down" | "unknown"`: 最新の終値 ≥ 直近200本の単純平均なら `up`、未満なら `down`、200本未満なら `unknown`
+  - `volatility_regime(closes, signal_date) -> "high" | "normal" | "unknown"`: 日次対数リターンの直近20本の標準偏差 × √252 を当日の値とし、直近252営業日分の同じ値の中央値より大きければ `high`、それ以外は `normal`。273本未満なら `unknown`
+- [ ] `PRIOR_HISTORY_DAYS` を 460 にする（変更点 1）。コメントに必要本数の根拠を書く
+**検証**: 受入条件 REQ-046 の 1、2
 
-#### Step 4: REQ-042 — 共通のバッチ取得モジュール
-- [ ] `src/data/forward_prices.py` に `fetch_price_histories(tickers, start, end, *, cache_path, ...) -> PriceHistories` を置く
-  - `yf.download(tickers, start, end, group_by="ticker", auto_adjust=False, actions=True, progress=False, threads=True, timeout=15)` を50銘柄ずつ呼ぶ
-  - 銘柄ごとのフレームの切り出しは、既存の `_extract_ticker_frame`（`src/data/yfinance_prices.py`）を再利用する
-  - 再試行（最大2回、指数バックオフ）、yfinance のログ・stdout・stderr の抑制、例外メッセージに銘柄名を出さない処理は、learning の現行実装と同じにする
-  - 取得失敗が5%を超えたら `RuntimeError` で止める（A3 の規則）
-- [ ] `PriceHistories` は、生のフレームを持ち、2つの基準を返す
-  - `split_only()`: `auto_adjust=False` の OHLC をそのまま返す（A9 後の挙動）
-  - `total_return()`: `yfinance.utils.auto_adjust(frame)` の結果を返す
-- [ ] **job 内キャッシュ**: 取得した生フレームと、その取得期間（start, end）を `artifacts/price_cache.pkl` に保存する。次の呼び出しでは、キャッシュの期間が要求期間を含む銘柄はキャッシュを使い、それ以外の銘柄だけを取得する。キャッシュは信頼できるローカルファイルとして pickle を使う（同じ runner の中でしか使わず、git にも artifact にも出さない）
-**検証**: 受入条件 REQ-042 の 1〜5（モックの `yf.download` で確認する）
+#### Step 5: REQ-046 — 自己学習と層別集計
+- [ ] learning の `evaluate_learning_observations` で、ベンチマークの終値から各観測の regime を判定し、`factor_labels` の結果に `regime_trend:...` と `regime_vol:...` を追加する（`factor_labels` 関数自体は変えない）
+- [ ] `_report_breakdowns` に `regime_breakdown` を追加する。トレンドとボラティリティのそれぞれについて、regime ごとの件数、平均の純リターン、勝率、平均超過リターン（`paired_benchmark_returns`）を出す。既存の `score_band_sample_counts` と `regime_sample_counts` は変えない
+**検証**: 受入条件 REQ-046 の 3〜5
 
-#### Step 5: REQ-042 — forward と learning を新モジュールに切り替える
-- [ ] `src/data/forward_prices.py` に `shared_price_window(snapshot_dirs: list[Path], today) -> tuple[date, date] | None` を置く（変更点 3）。渡されたディレクトリの `YYYY-MM-DD.enc` のファイル名から最も早い日付を取り、「その日 − 100日」〜「今日 + 1日」を返す。存在しないディレクトリは無視し、どのディレクトリにも snapshot がなければ `None` を返す（呼び出し側は、従来どおり「snapshot がない」として終了する）
-- [ ] forward の CLI に `--legacy-snapshot-dir`（既定 `dashboard/data/inflection`）を追加する。**取得期間の計算にだけ使い**、評価の対象は従来どおり `--snapshot-dir`（v3）だけにする。learning の CLI は、既存の `--snapshot-dir` と `--legacy-snapshot-dir` をそのまま使う
-- [ ] forward: 観測（`all_observations`、v3 のみ）の全銘柄とベンチマークを、**1回の** `fetch_price_histories` で、`shared_price_window([解決済みの --snapshot-dir, 解決済みの --legacy-snapshot-dir])` の期間で取得する。`histories = total_return()`、`split_histories = split_only()`、`benchmark_history = total_return()[BENCHMARK_TICKER]` とする。ベンチマークの取得に失敗したら停止する
-- [ ] learning: 同じ関数を、learning の観測（legacy を含む）の銘柄で、`shared_price_window([解決済みの --snapshot-dir, 解決済みの --legacy-snapshot-dir])` の期間で呼ぶ（既定の実行では forward と同じ期間になる）。期間が同じなので、forward で取得済みの銘柄はキャッシュの条件を満たし、再取得しない。legacy にしかない銘柄だけを取得する。`histories = total_return()` とする
-- [ ] 旧関数 `_fetch_adjusted_histories` と `_fetch_learning_histories` は削除する。既存テストでそれらを使っていたテストを、新モジュールのテストに移す（変更点 5）
-- [ ] 価格ハッシュの計算（`_price_hashes`）は、従来と同じく2つの基準とベンチマークについて行う。ただし、各銘柄のフレームを**従来の取得開始日以降に切り出してから**ハッシュを計算する（変更点 6）。開始日は、その銘柄の最も早いシグナル日 − 10日（ベンチマークは、全観測の最も早いシグナル日 − 10 − 35日）で、旧 `_fetch_adjusted_histories` の `start` の計算と同じ式にする。切り出しの関数 `legacy_hash_window(frame, start)` を置き、評価に使うフレームは切り出さない
-**検証**: 既存の forward と learning の main のテスト（取得をモックしているもの）が、モックの対象を新モジュールに替えるだけで PASS する
+#### Step 6: REQ-047 — Position Monitor の事前警告
+- [ ] `STATUS_COLUMNS` の末尾に `last_warned_at` を追加する
+- [ ] `run_position_monitor.py` に `WARNING_DISTANCE_PCT = 3.0` を置く
+- [ ] **警告の重複は、ポジション（`ticker` と `entry_date` の組）ではなく、ticker 単位で防ぐ**（review #3。要件は「同じ銘柄・同じ日には1回だけ」）。triggered の通知のキー（ポジション単位）は変えない
+  - 前回の状況シートの**全行**から、`last_warned_at` の日付（JST）が今日の ticker を集め、「今日すでに警告した ticker」とする
+  - 今回の行のうち、`status="ok"` で、triggered でなく、`distance_to_stop_pct ≤ 3.0` の行を、ticker ごとにまとめる。同じ ticker の行が複数あれば、`distance_to_stop_pct` が最も小さい値を代表にする
+  - 「今日すでに警告した ticker」を除いた ticker を、警告の対象にする。1つの ticker はメッセージに1回だけ載せる
+- [ ] 警告は、triggered の通知とは別の1通の Slack メッセージで送る。文言は「[検証用アラート] stop まで残り x% の銘柄があります。確定した売買判断ではありません。」で始める
+- [ ] **`last_warned_at` は、行ではなく ticker 単位で引き継ぐ**（再レビュー #1）。`write_status` は毎回、今回の行だけで状況シートを書き直すため、行単位で引き継ぐと、同じ日に古い行が消えたときに警告済みの記録も消え、次の実行で同じ ticker を再び警告してしまう
+  - 前回の状況シートの全行から、ticker ごとに「今日（JST）の日付の `last_warned_at` のうち最新の時刻」を求め、`warned_today: dict[ticker, 時刻]` とする（上の「今日すでに警告した ticker」はこの dict のキー）
+  - 今回の**すべての行**（`status` が ok・stale・error のどれでも、新しい行でも）について、`last_warned_at` を次のように決める
+    1. 今回の送信に成功した ticker の行: 今の時刻
+    2. それ以外で、ticker が `warned_today` にある行: `warned_today[ticker]` の時刻（前回の自分の行がない新しい行も含む）
+    3. それ以外: 前回の自分の行（同じ `ticker` と `entry_date`）の値。なければ空
+  - 送信に失敗した場合は、手順1の時刻を作らない（その ticker は手順2・3で決まる）
+  - `_preserve_previous_state` の `last_warned_at` の扱いも、この規則に合わせる
+- [ ] `--dry-run` では送信しない（既存と同じ）
+**検証**: 受入条件 REQ-047 の 1〜5
 
-#### Step 6: テスト・CI
-- [ ] `tests/test_forward_prices.py`:
-  - バッチ化: 100銘柄で `yf.download` が2回だけ呼ばれる
-  - 2つの基準の値: split only は生の OHLC と一致し、total return は `history(auto_adjust=True)` 相当（`Adj Close / Close` の比を掛けた値）と一致する
-  - 価格ハッシュ: 新旧の経路（旧: `history()` の生値と auto_adjust 済みの値を返すモック。新: 同じ生データを `download()` が返すモック）で `_history_row_hashes` が一致する
-  - **取得範囲の違いによる偽の改訂がないこと**（review #2）: 旧の取得範囲（シグナル − 10日、ベンチマークは − 45日）で作ったハッシュを「保存済み」とし、新の取得範囲（− 100日）のフレームから `legacy_hash_window` で切り出して作ったハッシュと `_changed_price_rows` で比べ、改訂が0件になる。比較のため、切り出さずに新範囲のフレームからハッシュを作ると、旧の先頭日に改訂が出ることも確かめる（このテストが偽の改訂を検出できることの確認）
-  - キャッシュ: 2回目の呼び出しで取得済みの銘柄を再取得しない。キャッシュの期間が要求より短い銘柄は再取得する
-  - **forward → learning の共有**（review #1）: legacy（2026-09-09）と v3（2026-09-14）に共通の銘柄がある fixture で、`shared_price_window` が legacy の日付 − 100日から始まる。forward の次に learning を実行したとき、learning は共通銘柄を再取得せず、legacy にしかない銘柄だけを取得する。どちらのフレームにも、最も早い観測の前に61本以上の終値がある
-  - **CLI で指定したディレクトリが期間に反映される**（再レビュー #1）: 既定のディレクトリを空にし、別のディレクトリにだけ既定より古い snapshot を置いて、`--snapshot-dir` と `--legacy-snapshot-dir` で指定する。forward と learning のどちらも、その最も古い日付 − 100日から取得することを確かめる（取得のモックに渡された start で検証する）
-  - **同じ入力構成なら期間が一致する**: forward と learning に同じ2つのディレクトリを渡したとき、`shared_price_window` の戻り値が一致し、2回目（learning）は共通銘柄をキャッシュから使う。ディレクトリ構成が異なり、learning の要求期間がキャッシュの期間を超える場合は、その銘柄を取得し直す（キャッシュの期間の条件が守られる）
-  - `shared_price_window`: 存在しないディレクトリを無視する、snapshot がなければ `None`、`.enc` 以外のファイルや日付でないファイル名は無視する
-  - 5%の許容、ベンチマーク欠損での停止、再試行、銘柄名の秘匿、ログの抑制
-- [ ] `tests/test_explosion.py`: 定数の値が以前と同じ、ボラティリティの先読み防止、履歴不足で `None`、穏やかな銘柄と荒い銘柄の判定の違い、`max_return_pct=None` または `sigma=None` で `None`（例外にならない）
-- [ ] `tests/test_inflection_learning.py`（review #3）: シグナル日の前に61本以上の終値があり、h60・h120 がまだ未完了の観測で、learning レポートが最後まで生成され、未完了の horizon の `vol_explosive` が `None`、完了した horizon（h5 など）では bool になる
-- [ ] `tests/test_inflection_learning.py`: Fisher の既知の値、BH の既知の値（単調性の補正を含む）、Wilson の区間、極端な表（爆発 0 件・全件爆発）で p = 1.0、160通りの中で1つだけ p ≈ 0.04 になる合成データでは補正後に昇格しない、件数の多い明確な factor は昇格する、`promotion_gate` と公開サマリーに新しい項目がある
-- [ ] `test.yml` の mypy 対象に、`src/data/forward_prices.py` と `src/evaluation/explosion.py` を追加する
-**検証**: `pytest tests/`、ruff、mypy がすべて PASS する
-
-#### Step 7: 実データでの確認（ユーザーの確認後）
-- [ ] 外部の API（yfinance）を呼ぶので、ユーザーに確認してから実行する。少数の銘柄（ベンチマークと、分割・配当のあった銘柄を含む5銘柄程度）について、旧経路（`history()`）と新経路（`download()` → 導出）の値を比べ、2つの基準とも一致することを確かめる。結果は memo に残す
-**検証**: 新旧の値が一致する。一致しない場合は、差の原因（`download` の `ignore_tz` による index の違いなど）を調べ、ハッシュの日付キーに影響しないことを確かめる
+#### Step 7: テスト・CI
+- [ ] `tests/test_exit_rules.py`:
+  - 受入条件 1: 固定 seed の合成 OHLC 200通りで、`TrailingRule(15)` の結果が `simulate_signal(trailing_stop_pct=15)` の `TradeResult` と全フィールドで一致する
+  - 各ルールの手計算ケース: ギャップダウン、日中の stop、翌日の寄付での売却、最大保有日数の満了、条件に当たらない場合、未完了
+  - 段階利確（review #1・#2）:
+    - 2つの売却の価格が異なり、最後の売却後は株価が横ばいのケースで、損益が加重平均（例: 100 → 半分を 150、残りを 170 → 粗利益 +60%）になり、`exit_price` は 170、売却後のリターンは 0% になる（加重平均の 160 を基準にした +6.25% にならない）
+    - 寄付で利確 → 同じ日に残りが stop（O/H/L=160/165/115、stop=119 → 半分 160、残り 119）
+    - 寄付で利確が成立せず、日中に目標と stop の両方に触れる → 残りを全量 stop
+    - 利確した後の日に再び目標以上になっても、追加で売らない
+    - `exit_legs` が記録され、1回で売る trade（trailing など）では `None` のままで、他の値は従来と同じ
+  - 先読みがないこと: 判定日より後の価格を変えても、その日までの判定（売却日・価格）が変わらない（ATR、EMA、含み益）
+  - ATR の履歴不足で `insufficient_history`、O/H/L の NaN で `ValueError`
+- [ ] `tests/test_inflection_forward.py`: 既存の9通りの値が変わらないこと（リファクタの前の出力を固定値として比べる）、新しい4つのキーが出ること
+- [ ] `tests/test_regime.py`: 判定の境界、履歴不足、先読みがないこと
+- [ ] `tests/test_inflection_learning.py`: regime のラベルが factor に入り、BH の family に含まれる
+- [ ] `tests/test_forward_prices.py`: 取得期間の開始が 460日前になる。価格ハッシュの切り出しは変わらない（既存の回帰テストが PASS する）
+- [ ] `tests/test_run_position_monitor.py`、`tests/test_sheets_client.py`: 受入条件 REQ-047 の 1〜5。加えて（review #3）:
+  - 同じ ticker・異なる `entry_date` の2行が**同時に** stop に接近 → 警告は1回で、メッセージにその ticker は1回だけ載る。両方の行に `last_warned_at` が記録される
+  - 同じ ticker の2行が、同じ日の**別々の実行で順に**接近（1回目の実行では1行だけ接近）→ 2回目の実行では警告しない
+  - 翌日は再び警告できる
+  - 前回の状況シートにない新しい行でも、その ticker が今日すでに警告済みなら警告しない
+  - **同じ日の3回の実行**（再レビュー #1）: (1) ticker A・購入日 X の行で警告する → (2) 保有を A・購入日 Y に入れ替える（X の行は消える）。警告せず、Y の行に (1) の警告時刻が書かれる → (3) 同じ日にもう一度実行しても警告しない。翌日の実行では再び警告できる
+  - stale・error の行に、`warned_today` の時刻が引き継がれる
+  - 送信に失敗した場合、新しい警告時刻が作られず、次の実行で再送される
+- [ ] `test.yml` の mypy 対象と、`forward_validation.yml` の起動パス・テスト一覧に、新規モジュールとテストを追加する
+**検証**: `pytest tests/`、`ruff check src scripts tests`、mypy がすべて PASS する
 
 ### 例外・エラーハンドリング方針
-- 取得: 5%以下の失敗は記録して続行し、超えたら停止する。ベンチマークの欠損は停止する。例外とログに銘柄名を出さない（現行の秘匿の方針を維持する）
-- キャッシュ: 読み込みに失敗した場合（壊れたファイル、形式の違い）は、キャッシュを使わずに全銘柄を取得し直す（キャッシュは最適化であり、正しさには関わらない）
-- 統計: 2×2表が作れない場合（factor を持つ観測、または持たない観測が0件）は p 値を `None` にし、BH の family から外して、昇格させない
+- シミュレーター: 価格の欠損（O/H/L の NaN）は既存どおり `ValueError`。履歴不足は例外にせず、未完了として集計から除く
+- regime: 履歴不足は `unknown` とし、例外にしない
+- Monitor: Slack の送信に失敗した場合は、既存の triggered 通知と同じく、状況シートを書いてから例外を投げる。送信できなかった警告は `last_warned_at` を更新しない（次回の実行で再送される）
 
 ### テスト/検証方針
 - 自動テスト: `.venv/bin/python -m pytest tests/ -q`、`.venv/bin/ruff check src scripts tests`、`.venv/bin/mypy --ignore-missing-imports <test.yml の対象>`
 - 手動確認観点:
-  - [ ] Step 7 の新旧の値の比較
-  - [ ] マージ後の最初の週次 forward validation（日曜 09:30 JST）が成功し、実行時間が短くなっている
-  - [ ] その実行で、価格ハッシュの「改訂」が大量に記録されていない（`price_basis` ごとの `changed_count` のログを確認する）
+  - [ ] push 後、最初の週次 forward validation の summary に、新しい4つの exit キーと `regime_breakdown` が出ている
+  - [ ] 実行時間が大きく延びていない（シミュレーションが4ルール × 2コスト × 3グループ分増える）
+  - [ ] Position Monitor の初回実行で、状況シートに `last_warned_at` 列が追加される
 
 ### リスクと対策
-1. リスク: `download()` と `history()` で値や index が微妙に異なり、価格ハッシュに大量の「改訂」が記録される → 対策: Step 7 で実データを比べてから CI に反映する。ハッシュは日付キーで比較し、比のスケール不変のハッシュなので、index のタイムゾーンの違いには影響されない
-2. リスク: 昇格の条件が厳しくなり、昇格候補がほとんど出なくなる → 対策: これは意図した挙動である（偶然の昇格を防ぐ）。q 値は公開サマリーに出すので、「惜しい factor」も見える
-3. リスク: 別のセッションの変更と、こちらの変更が衝突する（A9 は `d610dfa` でコミット済み） → 対策: Step 0 で、作業ツリーに他のセッションの未コミットの変更がないことを確かめてから着手する
-4. リスク: pickle のキャッシュが、別のバージョンの pandas で読めない → 対策: 同じ runner の同じ job の中でしか使わない。読めなければ取り直す
+1. リスク: リファクタ（Step 1・3）で、既存の trailing と exit 比較の値が変わる → 対策: 既存テストを無変更で通し、さらにリファクタ前の出力を固定値として比べる回帰テストを追加する
+2. リスク: ルールの数が増え、最も良かったルールを過大に評価する → 対策: パラメータは1組に固定し、探索しない。レポートの `multiple_comparisons_caveat` は維持する。Deflated Sharpe Ratio は保留中の別要件
+3. リスク: 段階利確の「同じ日に stop と目標」の仮定が、実際の約定と違う → 対策: 保守的な仮定（stop が先）を採り、`rule` の説明に明記する
+4. リスク: 取得期間の延長で、週次 CI の実行時間が延びる → 対策: 増えるのは1銘柄あたりの行数だけで、API の呼び出し回数は変わらない。手動確認で実行時間を見る
+5. リスク: 状況シートの列の追加で、既存のシートと列がずれる → 対策: `write_status` は毎回見出し行から書き直すので、列の追加は自動で反映される。読み込み側は列名で値を取るので、古いシートに `last_warned_at` がなくても動く（テストで確認する）
 
 ### 完了条件
-- [ ] REQ-042 の受入条件 1〜6、REQ-043 の 1〜6、REQ-044 の 1〜5 を満たすテストが PASS する（変更点 1〜5 を反映した内容で）
-- [ ] 戦略、snapshot、本番のスコアの挙動が変わっていない（live と shadow health のテストが無変更で PASS する）
+- [ ] REQ-045 の受入条件 1〜6、REQ-046 の 1〜5、REQ-047 の 1〜5 を満たすテストが PASS する
+- [ ] 既存の trailing の結果と、exit 比較の9通りの値が変わっていない
+- [ ] 戦略、snapshot、Monitor の売却判定が変わっていない（live、shadow health、position exit のテストが無変更で PASS する）
 - [ ] `pytest`、`ruff`、`mypy` がすべて PASS する
-- [ ] Step 7 は、ユーザーの確認後に実行する

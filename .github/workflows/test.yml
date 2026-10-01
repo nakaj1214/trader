@@ -40,6 +40,7 @@ jobs:
       - name: Type-check production path
         run: |
           mypy --ignore-missing-imports \
+            src/data/forward_prices.py \
             src/data/jquants_history.py \
             src/data/jquants_v2_client.py \
             src/data/yfinance_prices.py \
@@ -48,6 +49,7 @@ jobs:
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
             src/data/validation.py \
+            src/evaluation/explosion.py \
             src/evaluation/inflection_backtest.py \
             src/evaluation/inflection_forward.py \
             src/evaluation/inflection_historical.py \

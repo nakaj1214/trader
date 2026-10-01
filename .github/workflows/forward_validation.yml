@@ -4,17 +4,21 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "src/evaluation/explosion.py"
       - "src/evaluation/inflection_backtest.py"
       - "src/evaluation/inflection_forward.py"
       - "src/evaluation/inflection_portfolio.py"
       - "src/evaluation/inflection_recall.py"
       - "src/evaluation/inflection_learning.py"
+      - "src/data/forward_prices.py"
       - "src/data/live_quote.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
       - "scripts/rebuild_inflection_forward_validation.py"
       - "scripts/rebuild_inflection_learning.py"
       - "dashboard/data/inflection/**"
+      - "tests/test_explosion.py"
+      - "tests/test_forward_prices.py"
       - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
       - "tests/test_inflection_backtest.py"
@@ -59,6 +63,8 @@ jobs:
       - name: Test forward-validation core
         run: |
           python -m pytest \
+            tests/test_explosion.py \
+            tests/test_forward_prices.py \
             tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
             tests/test_inflection_backtest.py \
@@ -66,6 +72,8 @@ jobs:
             tests/test_inflection_portfolio.py \
             tests/test_inflection_recall.py \
             tests/test_inflection_learning.py \
+            --cov=src.data.forward_prices \
+            --cov=src.evaluation.explosion \
             --cov=src.evaluation.inflection_backtest \
             --cov=src.evaluation.inflection_forward \
             --cov=src.evaluation.inflection_portfolio \

@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import json
-import logging
 import sys
-from unittest.mock import MagicMock, patch
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
 
 from scripts.rebuild_inflection_forward_validation import (
     BENCHMARK_ROUND_TRIP_COST_PCT,
-    SPLIT_ONLY,
     _build_group_report,
     _changed_price_rows,
-    _fetch_adjusted_histories,
     _history_row_hashes,
     _persist_price_hashes,
     _report_breakdowns,
@@ -23,6 +20,7 @@ from scripts.rebuild_inflection_forward_validation import (
 from scripts.rebuild_inflection_forward_validation import (
     main as rebuild_main,
 )
+from src.data.forward_prices import PriceHistories
 from src.data.snapshot_crypto import decrypt_json, encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
@@ -210,115 +208,6 @@ def test_enrich_trades_reports_excess_and_beat_rate() -> None:
     assert rows[0]["beat_benchmark"] is True
     assert summary["evaluated"] == 1
     assert summary["beat_benchmark_rate_pct"] == 100.0
-
-
-def test_forward_price_fetch_retries_transient_failure() -> None:
-    history = pd.DataFrame(
-        {"Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.0]},
-        index=pd.to_datetime(["2026-09-09"]),
-    )
-    sleeps: list[float] = []
-    with patch("yfinance.Ticker") as ticker:
-        ticker.return_value.history.side_effect = [RuntimeError("temporary"), history]
-        result = _fetch_adjusted_histories(
-            [{"ticker": "1111.T", "date": "2026-09-08"}],
-            max_horizon=5,
-            max_retries=1,
-            retry_backoff_seconds=0,
-            request_interval_seconds=0,
-            sleep=sleeps.append,
-        )
-
-    assert result["1111.T"].equals(history)
-    assert ticker.return_value.history.call_count == 2
-    assert sleeps == [0]
-
-
-def test_forward_price_fetch_failure_hides_candidate_ticker() -> None:
-    with patch("yfinance.Ticker") as ticker:
-        ticker.return_value.history.side_effect = RuntimeError("failure for 1111.T")
-        with pytest.raises(RuntimeError, match=r"failed for 1 ticker\(s\)") as error:
-            _fetch_adjusted_histories(
-                [{"ticker": "1111.T", "date": "2026-09-08"}],
-                max_horizon=5,
-                max_retries=0,
-                request_interval_seconds=0,
-            )
-
-    assert "1111.T" not in str(error.value)
-
-
-def test_forward_price_fetch_tolerates_single_delisted_ticker() -> None:
-    history = pd.DataFrame(
-        {"Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.0]},
-        index=pd.to_datetime(["2026-09-09"]),
-    )
-
-    def fake_ticker(ticker: str) -> MagicMock:
-        mock = MagicMock()
-        if ticker == "0000.T":
-            mock.history.side_effect = RuntimeError("delisted")
-        else:
-            mock.history.return_value = history
-        return mock
-
-    rows = [{"ticker": f"{code:04d}.T", "date": "2026-09-08"} for code in range(20)]
-    with patch("yfinance.Ticker", side_effect=fake_ticker):
-        result = _fetch_adjusted_histories(rows, max_horizon=5, max_retries=0, request_interval_seconds=0)
-
-    assert "0000.T" not in result
-    assert len(result) == 19
-
-
-def test_forward_price_fetch_suppresses_provider_ticker_log(caplog: pytest.LogCaptureFixture) -> None:
-    provider_logger = logging.getLogger("yfinance")
-    was_disabled = provider_logger.disabled
-
-    def fail_with_log(ticker: str) -> None:
-        provider_logger.error("%s: provider failure", ticker)
-        raise RuntimeError("provider failure")
-
-    with (
-        caplog.at_level(logging.ERROR, logger="yfinance"),
-        patch("yfinance.Ticker", side_effect=fail_with_log),
-        pytest.raises(RuntimeError, match=r"failed for 1 ticker\(s\)"),
-    ):
-        _fetch_adjusted_histories(
-            [{"ticker": "1111.T", "date": "2026-09-08"}],
-            max_horizon=5,
-            max_retries=0,
-            request_interval_seconds=0,
-        )
-
-    assert "1111.T" not in caplog.text
-    assert provider_logger.disabled is was_disabled
-
-
-def test_forward_split_only_fetch_keeps_yahoo_split_adjusted_ohlc() -> None:
-    # Yahoo's auto_adjust=False rows before a split are already divided by the ratio.
-    history = pd.DataFrame(
-        {
-            "Open": [50.0, 55.0],
-            "High": [55.0, 60.0],
-            "Low": [45.0, 50.0],
-            "Close": [50.0, 55.0],
-            "Stock Splits": [0.0, 2.0],
-        },
-        index=pd.to_datetime(["2026-09-09", "2026-09-10"]),
-    )
-    with patch("yfinance.Ticker") as ticker:
-        ticker.return_value.history.return_value = history
-        result = _fetch_adjusted_histories(
-            [{"ticker": "1111.T", "date": "2026-09-08"}],
-            max_horizon=5,
-            request_interval_seconds=0,
-            price_basis=SPLIT_ONLY,
-        )
-
-    assert ticker.return_value.history.call_args.kwargs["auto_adjust"] is False
-    assert ticker.return_value.history.call_args.kwargs["actions"] is True
-    assert ticker.return_value.history.call_args.kwargs["raise_errors"] is True
-    assert result["1111.T"]["Close"].tolist() == pytest.approx([50.0, 55.0])
 
 
 def test_price_hashes_are_stable_and_only_common_changed_dates_are_reported() -> None:
@@ -557,23 +446,6 @@ def test_paired_benchmark_rejects_dates_that_invert_after_fill() -> None:
     assert row["excess_return_pct"] is None
 
 
-def test_forward_price_fetch_extends_requested_lookback() -> None:
-    history = pd.DataFrame(
-        {"Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.0]},
-        index=pd.to_datetime(["2026-09-09"]),
-    )
-    with patch("yfinance.Ticker") as ticker:
-        ticker.return_value.history.return_value = history
-        _fetch_adjusted_histories(
-            [{"ticker": "1306.T", "date": "2026-09-08"}],
-            max_horizon=5,
-            extra_lookback_days=35,
-            request_interval_seconds=0,
-        )
-
-    assert ticker.return_value.history.call_args.kwargs["start"] == "2026-07-25"
-
-
 @pytest.mark.parametrize(
     ("first", "last", "expected"),
     [(100.0, 99.0, "down"), (100.0, 100.0, "up"), (100.0, 101.0, "up")],
@@ -695,8 +567,12 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
         )
     ]
 
-    def fake_fetch(rows, **_kwargs):
-        return {str(row["ticker"]): history for row in rows}
+    fetch_calls: list[dict[str, object]] = []
+
+    def fake_fetch(tickers, start, end, **kwargs):
+        fetch_calls.append({"tickers": sorted(tickers), "start": start, "end": end, **kwargs})
+        frames = {ticker: history.assign(**{"Adj Close": history["Close"]}) for ticker in tickers}
+        return PriceHistories(raw=frames, start=start, end=end)
 
     monkeypatch.setattr(
         "scripts.rebuild_inflection_forward_validation.snapshot_encryption_secret",
@@ -707,7 +583,7 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
         lambda *_args, **_kwargs: observations,
     )
     monkeypatch.setattr(
-        "scripts.rebuild_inflection_forward_validation._fetch_adjusted_histories",
+        "scripts.rebuild_inflection_forward_validation.fetch_price_histories",
         fake_fetch,
     )
     monkeypatch.setattr(
@@ -727,6 +603,11 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     )
 
     assert rebuild_main() == 0
+    # One batched fetch for every observed ticker plus the benchmark, over the shared window.
+    assert len(fetch_calls) == 1
+    assert set(fetch_calls[0]["tickers"]) == {"1111.T", "2222.T", "3333.T", "4444.T", BENCHMARK_TICKER}
+    assert fetch_calls[0]["start"] == date(2026, 1, 29) - timedelta(days=100)
+    assert fetch_calls[0]["required"] == {BENCHMARK_TICKER}
     report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
     assert set(report["groups"]) == {"early_candidate", "watch", "none"}
     assert report["tracked_pool_explosion_recall"]["exploded_ticker_count"] == 0
@@ -740,3 +621,50 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     assert portfolio["open_positions_at_cutoff_count"] == 0
     assert portfolio["config"]["round_trip_cost_pct"] == 0.2
     assert portfolio["equity_curve"]
+
+
+def test_main_sizes_the_window_from_cli_snapshot_dirs_and_hashes_only_the_historic_window(tmp_path, monkeypatch) -> None:
+    """Review: CLI-given dirs drive the shared window; hashes keep their old (signal - 10d / - 45d) start."""
+    (tmp_path / "dashboard" / "data" / "inflection" / "v3").mkdir(parents=True)  # defaults exist but are empty
+    custom_v3 = tmp_path / "fixtures" / "v3"
+    custom_legacy = tmp_path / "fixtures" / "legacy"
+    custom_v3.mkdir(parents=True)
+    custom_legacy.mkdir(parents=True)
+    (custom_v3 / "2026-01-29.enc").write_text("placeholder", encoding="utf-8")
+    (custom_legacy / "2025-12-01.enc").write_text("placeholder", encoding="utf-8")
+    index = pd.bdate_range("2025-10-01", periods=400)
+    history = pd.DataFrame(
+        {"Open": 100.0, "High": 105.0, "Low": 95.0, "Close": 100.0, "Adj Close": 100.0}, index=index
+    )
+    observation = {
+        "ticker": "1111.T", "signal_date": "2026-01-29", "date": "2026-01-29", "score": 80.0,
+        "classification": "EARLY_CANDIDATE", "strategy_version": "jp-inflection-shadow-v3", "report_schema_version": 4,
+    }
+    windows: list[tuple[date, date]] = []
+    saved: dict[str, dict[str, dict[str, str]]] = {}
+
+    def fake_fetch(tickers, start, end, **_kwargs):
+        windows.append((start, end))
+        return PriceHistories(raw=dict.fromkeys(tickers, history), start=start, end=end)
+
+    def fake_persist(_path, hashes, _secret):
+        saved.update(hashes)
+        return []
+
+    prefix = "scripts.rebuild_inflection_forward_validation."
+    monkeypatch.setattr(prefix + "snapshot_encryption_secret", lambda: SECRET)
+    monkeypatch.setattr(prefix + "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(prefix + "fetch_price_histories", fake_fetch)
+    monkeypatch.setattr(prefix + "_persist_price_hashes", fake_persist)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["x", "--repo-root", str(tmp_path), "--snapshot-dir", "fixtures/v3", "--legacy-snapshot-dir", "fixtures/legacy",
+         "--output", "artifacts/report.json"],
+    )
+
+    assert rebuild_main() == 0
+
+    assert windows[0][0] == date(2025, 12, 1) - timedelta(days=100)  # the legacy dir's earliest snapshot
+    assert min(saved["1111.T"]["total_return_adjusted"]) == "2026-01-19"  # signal 2026-01-29 minus 10 days, not the wider fetch start
+    assert min(saved["1111.T"]["split_only"]) == "2026-01-19"
+    assert min(saved["1306.T"]["total_return_adjusted"]) == "2025-12-15"  # signal minus 10 + 35 days

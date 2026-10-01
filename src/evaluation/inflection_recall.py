@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.evaluation.explosion import TRACKED_POOL_SEARCH_DAYS, TRACKED_POOL_THRESHOLD_PCT
 from src.evaluation.inflection_backtest import _series
 
 
@@ -14,8 +15,8 @@ def compute_tracked_pool_explosion_recall(
     observations: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
     *,
-    explosion_threshold_pct: float = 50.0,
-    search_horizon_days: int = 252,
+    explosion_threshold_pct: float = TRACKED_POOL_THRESHOLD_PCT,
+    search_horizon_days: int = TRACKED_POOL_SEARCH_DAYS,
 ) -> dict[str, Any]:
     """Measure pre-explosion detection within tickers observed by the daily scan."""
     if explosion_threshold_pct <= 0:

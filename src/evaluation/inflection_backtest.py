@@ -15,6 +15,8 @@ from typing import Any
 
 import pandas as pd
 
+from src.evaluation.explosion import FIXED_MAX_RETURN_PCT
+
 BOOTSTRAP_SEED = 1234
 
 
@@ -222,7 +224,7 @@ def simulate_signal(
         net_return_pct=round(net, 6),
         max_return_pct=round(max_return, 6),
         max_drawdown_pct=round(max_drawdown, 6) if max_drawdown is not None else None,
-        explosive_50pct=max_return >= 50.0,
+        explosive_50pct=max_return >= FIXED_MAX_RETURN_PCT,
         mfe_pct=round(mfe, 6) if mfe is not None else None,
         mae_pct=round(mae, 6) if mae is not None else None,
         exit_reason=exit_reason,
@@ -365,9 +367,9 @@ def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
         "mean_net_return_pct": round(mean(returns), 6) if returns else None,
         "median_net_return_pct": round(median(returns), 6) if returns else None,
         "profit_factor": round(gross_profit / gross_loss, 6) if gross_loss > 0 else None,
-        "explosive_50pct_count": sum(value >= 50.0 for value in max_returns),
+        "explosive_50pct_count": sum(value >= FIXED_MAX_RETURN_PCT for value in max_returns),
         "explosive_50pct_rate_pct": (
-            round(sum(value >= 50.0 for value in max_returns) / len(max_returns) * 100.0, 3)
+            round(sum(value >= FIXED_MAX_RETURN_PCT for value in max_returns) / len(max_returns) * 100.0, 3)
             if max_returns
             else None
         ),

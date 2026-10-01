@@ -8,6 +8,7 @@ adjustments as proposals for a future strategy version.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -20,7 +21,13 @@ import pandas as pd
 
 from src.data.snapshot_crypto import decrypt_json
 from src.data.validation import is_finite_number
-from src.evaluation.inflection_backtest import simulate_signal
+from src.evaluation.explosion import (
+    HORIZON_MAX_RETURN_PCT,
+    explosion_definitions,
+    is_vol_explosion,
+    realized_volatility,
+)
+from src.evaluation.inflection_backtest import _series, simulate_signal
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
     SnapshotLoadError,
@@ -28,11 +35,13 @@ from src.evaluation.inflection_forward import (
 )
 
 LEARNING_HORIZONS = (5, 20, 60, 120)
-EXPLOSION_MAX_RETURN_PCT = {5: 15.0, 20: 25.0, 60: 40.0, 120: 60.0}
+EXPLOSION_MAX_RETURN_PCT = HORIZON_MAX_RETURN_PCT  # alias kept for existing imports
 ROUND_TRIP_COST_PCT = 0.2
 PROMOTION_MIN_OBSERVATIONS = 30
 PROMOTION_POSITIVE_LIFT = 1.35
 PROMOTION_NEGATIVE_LIFT = 0.75
+# Benjamini-Hochberg false-discovery rate over every factor x horizon tested in one report.
+PROMOTION_MAX_Q_VALUE = 0.10
 
 # schema 3 (jp-inflection-shadow-v2) used a single breakout_52w flag; schema 4
 # (jp-inflection-shadow-v3+) split it into near_52w_high/near_listing_high. Both
@@ -299,6 +308,11 @@ def evaluate_learning_observations(
     evaluated: list[dict[str, Any]] = []
     for index, observation in enumerate(observation_rows):
         row = dict(observation)
+        sigma = realized_volatility(
+            _series(histories.get(str(observation["ticker"]), pd.DataFrame()), "Close"),
+            str(observation["signal_date"]),
+        )
+        row["realized_volatility_60d"] = sigma
         outcomes: dict[str, Any] = {}
         explosion_horizons: list[int] = []
         for horizon in horizons:
@@ -327,6 +341,8 @@ def evaluate_learning_observations(
                 "mae_pct": trade.mae_pct,
                 "explosion_threshold_pct": EXPLOSION_MAX_RETURN_PCT[horizon],
                 "explosive": is_explosion,
+                # Diagnostic only; None while the horizon is incomplete or the history is short.
+                "vol_explosive": is_vol_explosion(max_return, sigma, horizon) if completed else None,
             }
         row["horizons"] = outcomes
         row["factor_labels"] = factor_labels(observation)
@@ -387,6 +403,50 @@ def _horizon_summary(rows: list[dict[str, Any]], horizon: int) -> dict[str, Any]
     }
 
 
+def fisher_exact_two_sided(a: int, b: int, c: int, d: int) -> float:
+    """Two-sided Fisher exact p-value for the 2x2 table [[a, b], [c, d]] (standard library only).
+
+    Sums the probability of every table with the same margins that is no more likely than the
+    observed one (relative tolerance 1e-7, as scipy does).
+    """
+    if min(a, b, c, d) < 0:
+        raise ValueError("counts must not be negative")
+    row1, row2, col1 = a + b, c + d, a + c
+    total = row1 + row2
+    if total == 0:
+        return 1.0
+    low, high = max(0, col1 - row2), min(row1, col1)
+    weights = {x: math.comb(row1, x) * math.comb(row2, col1 - x) for x in range(low, high + 1)}
+    observed = weights[a]
+    tolerance = 10**7
+    favourable = sum(weight for weight in weights.values() if weight * tolerance <= observed * (tolerance + 1))
+    return min(1.0, favourable / math.comb(total, col1))
+
+
+def benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """BH-adjusted q-values, returned in the input order (monotone, capped at 1)."""
+    count = len(p_values)
+    order = sorted(range(count), key=lambda index: p_values[index])
+    adjusted = [0.0] * count
+    running_min = 1.0
+    for rank in range(count, 0, -1):
+        index = order[rank - 1]
+        running_min = min(running_min, p_values[index] * count / rank)
+        adjusted[index] = running_min
+    return adjusted
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Wilson score interval for a proportion; ``None`` when there are no observations."""
+    if n <= 0:
+        return None
+    proportion = successes / n
+    denominator = 1.0 + z * z / n
+    centre = (proportion + z * z / (2 * n)) / denominator
+    half = z * math.sqrt(proportion * (1.0 - proportion) / n + z * z / (4 * n * n)) / denominator
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
 def _factor_statistics(
     rows: list[dict[str, Any]],
     *,
@@ -400,6 +460,8 @@ def _factor_statistics(
             grouped[str(label)].append(row)
 
     baseline_explosion_rate = _optional_float(baseline.get("explosion_rate_pct"))
+    total_rows = len(rows)
+    total_explosions = sum(bool(row["horizons"][key].get("explosive")) for row in rows)
     stats: list[dict[str, Any]] = []
     for label, factor_rows in grouped.items():
         excess = [
@@ -409,6 +471,15 @@ def _factor_statistics(
         ]
         explosions = [bool(row["horizons"][key].get("explosive")) for row in factor_rows]
         rate = sum(explosions) / len(explosions) * 100.0 if explosions else 0.0
+        # 2x2 table: factor present/absent x exploded/not, over the same independent observations.
+        others = total_rows - len(factor_rows)
+        fisher_p = None
+        if factor_rows and others > 0:
+            others_exploded = total_explosions - sum(explosions)
+            fisher_p = fisher_exact_two_sided(
+                sum(explosions), len(explosions) - sum(explosions), others_exploded, others - others_exploded
+            )
+        interval = wilson_interval(sum(explosions), len(explosions))
         lift = None
         if baseline_explosion_rate is not None and baseline_explosion_rate > 0:
             lift = rate / baseline_explosion_rate
@@ -437,6 +508,13 @@ def _factor_statistics(
                 "mean_excess_return_pct": round(mean_excess, 6) if mean_excess is not None else None,
                 "explosion_rate_pct": round(rate, 3),
                 "explosion_rate_lift": round(lift, 6) if lift is not None else None,
+                "explosion_rate_ci95": (
+                    [round(interval[0] * 100.0, 3), round(interval[1] * 100.0, 3)] if interval else None
+                ),
+                # 6 significant digits keep tiny p-values meaningful (a fixed-decimal round would flatten them).
+                "fisher_p_value": float(f"{fisher_p:.6g}") if fisher_p is not None else None,
+                "bh_q_value": None,
+                "uncorrected_direction": direction,
                 "promotion_status": direction,
             }
         )
@@ -448,6 +526,36 @@ def _factor_statistics(
             str(item["factor"]),
         ),
     )
+
+
+def _status_sort_key(item: dict[str, Any]) -> tuple[bool, int, str]:
+    return (
+        item["promotion_status"] == "hold",
+        -int(item["independent_observations"]),
+        str(item["factor"]),
+    )
+
+
+def _apply_multiple_testing(factors_by_horizon: dict[str, list[dict[str, Any]]]) -> int:
+    """Gate promotions on a Benjamini-Hochberg q-value over the whole factor x horizon family.
+
+    Returns the number of tests in the family. A candidate whose q-value is missing or above
+    ``PROMOTION_MAX_Q_VALUE`` is demoted to ``hold`` (its ``uncorrected_direction`` is kept).
+    """
+    tested = [stat for stats in factors_by_horizon.values() for stat in stats if stat["fisher_p_value"] is not None]
+    for stat, q_value in zip(
+        tested, benjamini_hochberg([float(stat["fisher_p_value"]) for stat in tested]), strict=True
+    ):
+        stat["bh_q_value"] = q_value
+    for stats in factors_by_horizon.values():
+        for stat in stats:
+            q_value = stat["bh_q_value"]
+            if stat["promotion_status"] != "hold" and (q_value is None or q_value > PROMOTION_MAX_Q_VALUE):
+                stat["promotion_status"] = "hold"
+            if q_value is not None:
+                stat["bh_q_value"] = round(q_value, 6)
+        stats.sort(key=_status_sort_key)
+    return len(tested)
 
 
 def _lessons(factors_by_horizon: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -465,6 +573,8 @@ def _lessons(factors_by_horizon: dict[str, list[dict[str, Any]]]) -> list[dict[s
                     "independent_observations": factor["independent_observations"],
                     "mean_excess_return_pct": factor["mean_excess_return_pct"],
                     "explosion_rate_lift": factor["explosion_rate_lift"],
+                    "fisher_p_value": factor["fisher_p_value"],
+                    "bh_q_value": factor["bh_q_value"],
                     "action": "candidate_for_next_strategy_version_not_auto_applied",
                 }
             )
@@ -518,6 +628,8 @@ def build_learning_report(
             horizon=horizon,
             baseline=promotion_baseline,
         )
+    # Promotion is gated by a family-wide BH q-value, so it can only be decided after every horizon.
+    tests_in_family = _apply_multiple_testing(promotion_factors)
 
     postmortems = [
         {
@@ -543,6 +655,7 @@ def build_learning_report(
         "observation_count": len(observations),
         "learning_unit": "same-ticker observations are de-overlapped independently per horizon",
         "horizons": list(LEARNING_HORIZONS),
+        "explosion_definitions": explosion_definitions(),
         "explosion_definition_max_return_pct": {
             f"h{horizon}": threshold for horizon, threshold in EXPLOSION_MAX_RETURN_PCT.items()
         },
@@ -559,6 +672,10 @@ def build_learning_report(
             "minimum_independent_observations": PROMOTION_MIN_OBSERVATIONS,
             "positive_explosion_lift": PROMOTION_POSITIVE_LIFT,
             "negative_explosion_lift": PROMOTION_NEGATIVE_LIFT,
+            "maximum_bh_q_value": PROMOTION_MAX_Q_VALUE,
+            "test": "fisher_exact_two_sided (factor present vs absent, exploded vs not)",
+            "correction": "benjamini_hochberg over every factor x horizon with a computable table",
+            "tests_in_family": tests_in_family,
             "automatic_production_weight_update": False,
             "scope": "explicit_promotion_strategy_version_only",
             "reason": "prevent small-sample overfitting, policy-confounding and self-reinforcing strategy drift",
@@ -568,6 +685,7 @@ def build_learning_report(
             "Separate near-52-week and near-listing-high factors may take longer to reach the promotion sample threshold.",
             "Factor attribution is associative, not proof of causality.",
             "Cumulative factor statistics may span multiple strategy versions; promotion decisions use only the explicitly configured promotion strategy version.",
+            "Statuses in the cumulative factor_statistics are uncorrected and informational; only promotion_factor_statistics is gated by the BH q-value.",
             "News/TDnet/EDINET catalyst evidence is not yet connected point-in-time, so true event-cause attribution is unavailable.",
             f"Benchmark is {BENCHMARK_TICKER}; order-book depth, halts and price-limit fill probability remain unmodeled.",
         ],
@@ -587,6 +705,7 @@ def public_learning_summary(report: dict[str, Any]) -> dict[str, Any]:
         "learning_unit",
         "horizons",
         "explosion_definition_max_return_pct",
+        "explosion_definitions",
         "independent_observation_counts",
         "baselines",
         "factor_statistics",

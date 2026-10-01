@@ -3,13 +3,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import logging
 import math
 import sys
-import time
 from collections import Counter
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.forward_prices import (
+    DEFAULT_CACHE_RELATIVE_PATH,
+    fetch_price_histories,
+    legacy_hash_window,
+    shared_price_window,
+)
 from src.data.snapshot_crypto import decrypt_json, encrypt_json, snapshot_encryption_secret
+from src.evaluation.explosion import explosion_definitions
 from src.evaluation.inflection_backtest import (
     simulate_signals,
 )
@@ -44,89 +48,9 @@ from src.evaluation.inflection_report import (  # noqa: F401 - re-exported for e
     regime_label,
 )
 
-DEFAULT_MAX_RETRIES = 2
-DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
-DEFAULT_REQUEST_INTERVAL_SECONDS = 0.5
 TOTAL_RETURN_ADJUSTED = "total_return_adjusted"
 SPLIT_ONLY = "split_only"
 PRICE_HASH_SCHEMA_VERSION = 1
-MAX_PRICE_FAILURE_RATIO = 0.05
-
-
-def _fetch_adjusted_histories(
-    rows: list[dict[str, Any]],
-    *,
-    max_horizon: int,
-    max_retries: int = DEFAULT_MAX_RETRIES,
-    retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
-    request_interval_seconds: float = DEFAULT_REQUEST_INTERVAL_SECONDS,
-    sleep: Callable[[float], None] = time.sleep,
-    price_basis: str = TOTAL_RETURN_ADJUSTED,
-    extra_lookback_days: int = 0,
-) -> dict[str, pd.DataFrame]:
-    """Fetch OHLC on the requested price basis with bounded retries."""
-    import yfinance as yf
-
-    if (
-        max_retries < 0
-        or retry_backoff_seconds < 0
-        or request_interval_seconds < 0
-        or extra_lookback_days < 0
-    ):
-        raise ValueError("retry and request timing parameters must not be negative")
-    if price_basis not in {TOTAL_RETURN_ADJUSTED, SPLIT_ONLY}:
-        raise ValueError(f"unsupported price basis: {price_basis}")
-
-    by_ticker: dict[str, list[pd.Timestamp]] = {}
-    for row in rows:
-        ticker = str(row["ticker"])
-        by_ticker.setdefault(ticker, []).append(pd.Timestamp(str(row["date"])))
-
-    histories: dict[str, pd.DataFrame] = {}
-    failures: dict[str, str] = {}
-    provider_logger = logging.getLogger("yfinance")
-    ticker_dates = sorted(by_ticker.items())
-    required_columns = {"Open", "High", "Low", "Close"}
-    for index, (ticker, dates) in enumerate(ticker_dates):
-        start = min(dates) - timedelta(days=10 + extra_lookback_days)
-        end = max(dates) + timedelta(days=max_horizon * 2 + 30)
-        failure = "empty or missing adjusted OHLC"
-        for attempt in range(max_retries + 1):
-            try:
-                was_disabled = provider_logger.disabled
-                provider_logger.disabled = True
-                try:
-                    history = yf.Ticker(ticker).history(
-                        start=start.strftime("%Y-%m-%d"),
-                        end=end.strftime("%Y-%m-%d"),
-                        auto_adjust=price_basis == TOTAL_RETURN_ADJUSTED,
-                        actions=price_basis == SPLIT_ONLY,
-                        timeout=15,
-                        raise_errors=True,
-                    )
-                finally:
-                    provider_logger.disabled = was_disabled
-                if not history.empty and required_columns.issubset(history.columns):
-                    # auto_adjust=False OHLC from Yahoo is already split-adjusted (split-only basis).
-                    histories[ticker] = history
-                    break
-                failure = "empty or missing adjusted OHLC"
-            except Exception as exc:  # noqa: BLE001 - provider failures share retry handling
-                failure = f"{type(exc).__name__}: {exc}"
-            if attempt < max_retries:
-                sleep(retry_backoff_seconds * (2**attempt))
-        else:
-            failures[ticker] = failure
-        if index + 1 < len(ticker_dates):
-            sleep(request_interval_seconds)
-
-    # Delisted (TOB/MBO) names stop returning prices; tolerate a few so one delisting
-    # cannot block every later report, but fail closed on a provider-wide outage.
-    if len(failures) > len(ticker_dates) * MAX_PRICE_FAILURE_RATIO:
-        raise RuntimeError(f"Forward price retrieval failed for {len(failures)} ticker(s)")
-    if failures:
-        print(json.dumps({"price_unavailable_ticker_count": len(failures), "price_basis": price_basis}))
-    return histories
 
 
 def _history_row_hashes(history: pd.DataFrame) -> dict[str, str]:
@@ -219,15 +143,37 @@ def _persist_price_hashes(
     return changed
 
 
+def _legacy_hash_starts(rows: list[dict[str, Any]]) -> dict[str, date]:
+    """Where each ticker's price history used to start (earliest signal - 10 days; the benchmark - 45).
+
+    Hashes are computed from this window only so that fetching more history for volatility does
+    not change them (see ``legacy_hash_window``).
+    """
+    earliest: dict[str, date] = {}
+    for row in rows:
+        signal = date.fromisoformat(str(row["date"]))
+        ticker = str(row["ticker"])
+        earliest[ticker] = min(signal, earliest.get(ticker, signal))
+    starts = {ticker: day - timedelta(days=10) for ticker, day in earliest.items()}
+    starts[BENCHMARK_TICKER] = min(earliest.values()) - timedelta(days=10 + 35)
+    return starts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forward-validate encrypted immutable JP inflection snapshots.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
     parser.add_argument("--snapshot-dir", default="dashboard/data/inflection/v3")
+    parser.add_argument(
+        "--legacy-snapshot-dir",
+        default="dashboard/data/inflection",
+        help="Only sizes the shared price window (legacy snapshots are not evaluated here).",
+    )
     parser.add_argument("--output", default="artifacts/inflection_forward_validation.json")
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
     snapshot_dir = repo_root / args.snapshot_dir
+    legacy_snapshot_dir = repo_root / args.legacy_snapshot_dir
     encrypted_snapshots = list(snapshot_dir.glob("????-??-??.enc")) if snapshot_dir.exists() else []
     if not encrypted_snapshots:
         print("No encrypted immutable EARLY_CANDIDATE snapshots available yet; nothing to validate.")
@@ -243,25 +189,34 @@ def main() -> int:
         print("Encrypted snapshots exist but contain no tracked inflection observations yet.")
         return 0
 
-    histories = _fetch_adjusted_histories(all_observations, max_horizon=252)
-    split_histories = _fetch_adjusted_histories(
-        all_observations,
-        max_horizon=252,
-        price_basis=SPLIT_ONLY,
+    window = shared_price_window([snapshot_dir, legacy_snapshot_dir], datetime.now(UTC).date())
+    if window is None:
+        raise RuntimeError("no snapshot files to size the price window")
+    observed = sorted({str(observation["ticker"]) for observation in all_observations})
+    fetched = fetch_price_histories(
+        [*observed, BENCHMARK_TICKER],
+        *window,
+        cache_path=repo_root / DEFAULT_CACHE_RELATIVE_PATH,
+        required={BENCHMARK_TICKER},
     )
-    benchmark_rows = [
-        {"ticker": BENCHMARK_TICKER, "date": signal["signal_date"]}
-        for signal in all_observations
-    ]
-    benchmark_history = _fetch_adjusted_histories(
-        benchmark_rows,
-        max_horizon=252,
-        extra_lookback_days=35,
-    )[BENCHMARK_TICKER]
+    total_return = fetched.total_return()
+    benchmark_history = total_return.pop(BENCHMARK_TICKER)
+    histories = total_return
+    split_histories = {
+        ticker: frame for ticker, frame in fetched.split_only().items() if ticker != BENCHMARK_TICKER
+    }
+    if fetched.unavailable:
+        print(json.dumps({"price_unavailable_ticker_count": fetched.unavailable}))
+    starts = _legacy_hash_starts(all_observations)
     price_hashes = _price_hashes(
         {
-            TOTAL_RETURN_ADJUSTED: {**histories, BENCHMARK_TICKER: benchmark_history},
-            SPLIT_ONLY: split_histories,
+            TOTAL_RETURN_ADJUSTED: {
+                **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in histories.items()},
+                BENCHMARK_TICKER: legacy_hash_window(benchmark_history, starts[BENCHMARK_TICKER]),
+            },
+            SPLIT_ONLY: {
+                ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in split_histories.items()
+            },
         }
     )
     _persist_price_hashes(
@@ -327,6 +282,7 @@ def main() -> int:
             "Many group, horizon, and stop combinations are reported; do not over-interpret the best result."
         ),
         "tracked_pool_explosion_recall": recall,
+        "explosion_definitions": explosion_definitions(),
         "groups": {},
     }
     groups: dict[str, object] = {}

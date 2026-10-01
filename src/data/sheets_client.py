@@ -30,6 +30,7 @@ STATUS_COLUMNS = (
     "error",
     "triggered_at",
     "last_notified_at",
+    "last_warned_at",
 )
 
 

@@ -49,6 +49,7 @@ jobs:
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
             src/data/validation.py \
+            src/evaluation/exit_rules.py \
             src/evaluation/explosion.py \
             src/evaluation/inflection_backtest.py \
             src/evaluation/inflection_forward.py \
@@ -57,6 +58,7 @@ jobs:
             src/evaluation/inflection_portfolio.py \
             src/evaluation/inflection_recall.py \
             src/evaluation/inflection_report.py \
+            src/evaluation/regime.py \
             src/monitoring/position_exit.py \
             src/screening/inflection_live.py \
             scripts/rebuild_inflection_forward_validation.py \

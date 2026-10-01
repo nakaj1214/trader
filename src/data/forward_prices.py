@@ -36,7 +36,9 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
 BATCH_INTERVAL_SECONDS = 0.5
 MAX_FAILURE_RATIO = 0.05  # tolerate delistings; a provider outage still fails closed
 DEFAULT_CACHE_RELATIVE_PATH = "artifacts/price_cache.pkl"  # gitignored; shared within one CI job
-PRIOR_HISTORY_DAYS = 100  # 60 sessions of prior closes for volatility, plus holidays and slack
+# The regime needs 273 prior benchmark closes (252 + 20 + 1). 420 calendar days left only 3 sessions of slack in
+# the worst week of 2025-26, so 460 (worst case 303 sessions) is used; it also covers 60 sessions for volatility.
+PRIOR_HISTORY_DAYS = 460
 REQUIRED_COLUMNS = {"Open", "High", "Low", "Close", "Adj Close"}
 _SNAPSHOT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})\.enc$")
 

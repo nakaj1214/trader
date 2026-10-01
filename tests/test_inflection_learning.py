@@ -765,7 +765,7 @@ def test_main_fetches_once_over_the_shared_window_for_cli_given_snapshot_dirs(
     """Legacy and v3 observations share one window sized from the directories actually passed."""
     from datetime import date, timedelta
 
-    from src.data.forward_prices import PriceHistories
+    from src.data.forward_prices import PRIOR_HISTORY_DAYS, PriceHistories
 
     v3, legacy = tmp_path / "fixtures" / "v3", tmp_path / "fixtures" / "legacy"
     for directory in (v3, legacy):
@@ -792,9 +792,77 @@ def test_main_fetches_once_over_the_shared_window_for_cli_given_snapshot_dirs(
 
     assert len(calls) == 1
     assert calls[0]["tickers"] == ["1111.T", "1306.T", "2222.T"]
-    assert calls[0]["start"] == date(2026, 1, 2) - timedelta(days=100)  # the legacy directory's earliest snapshot
+    assert calls[0]["start"] == date(2026, 1, 2) - timedelta(days=PRIOR_HISTORY_DAYS)  # the legacy directory's earliest snapshot
     assert calls[0]["required"] == {"1306.T"}
     assert calls[0]["cache_path"] == tmp_path / "artifacts" / "price_cache.pkl"
     full = json.loads((tmp_path / "artifacts/inflection_learning.json").read_text(encoding="utf-8"))
     assert full["observation_count"] == 2
     assert full["price_unavailable_ticker_count"] == 0
+
+
+# --- REQ-046: regime labels ----------------------------------------------------------------------
+
+
+def test_regime_labels_become_factors_that_join_the_significance_family() -> None:
+    import math
+
+    index = pd.bdate_range("2025-01-06", periods=440)
+    # rising for 300 sessions (trend up), then a long slide (trend down)
+    benchmark_close = pd.Series(
+        [100.0 * math.exp(0.003 * i) if i < 300 else 100.0 * math.exp(0.9 - 0.012 * (i - 300)) for i in range(440)],
+        index=index,
+    )
+    benchmark = pd.DataFrame(
+        {"Open": benchmark_close, "High": benchmark_close, "Low": benchmark_close, "Close": benchmark_close}
+    )
+
+    def stock(boost: float) -> pd.DataFrame:
+        close = pd.Series([100.0 + i * boost for i in range(440)], index=index)
+        return pd.DataFrame({"Open": close, "High": close * 1.01, "Low": close * 0.99, "Close": close})
+
+    def observation(ticker: str, offset: int) -> dict[str, Any]:
+        day = str(index[offset].date())
+        return {
+            **_candidate(ticker, "WATCH"),
+            "signal_date": day,
+            "date": day,
+            "strategy_version": "jp-inflection-shadow-v3",
+        }
+
+    observations = [observation("1111.T", 250), observation("2222.T", 420)]
+    evaluated = evaluate_learning_observations(
+        observations, {"1111.T": stock(1.0), "2222.T": stock(0.0)}, benchmark, horizons=(5,)
+    )
+
+    assert [row["regime_trend"] for row in evaluated] == ["up", "down"]
+    assert "regime_trend:up" in evaluated[0]["factor_labels"] and "regime_trend:down" in evaluated[1]["factor_labels"]
+    assert all(
+        any(label.startswith("regime_vol:") for label in row["factor_labels"]) for row in evaluated
+    )
+
+    report = build_learning_report(
+        observations,
+        {"1111.T": stock(1.0), "2222.T": stock(0.0)},
+        benchmark,
+        promotion_strategy_version="jp-inflection-shadow-v3",
+    )
+    factors = {row["factor"]: row for row in report["promotion_factor_statistics"]["h5"]}
+    assert {"regime_trend:up", "regime_trend:down"} <= set(factors)
+    assert factors["regime_trend:up"]["fisher_p_value"] is not None  # a factor like any other: tested and BH-corrected
+    assert "bh_q_value" in factors["regime_trend:up"]
+
+
+def test_regime_is_unknown_when_the_benchmark_has_no_history() -> None:
+    history = _history([100.0 + index for index in range(40)])
+    signal_date = str(history.index[10].date())
+    observation = {
+        **_candidate(classification="WATCH"),
+        "signal_date": signal_date,
+        "date": signal_date,
+        "strategy_version": "jp-inflection-shadow-v3",
+    }
+
+    row = evaluate_learning_observations([observation], {"1111.T": history}, pd.DataFrame(), horizons=(5,))[0]
+
+    assert (row["regime_trend"], row["regime_volatility"]) == ("unknown", "unknown")
+    assert "regime_trend:unknown" in row["factor_labels"]

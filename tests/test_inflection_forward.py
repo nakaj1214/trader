@@ -20,7 +20,7 @@ from scripts.rebuild_inflection_forward_validation import (
 from scripts.rebuild_inflection_forward_validation import (
     main as rebuild_main,
 )
-from src.data.forward_prices import PriceHistories
+from src.data.forward_prices import PRIOR_HISTORY_DAYS, PriceHistories
 from src.data.snapshot_crypto import decrypt_json, encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
@@ -495,7 +495,7 @@ def test_group_report_has_all_horizons_stops_and_aligned_breakdowns() -> None:
     )
 
     assert set(report["horizons"]) == {"h5", "h20", "h60", "h126", "h252"}
-    assert len(report["exit_strategies"]) == 9
+    assert len(report["exit_strategies"]) == 13  # 9 trailing stops + 4 candidate exit rules
     h5 = report["horizons"]["h5"]
     assert h5["summary"]["sample_count"] == sum(h5["score_band_sample_counts"].values())
     assert h5["summary"]["sample_count"] == sum(h5["regime_sample_counts"].values())
@@ -606,7 +606,7 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     # One batched fetch for every observed ticker plus the benchmark, over the shared window.
     assert len(fetch_calls) == 1
     assert set(fetch_calls[0]["tickers"]) == {"1111.T", "2222.T", "3333.T", "4444.T", BENCHMARK_TICKER}
-    assert fetch_calls[0]["start"] == date(2026, 1, 29) - timedelta(days=100)
+    assert fetch_calls[0]["start"] == date(2026, 1, 29) - timedelta(days=PRIOR_HISTORY_DAYS)
     assert fetch_calls[0]["required"] == {BENCHMARK_TICKER}
     report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
     assert set(report["groups"]) == {"early_candidate", "watch", "none"}
@@ -664,7 +664,80 @@ def test_main_sizes_the_window_from_cli_snapshot_dirs_and_hashes_only_the_histor
 
     assert rebuild_main() == 0
 
-    assert windows[0][0] == date(2025, 12, 1) - timedelta(days=100)  # the legacy dir's earliest snapshot
+    assert windows[0][0] == date(2025, 12, 1) - timedelta(days=PRIOR_HISTORY_DAYS)  # the legacy dir's earliest snapshot
     assert min(saved["1111.T"]["total_return_adjusted"]) == "2026-01-19"  # signal 2026-01-29 minus 10 days, not the wider fetch start
     assert min(saved["1111.T"]["split_only"]) == "2026-01-19"
     assert min(saved["1306.T"]["total_return_adjusted"]) == "2025-12-15"  # signal minus 10 + 35 days
+
+
+ADDED_AFTER_THE_FINGERPRINTS = {"exit_legs", "regime_breakdown"}  # keys introduced since they were taken
+
+
+def _strip_added_keys(value):
+    if isinstance(value, dict):
+        return {key: _strip_added_keys(item) for key, item in value.items() if key not in ADDED_AFTER_THE_FINGERPRINTS}
+    if isinstance(value, list):
+        return [_strip_added_keys(item) for item in value]
+    return value
+
+
+def test_existing_exit_strategies_and_horizons_are_unchanged_and_new_rules_are_added() -> None:
+    """Fingerprints were taken before the exit-rule work; keys added since then are ignored, every value must match."""
+    import hashlib
+
+    from tests.test_exit_rules import synthetic_history
+
+    histories = {f"{n:04d}.T": synthetic_history(n) for n in range(6)}
+    signals = []
+    for n in range(6):
+        for k in range(4):
+            day = str(histories[f"{n:04d}.T"].index[60 + 25 * k + n].date())
+            signals.append({"ticker": f"{n:04d}.T", "signal_date": day, "date": day, "score": 72.0 + n + k})
+
+    report = _build_group_report(
+        signals, histories, histories, synthetic_history(99), [signal["signal_date"] for signal in signals]
+    )
+
+    def fingerprint(value) -> str:
+        return hashlib.sha256(json.dumps(_strip_added_keys(value), sort_keys=True, default=str).encode()).hexdigest()
+
+    trailing = {key: value for key, value in report["exit_strategies"].items() if key.startswith("trailing_")}
+    assert len(trailing) == 9
+    assert fingerprint(trailing) == "2659d559fbf760696282ed8fe4337a0faaba459d189cfa4520b4f26ef2cb45f1"
+    assert fingerprint(report["horizons"]) == "084cbaafb4178137c5ae3a2d69b45c68d3dc228ab3c8f433e33f2e8feb7a1523"
+    for key in (
+        "chandelier_3atr22_h126",
+        "ma10_break_after20_h126",
+        "time15d_5pct_then_trail15_h126",
+        "partial50_half_then_trail15_h126",
+    ):
+        entry = report["exit_strategies"][key]
+        assert entry["max_holding_days"] == 126 and entry["eligible_count"] > 0
+        assert {"matured_summary", "benchmark_excess", "stress", "trades"} <= set(entry)
+        assert entry["rule"] and entry["rule"] != "prior_confirmed_high_water_mark"
+
+
+def test_report_breakdowns_split_results_by_the_benchmark_regime() -> None:
+    import math
+
+    index = pd.bdate_range("2025-01-06", periods=440)
+    benchmark_close = pd.Series(
+        [100.0 * math.exp(0.003 * i) if i < 300 else 100.0 * math.exp(0.9 - 0.012 * (i - 300)) for i in range(440)],
+        index=index,
+    )
+    benchmark = pd.DataFrame({"Open": benchmark_close, "Close": benchmark_close})
+    rising = pd.DataFrame({"Open": [100.0 + i for i in range(440)], "Close": [100.0 + i for i in range(440)]}, index=index)
+    falling = pd.DataFrame({"Open": [500.0 - i for i in range(440)], "Close": [500.0 - i for i in range(440)]}, index=index)
+    up_trade = simulate_signal({"ticker": "A.T", "signal_date": str(index[250].date()), "score": 80}, rising, holding_days=5)
+    down_trade = simulate_signal({"ticker": "B.T", "signal_date": str(index[420].date()), "score": 80}, falling, holding_days=5)
+    incomplete = simulate_signal({"ticker": "C.T", "signal_date": str(index[250].date()), "score": 80}, pd.DataFrame(), holding_days=5)
+
+    breakdown = _report_breakdowns([up_trade, down_trade, incomplete], benchmark)["regime_breakdown"]
+
+    assert breakdown["trend"]["up"]["count"] == 1 and breakdown["trend"]["down"]["count"] == 1
+    assert breakdown["trend"]["unknown"]["count"] == 0  # the incomplete trade is excluded, as elsewhere
+    assert sum(item["count"] for item in breakdown["volatility"].values()) == 2
+    assert breakdown["trend"]["up"]["win_rate_pct"] == 100.0 and breakdown["trend"]["down"]["win_rate_pct"] == 0.0
+    assert breakdown["trend"]["up"]["mean_net_return_pct"] > 0 > breakdown["trend"]["down"]["mean_net_return_pct"]
+    assert breakdown["trend"]["up"]["mean_excess_return_pct"] is not None
+    assert set(breakdown) == {"trend", "volatility"}

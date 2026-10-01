@@ -191,6 +191,9 @@ def paired_benchmark_returns(
             "excess_return_pct": None,
             "beat_benchmark": None,
         }
+        if opens.empty or closes.empty:  # no usable benchmark prices: nothing to pair against
+            rows.append(empty)
+            continue
         if not trade.entry_date or not trade.exit_date or trade.net_return_pct is None:
             rows.append(empty)
             continue

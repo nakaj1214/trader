@@ -43,6 +43,8 @@ class TradeResult:
     early_exit_return_5d_pct: float | None = None
     early_exit_return_20d_pct: float | None = None
     early_exit_return_60d_pct: float | None = None
+    # Every sale as [date, price, fraction] when the position was sold in more than one piece.
+    exit_legs: list[list[Any]] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +71,92 @@ def _true_max_drawdown_pct(entry_price: float, closes: pd.Series) -> float | Non
     running_peak = values.cummax()
     drawdowns = (values / running_peak - 1.0) * 100.0
     return float(drawdowns.min())
+
+
+def _finalize_trade(
+    *,
+    ticker: str,
+    signal_date: pd.Timestamp,
+    score: float,
+    entry_date: pd.Timestamp,
+    entry_price: float,
+    exits: list[tuple[pd.Timestamp, float, float]],
+    exit_reason: str,
+    realized_closes: pd.Series,
+    metric_highs: list[float],
+    metric_lows: list[float],
+    closes: pd.Series,
+    has_full_horizon: bool,
+    round_trip_cost_pct: float,
+    apply_tax: bool,
+    tax_rate_pct: float,
+) -> TradeResult:
+    """Turn a decided exit into a ``TradeResult``.
+
+    ``exits`` lists ``(date, price, fraction)`` sales; the fractions must sum to 1. Profit is the
+    fraction-weighted return of every sale. Everything that describes the *stock* (``exit_date``,
+    ``exit_price``, peak metrics, returns after exit, drawdown) is anchored on the LAST sale and its
+    actual fill price, never on a blended average, so a partial exit cannot distort them.
+    """
+    if not exits or abs(sum(fraction for _, _, fraction in exits) - 1.0) > 1e-9:
+        raise ValueError("exit fractions must sum to 1")
+    exit_date, exit_price, _ = exits[-1]
+    gross = sum(fraction * (price / entry_price - 1.0) for _, price, fraction in exits) * 100.0
+    max_return = (float(realized_closes.max()) / entry_price - 1.0) * 100.0
+    max_drawdown = _true_max_drawdown_pct(entry_price, realized_closes)
+    mfe = (max(metric_highs) / entry_price - 1.0) * 100.0 if len(metric_highs) > 1 else None
+    mae = (min(metric_lows) / entry_price - 1.0) * 100.0 if len(metric_lows) > 1 else None
+    net = gross - round_trip_cost_pct
+    if apply_tax and net > 0:
+        net *= 1.0 - tax_rate_pct / 100.0
+    peak_giveback = None
+    peak_capture = None
+    if mfe is not None:
+        peak_price = entry_price * (1.0 + mfe / 100.0)
+        peak_giveback = (peak_price - exit_price) / peak_price * 100.0
+        if mfe > 0:
+            peak_capture = net / mfe
+    future_after_exit = closes[closes.index > exit_date]
+
+    def early_exit_return(days: int) -> float | None:
+        if len(future_after_exit) < days or exit_price <= 0:
+            return None
+        return (float(future_after_exit.iloc[days - 1]) / exit_price - 1.0) * 100.0
+
+    return TradeResult(
+        ticker=ticker,
+        signal_date=str(signal_date.date()),
+        score=score,
+        entry_date=str(entry_date.date()),
+        entry_price=round(entry_price, 6),
+        exit_date=str(exit_date.date()),
+        exit_price=round(exit_price, 6),
+        gross_return_pct=round(gross, 6),
+        net_return_pct=round(net, 6),
+        max_return_pct=round(max_return, 6),
+        max_drawdown_pct=round(max_drawdown, 6) if max_drawdown is not None else None,
+        explosive_50pct=max_return >= FIXED_MAX_RETURN_PCT,
+        mfe_pct=round(mfe, 6) if mfe is not None else None,
+        mae_pct=round(mae, 6) if mae is not None else None,
+        exit_reason=exit_reason,
+        horizon_matured=has_full_horizon,
+        peak_giveback_pct=round(peak_giveback, 6) if peak_giveback is not None else None,
+        peak_capture_ratio=round(peak_capture, 6) if peak_capture is not None else None,
+        early_exit_return_5d_pct=(
+            round(value, 6) if (value := early_exit_return(5)) is not None else None
+        ),
+        early_exit_return_20d_pct=(
+            round(value, 6) if (value := early_exit_return(20)) is not None else None
+        ),
+        early_exit_return_60d_pct=(
+            round(value, 6) if (value := early_exit_return(60)) is not None else None
+        ),
+        exit_legs=(
+            [[str(day.date()), round(price, 6), round(fraction, 6)] for day, price, fraction in exits]
+            if len(exits) > 1
+            else None
+        ),
+    )
 
 
 def simulate_signal(
@@ -190,56 +278,22 @@ def simulate_signal(
                 pd.Series([exit_price], index=[exit_date], dtype=float),
             ]
         )
-    gross = (exit_price / entry_price - 1.0) * 100.0
-    max_return = (float(realized_closes.max()) / entry_price - 1.0) * 100.0
-    max_drawdown = _true_max_drawdown_pct(entry_price, realized_closes)
-    mfe = (max(metric_highs) / entry_price - 1.0) * 100.0 if len(metric_highs) > 1 else None
-    mae = (min(metric_lows) / entry_price - 1.0) * 100.0 if len(metric_lows) > 1 else None
-    net = gross - round_trip_cost_pct
-    if apply_tax and net > 0:
-        net *= 1.0 - tax_rate_pct / 100.0
-    peak_giveback = None
-    peak_capture = None
-    if mfe is not None:
-        peak_price = entry_price * (1.0 + mfe / 100.0)
-        peak_giveback = (peak_price - exit_price) / peak_price * 100.0
-        if mfe > 0:
-            peak_capture = net / mfe
-    future_after_exit = closes[closes.index > exit_date]
-
-    def early_exit_return(days: int) -> float | None:
-        if len(future_after_exit) < days or exit_price <= 0:
-            return None
-        return (float(future_after_exit.iloc[days - 1]) / exit_price - 1.0) * 100.0
-
-    return TradeResult(
+    return _finalize_trade(
         ticker=ticker,
-        signal_date=str(signal_date.date()),
+        signal_date=signal_date,
         score=score,
-        entry_date=str(entry_date.date()),
-        entry_price=round(entry_price, 6),
-        exit_date=str(exit_date.date()),
-        exit_price=round(exit_price, 6),
-        gross_return_pct=round(gross, 6),
-        net_return_pct=round(net, 6),
-        max_return_pct=round(max_return, 6),
-        max_drawdown_pct=round(max_drawdown, 6) if max_drawdown is not None else None,
-        explosive_50pct=max_return >= FIXED_MAX_RETURN_PCT,
-        mfe_pct=round(mfe, 6) if mfe is not None else None,
-        mae_pct=round(mae, 6) if mae is not None else None,
+        entry_date=entry_date,
+        entry_price=entry_price,
+        exits=[(exit_date, exit_price, 1.0)],
         exit_reason=exit_reason,
-        horizon_matured=has_full_horizon,
-        peak_giveback_pct=round(peak_giveback, 6) if peak_giveback is not None else None,
-        peak_capture_ratio=round(peak_capture, 6) if peak_capture is not None else None,
-        early_exit_return_5d_pct=(
-            round(value, 6) if (value := early_exit_return(5)) is not None else None
-        ),
-        early_exit_return_20d_pct=(
-            round(value, 6) if (value := early_exit_return(20)) is not None else None
-        ),
-        early_exit_return_60d_pct=(
-            round(value, 6) if (value := early_exit_return(60)) is not None else None
-        ),
+        realized_closes=realized_closes,
+        metric_highs=metric_highs,
+        metric_lows=metric_lows,
+        closes=closes,
+        has_full_horizon=has_full_horizon,
+        round_trip_cost_pct=round_trip_cost_pct,
+        apply_tax=apply_tax,
+        tax_rate_pct=tax_rate_pct,
     )
 
 

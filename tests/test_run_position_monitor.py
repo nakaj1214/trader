@@ -307,3 +307,154 @@ def test_market_window_includes_thirty_minutes_after_close(
     calendar.session_close.return_value = pd.Timestamp("2026-09-08 15:30", tz=JST)
 
     assert is_in_session(calendar, when) is expected
+
+
+# --- REQ-047: stop-proximity warning --------------------------------------------------------------------
+
+NEAR_BARS = pd.DataFrame(
+    {"Open": [100.0, 118.0], "High": [120.0, 119.0], "Low": [99.0, 109.0], "Close": [118.0, 110.0]},
+    index=BAR_INDEX,
+)  # stop = 120 * 0.9 = 108, last = 110: 1.85% above it and not touched
+NEAR_QUOTE = TodayQuote(100.0, 120.0, 99.0, 110.0, BAR_INDEX[-1].isoformat())
+FAR_BARS = pd.DataFrame(
+    {"Open": [100.0, 118.0], "High": [120.0, 126.0], "Low": [99.0, 117.0], "Close": [118.0, 125.0]},
+    index=BAR_INDEX,
+)  # stop = 126 * 0.9 = 113.4, last = 125: about 10% above it
+FAR_QUOTE = TodayQuote(100.0, 126.0, 99.0, 125.0, BAR_INDEX[-1].isoformat())
+OTHER_ENTRY = {**HOLDING, "entry_date": "2026-09-04"}
+
+
+def _warned_row(entry_date: str = "2026-09-07", when: datetime = NOW, ticker: str = "1111.T") -> dict[str, Any]:
+    return {"ticker": ticker, "entry_date": entry_date, "triggered": False, "last_warned_at": when.isoformat()}
+
+
+def _warning_posts(deps: dict[str, Mock]) -> list[str]:
+    return [call.kwargs["json"]["text"] for call in deps["post"].call_args_list if "残り" in call.kwargs["json"]["text"]]
+
+
+def _written(deps: dict[str, Mock]) -> list[dict[str, Any]]:
+    return list(deps["write"].call_args.args[0])
+
+
+def test_a_stock_close_to_its_stop_is_warned_once_and_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        assert run(dry_run=False, evaluated_at=NOW) == 0
+
+    (text,) = _warning_posts(deps)
+    assert "検証用アラート" in text and "確定した売買判断ではありません" in text and "1111.T" in text
+    assert "3%以内" in text and "残り1.9%" in text
+    (row,) = _written(deps)
+    assert row["triggered"] is False and row["last_warned_at"] == NOW.isoformat()
+
+
+def test_the_same_ticker_is_not_warned_again_the_same_day_but_is_the_next_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    later = NOW + timedelta(minutes=5)
+    with _dependencies([HOLDING], previous=[_warned_row()], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=later)
+    assert _warning_posts(deps) == []
+    assert _written(deps)[0]["last_warned_at"] == NOW.isoformat()  # the original time is kept
+
+    yesterday = _warned_row(when=NOW - timedelta(days=1))
+    with _dependencies([HOLDING], previous=[yesterday], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=later)
+    assert len(_warning_posts(deps)) == 1
+    assert _written(deps)[0]["last_warned_at"] == later.isoformat()
+
+
+def test_no_warning_when_far_from_the_stop_or_already_triggered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING], bars=FAR_BARS, quote=FAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=NOW)
+    assert _warning_posts(deps) == [] and _written(deps)[0]["last_warned_at"] == ""
+
+    with _dependencies([HOLDING]) as deps:  # the default bars trigger the stop: that is a different alert
+        run(dry_run=False, evaluated_at=NOW)
+    assert _warning_posts(deps) == [] and _written(deps)[0]["triggered"] is True
+
+
+def test_dry_run_neither_sends_nor_marks_anything_warned(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    with _dependencies([HOLDING], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=True, evaluated_at=NOW)
+
+    deps["post"].assert_not_called()
+    assert _written(deps)[0]["last_warned_at"] == ""
+
+
+def test_a_failed_send_does_not_mark_the_warning_so_the_next_run_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        deps["response"].raise_for_status.side_effect = requests.HTTPError("slack down")
+        with pytest.raises(requests.HTTPError):
+            run(dry_run=False, evaluated_at=NOW)
+
+    assert _written(deps)[0]["last_warned_at"] == ""  # state is still persisted, without a success time
+
+
+def test_two_positions_of_one_ticker_close_to_the_stop_are_warned_as_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING, OTHER_ENTRY], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=NOW)
+
+    (text,) = _warning_posts(deps)
+    assert text.count("1111.T") == 1  # listed once in the message
+    assert [row["last_warned_at"] for row in _written(deps)] == [NOW.isoformat()] * 2
+
+
+def test_replacing_a_warned_position_the_same_day_keeps_the_ticker_warned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review: warn -> swap the position for another entry date -> run again must stay at one warning."""
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:  # run 1: warns
+        run(dry_run=False, evaluated_at=NOW)
+    assert len(_warning_posts(deps)) == 1
+    after_first = _written(deps)
+
+    with _dependencies([OTHER_ENTRY], previous=after_first, bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:  # run 2: swapped
+        run(dry_run=False, evaluated_at=NOW + timedelta(minutes=5))
+    assert _warning_posts(deps) == []
+    after_second = _written(deps)
+    assert [row["entry_date"] for row in after_second] == ["2026-09-04"]  # the old row is gone...
+    assert after_second[0]["last_warned_at"] == NOW.isoformat()  # ...but the new row carries the warning time
+
+    with _dependencies([OTHER_ENTRY], previous=after_second, bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:  # run 3
+        run(dry_run=False, evaluated_at=NOW + timedelta(minutes=10))
+    assert _warning_posts(deps) == []
+
+    next_day = [{**row, "last_warned_at": (NOW - timedelta(days=1)).isoformat()} for row in after_second]
+    with _dependencies([OTHER_ENTRY], previous=next_day, bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=NOW + timedelta(minutes=15))
+    assert len(_warning_posts(deps)) == 1  # the next day it can warn again
+
+
+def test_stale_rows_keep_the_warning_time_even_when_every_quote_is_unusable() -> None:
+    previous = [_warned_row()]
+    with (
+        _dependencies([OTHER_ENTRY], previous=previous, bars=None, quote=None) as deps,
+        pytest.raises(RuntimeError, match="no holdings had a usable current quote"),
+    ):
+        run(dry_run=True, evaluated_at=NOW)
+
+    (row,) = _written(deps)
+    assert row["status"] == "stale" and row["last_warned_at"] == NOW.isoformat()  # carried by ticker
+
+
+def test_a_ticker_warned_earlier_today_is_not_repeated_while_another_one_is_warned(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING, {**HOLDING, "ticker": "2222.T"}], previous=[_warned_row(ticker="2222.T")], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=NOW)
+
+    by_ticker = {row["ticker"]: row for row in _written(deps)}
+    assert by_ticker["1111.T"]["last_warned_at"] == NOW.isoformat()  # warned now
+    assert by_ticker["2222.T"]["last_warned_at"] == NOW.isoformat()  # already warned today: not repeated, time kept
+    assert len(_warning_posts(deps)) == 1 and "2222.T" not in _warning_posts(deps)[0]
+
+
+def test_unreadable_or_non_numeric_warning_state_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    junk = [{"ticker": "1111.T", "entry_date": "2026-09-07", "last_warned_at": "not a time"}, {"ticker": "", "last_warned_at": NOW.isoformat()}]
+    with _dependencies([HOLDING], previous=junk, bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        run(dry_run=False, evaluated_at=NOW)
+
+    assert len(_warning_posts(deps)) == 1  # junk does not suppress the warning

@@ -33,6 +33,7 @@ from src.evaluation.inflection_forward import (
     SnapshotLoadError,
     paired_benchmark_returns,
 )
+from src.evaluation.regime import regime_labels
 
 LEARNING_HORIZONS = (5, 20, 60, 120)
 EXPLOSION_MAX_RETURN_PCT = HORIZON_MAX_RETURN_PCT  # alias kept for existing imports
@@ -283,6 +284,7 @@ def evaluate_learning_observations(
 ) -> list[dict[str, Any]]:
     """Attach future outcomes without using them to alter the original signal."""
     observation_rows = [dict(row) for row in observations]
+    benchmark_closes = _series(benchmark_history, "Close")
     trades_by_horizon = {
         horizon: [
             simulate_signal(
@@ -345,7 +347,14 @@ def evaluate_learning_observations(
                 "vol_explosive": is_vol_explosion(max_return, sigma, horizon) if completed else None,
             }
         row["horizons"] = outcomes
-        row["factor_labels"] = factor_labels(observation)
+        regimes = regime_labels(benchmark_closes, str(observation["signal_date"]))
+        row["regime_trend"] = regimes["trend"]
+        row["regime_volatility"] = regimes["volatility"]
+        row["factor_labels"] = [
+            *factor_labels(observation),
+            f"regime_trend:{regimes['trend']}",
+            f"regime_vol:{regimes['volatility']}",
+        ]
         row["explosion_horizons"] = explosion_horizons
         row["explosive"] = bool(explosion_horizons)
         row["missed_explosion"] = bool(explosion_horizons) and observation.get("classification") != "EARLY_CANDIDATE"

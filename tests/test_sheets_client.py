@@ -122,3 +122,26 @@ def test_sheets_environment_is_required(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
     with pytest.raises(RuntimeError, match="required"):
         read_holdings()
+
+
+def test_last_warned_at_is_the_new_last_column_and_the_others_keep_their_order() -> None:
+    assert STATUS_COLUMNS[-1] == "last_warned_at"
+    assert STATUS_COLUMNS[:15] == (
+        "ticker", "entry_date", "entry_price", "current_price", "high_water_mark", "stop_price",
+        "trailing_stop_pct", "unrealized_pct", "distance_to_stop_pct", "triggered", "exit_reason",
+        "as_of_at", "quote_source", "status", "error",
+    )
+    assert STATUS_COLUMNS.index("last_notified_at") < STATUS_COLUMNS.index("last_warned_at")
+
+
+def test_a_row_without_a_warning_time_writes_an_empty_cell(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    worksheet = Mock(id=123, row_count=100, col_count=30)
+    with (
+        patch("src.data.sheets_client.Credentials.from_service_account_info", return_value=Mock()),
+        patch("src.data.sheets_client.gspread.authorize", return_value=_client(worksheet)),
+    ):
+        write_status([{"ticker": "1111.T", "status": "ok"}])  # as an older caller (or sheet) would produce
+
+    rows = worksheet.spreadsheet.batch_update.call_args.args[0]["requests"][1]["updateCells"]["rows"]
+    assert rows[1]["values"][list(STATUS_COLUMNS).index("last_warned_at")] == {}

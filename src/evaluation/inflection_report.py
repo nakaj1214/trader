@@ -10,6 +10,15 @@ from typing import Any
 
 import pandas as pd
 
+from src.evaluation.exit_rules import (
+    ChandelierRule,
+    ExitRule,
+    MovingAverageBreakRule,
+    PartialTakeProfitRule,
+    TimeStopRule,
+    describe_rule,
+    simulate_exit_rule,
+)
 from src.evaluation.inflection_backtest import (
     TradeResult,
     _series,
@@ -25,11 +34,21 @@ from src.evaluation.inflection_forward import (
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
+from src.evaluation.regime import regime_labels
 
 ROUND_TRIP_COST_PCT = 0.2
 STRESS_ROUND_TRIP_COST_PCT = 1.2
 BENCHMARK_ROUND_TRIP_COST_PCT = 0.05
 TAX_RATE_PCT = 20.315
+NEW_EXIT_HOLDING_DAYS = 126
+# Candidate exit rules compared alongside the fixed-percentage trailing stops. Their parameters are fixed
+# in advance; they are not searched, so a good-looking cell is not evidence of a tuned optimum.
+NEW_EXIT_RULES: dict[str, ExitRule] = {
+    "chandelier_3atr22_h126": ChandelierRule(),
+    "ma10_break_after20_h126": MovingAverageBreakRule(),
+    "time15d_5pct_then_trail15_h126": TimeStopRule(),
+    "partial50_half_then_trail15_h126": PartialTakeProfitRule(),
+}
 PORTFOLIO_INITIAL_CAPITAL_JPY = 3_000_000.0
 PORTFOLIO_MAX_POSITIONS = 8
 PORTFOLIO_POSITION_SIZE_PCT = 1 / PORTFOLIO_MAX_POSITIONS
@@ -52,10 +71,45 @@ def regime_label(benchmark_history: pd.DataFrame, signal_date: str) -> str:
     return "up" if float(available.iloc[-1]) >= float(available.iloc[-21]) else "down"
 
 
+REGIME_KINDS = {"trend": ("up", "down", "unknown"), "volatility": ("high", "normal", "unknown")}
+
+
+def _regime_breakdown(completed: list[TradeResult], benchmark_history: pd.DataFrame) -> dict[str, Any]:
+    """Results split by the benchmark's trend and volatility regime on each signal date."""
+    closes = _series(benchmark_history, "Close")
+    pairs = paired_benchmark_returns(
+        completed, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT
+    )
+    labels_by_date: dict[str, dict[str, str]] = {}
+    groups: dict[str, dict[str, list[tuple[float, float | None]]]] = {
+        kind: {label: [] for label in labels} for kind, labels in REGIME_KINDS.items()
+    }
+    for trade, pair in zip(completed, pairs, strict=True):
+        if trade.signal_date not in labels_by_date:
+            labels_by_date[trade.signal_date] = regime_labels(closes, trade.signal_date)
+        excess = pair["excess_return_pct"]
+        for kind in REGIME_KINDS:
+            groups[kind][labels_by_date[trade.signal_date][kind]].append(
+                (float(trade.net_return_pct or 0.0), float(excess) if excess is not None else None)
+            )
+
+    def summarize(values: list[tuple[float, float | None]]) -> dict[str, Any]:
+        nets = [net for net, _ in values]
+        excesses = [excess for _, excess in values if excess is not None]
+        return {
+            "count": len(values),
+            "mean_net_return_pct": round(sum(nets) / len(nets), 6) if nets else None,
+            "win_rate_pct": round(sum(net > 0 for net in nets) / len(nets) * 100.0, 3) if nets else None,
+            "mean_excess_return_pct": round(sum(excesses) / len(excesses), 6) if excesses else None,
+        }
+
+    return {kind: {label: summarize(values) for label, values in labels.items()} for kind, labels in groups.items()}
+
+
 def _report_breakdowns(
     trades: list[TradeResult],
     benchmark_history: pd.DataFrame,
-) -> dict[str, dict[str, int]]:
+) -> dict[str, Any]:
     completed = [trade for trade in trades if trade.net_return_pct is not None]
     score_counts = {**{f"{value}-{value + 9}": 0 for value in range(0, 100, 10)}, "100": 0}
     regime_counts = {"up": 0, "down": 0, "unknown": 0}
@@ -65,6 +119,7 @@ def _report_breakdowns(
     return {
         "score_band_sample_counts": score_counts,
         "regime_sample_counts": regime_counts,
+        "regime_breakdown": _regime_breakdown(completed, benchmark_history),
     }
 
 
@@ -78,6 +133,46 @@ def _paired_trade_rows(
         round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
     )
     return [trade.as_dict() | benchmark for trade, benchmark in zip(trades, benchmarks, strict=True)]
+
+
+def _exit_strategy_report(
+    trades: list[TradeResult],
+    stress_trades: list[TradeResult],
+    *,
+    rule: str,
+    max_holding_days: int,
+    benchmark_history: pd.DataFrame,
+) -> dict[str, Any]:
+    """The per-exit-rule block of a group report (same shape for every rule)."""
+    matured_trades = filter_matured(trades)
+    matured_stress_trades = filter_matured(stress_trades)
+    trade_rows = _paired_trade_rows(trades, benchmark_history)
+    stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
+    matured_rows = [row for trade, row in zip(trades, trade_rows, strict=True) if trade.horizon_matured is True]
+    matured_stress_rows = [
+        row for trade, row in zip(stress_trades, stress_trade_rows, strict=True) if trade.horizon_matured is True
+    ]
+    stress_report = {
+        "matured_summary": summarize_trades(matured_stress_trades),
+        "raw_summary": summarize_trades(stress_trades),
+        "position_summary": summarize_trades(select_non_overlapping_trades(matured_stress_trades)),
+        "benchmark_excess": summarize_benchmark_excess(matured_stress_rows),
+        **_report_breakdowns(matured_stress_trades, benchmark_history),
+        "trades": stress_trade_rows,
+    }
+    return {
+        "rule": rule,
+        "max_holding_days": max_holding_days,
+        "eligible_count": len(matured_trades),
+        "censored_count": sum(trade.horizon_matured is False for trade in trades),
+        "matured_summary": summarize_trades(matured_trades),
+        "raw_summary": summarize_trades(trades),
+        "position_summary": summarize_trades(select_non_overlapping_trades(matured_trades)),
+        "benchmark_excess": summarize_benchmark_excess(matured_rows),
+        **_report_breakdowns(matured_trades, benchmark_history),
+        "trades": trade_rows,
+        "stress": stress_report,
+    }
 
 
 def _build_group_report(
@@ -148,41 +243,41 @@ def _build_group_report(
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
             )
-            matured_trades = filter_matured(trades)
-            matured_stress_trades = filter_matured(stress_trades)
-            trade_rows = _paired_trade_rows(trades, benchmark_history)
-            stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
-            matured_rows = [
-                row for trade, row in zip(trades, trade_rows, strict=True) if trade.horizon_matured is True
-            ]
-            matured_stress_rows = [
-                row
-                for trade, row in zip(stress_trades, stress_trade_rows, strict=True)
-                if trade.horizon_matured is True
-            ]
-            stress_report = {
-                "matured_summary": summarize_trades(matured_stress_trades),
-                "raw_summary": summarize_trades(stress_trades),
-                "position_summary": summarize_trades(
-                    select_non_overlapping_trades(matured_stress_trades)
-                ),
-                "benchmark_excess": summarize_benchmark_excess(matured_stress_rows),
-                **_report_breakdowns(matured_stress_trades, benchmark_history),
-                "trades": stress_trade_rows,
-            }
-            exit_strategies[f"trailing_{int(trailing_stop_pct)}pct_h{holding_days}"] = {
-                "rule": "prior_confirmed_high_water_mark",
-                "max_holding_days": holding_days,
-                "eligible_count": len(matured_trades),
-                "censored_count": sum(trade.horizon_matured is False for trade in trades),
-                "matured_summary": summarize_trades(matured_trades),
-                "raw_summary": summarize_trades(trades),
-                "position_summary": summarize_trades(select_non_overlapping_trades(matured_trades)),
-                "benchmark_excess": summarize_benchmark_excess(matured_rows),
-                **_report_breakdowns(matured_trades, benchmark_history),
-                "trades": trade_rows,
-                "stress": stress_report,
-            }
+            exit_strategies[f"trailing_{int(trailing_stop_pct)}pct_h{holding_days}"] = _exit_strategy_report(
+                trades,
+                stress_trades,
+                rule="prior_confirmed_high_water_mark",
+                max_holding_days=holding_days,
+                benchmark_history=benchmark_history,
+            )
+    for key, exit_rule in NEW_EXIT_RULES.items():
+        rule_trades = [
+            simulate_exit_rule(
+                signal,
+                split_histories.get(str(signal["ticker"]), pd.DataFrame()),
+                exit_rule,
+                holding_days=NEW_EXIT_HOLDING_DAYS,
+                round_trip_cost_pct=ROUND_TRIP_COST_PCT,
+            )
+            for signal in signals
+        ]
+        rule_stress_trades = [
+            simulate_exit_rule(
+                signal,
+                split_histories.get(str(signal["ticker"]), pd.DataFrame()),
+                exit_rule,
+                holding_days=NEW_EXIT_HOLDING_DAYS,
+                round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
+            )
+            for signal in signals
+        ]
+        exit_strategies[key] = _exit_strategy_report(
+            rule_trades,
+            rule_stress_trades,
+            rule=describe_rule(exit_rule),
+            max_holding_days=NEW_EXIT_HOLDING_DAYS,
+            benchmark_history=benchmark_history,
+        )
     return {
         "signal_count": len(signals),
         "horizons": horizons,

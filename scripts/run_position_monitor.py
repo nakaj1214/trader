@@ -25,6 +25,7 @@ from src.monitoring.position_exit import (
 JST = ZoneInfo("Asia/Tokyo")
 SLACK_TIMEOUT_SECONDS = 10
 CLOSE_GRACE_MINUTES = 30
+WARNING_DISTANCE_PCT = 3.0  # warn when the price is within this % above the stop (stop not yet hit)
 
 
 def _number(value: Any, name: str) -> float:
@@ -98,6 +99,67 @@ def _preserve_previous_state(row: dict[str, Any], previous: dict[str, Any] | Non
     row["last_notified_at"] = previous.get("last_notified_at", "") if previous and triggered else ""
 
 
+def _warned_today(previous_rows: list[dict[str, Any]], today: date) -> dict[str, datetime]:
+    """ticker -> latest warning time that falls on ``today`` (JST), taken from EVERY previous row.
+
+    Warnings are deduplicated per ticker, not per (ticker, entry_date) position, so that a position
+    swapped out and replaced during the day cannot cause the same ticker to be warned again.
+    """
+    warned: dict[str, datetime] = {}
+    for row in previous_rows:
+        ticker = str(row.get("ticker") or "").strip()
+        raw = str(row.get("last_warned_at") or "").strip()
+        if not ticker or not raw:
+            continue
+        try:
+            when = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        when = when.replace(tzinfo=JST) if when.tzinfo is None else when.astimezone(JST)
+        if when.date() == today and when > warned.get(ticker, datetime.min.replace(tzinfo=JST)):
+            warned[ticker] = when
+    return warned
+
+
+def _stop_proximity_candidates(ok_rows: list[dict[str, Any]], warned_today: dict[str, datetime]) -> list[dict[str, Any]]:
+    """One entry per ticker that is close to its stop, not triggered, and not yet warned today."""
+    closest: dict[str, dict[str, Any]] = {}
+    for row in ok_rows:
+        ticker = str(row["ticker"])
+        distance = row.get("distance_to_stop_pct")
+        if row.get("triggered") is True or ticker in warned_today or isinstance(distance, bool):
+            continue
+        if not isinstance(distance, (int, float)) or distance > WARNING_DISTANCE_PCT:
+            continue
+        if ticker not in closest or distance < closest[ticker]["distance_to_stop_pct"]:
+            closest[ticker] = row
+    return [closest[ticker] for ticker in sorted(closest)]
+
+
+def _carry_warning_state(
+    rows: list[dict[str, Any]],
+    previous_by_key: dict[tuple[str, str], dict[str, Any]],
+    warned_today: dict[str, datetime],
+    warned_now: dict[str, str],
+) -> None:
+    """Set ``last_warned_at`` on every row, per ticker.
+
+    The sheet is rewritten from this run's rows only, so the "already warned today" fact must be copied
+    onto whichever rows exist now (including new, stale and error rows); otherwise replacing a position
+    would erase it and the next run would warn the same ticker again.
+    """
+    for row in rows:
+        ticker = str(row.get("ticker") or "").strip()
+        key = _position_key(row)
+        previous = previous_by_key.get(key) if key is not None else None
+        if ticker in warned_now:
+            row["last_warned_at"] = warned_now[ticker]
+        elif ticker in warned_today:
+            row["last_warned_at"] = warned_today[ticker].isoformat()
+        else:
+            row["last_warned_at"] = previous.get("last_warned_at", "") if previous else ""
+
+
 def is_in_session(calendar: Any, when: datetime) -> bool:
     minute = when.replace(second=0, microsecond=0)
     if bool(calendar.is_open_on_minute(minute, ignore_breaks=False)):
@@ -120,6 +182,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
 
     previous_rows = read_status()
     previous_by_key = _unique_rows(previous_rows, "status")
+    warned_today = _warned_today(previous_rows, current.date())
     holdings = read_holdings()
     _unique_rows(holdings, "holdings")
     if not holdings:
@@ -223,6 +286,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
     error_rows = [row for row in rows if row["status"] == "error"]
     triggered = [row for row in ok_rows if row.get("triggered") is True]
     if not ok_rows:
+        _carry_warning_state(rows, previous_by_key, warned_today, {})
         write_status(rows)
         raise RuntimeError("position monitor failed: no holdings had a usable current quote")
 
@@ -249,6 +313,25 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - persist status before failing the workflow
             slack_error = slack_error or exc
 
+    warned_now: dict[str, str] = {}
+    warnings = _stop_proximity_candidates(ok_rows, warned_today)
+    if not dry_run and warnings:
+        details = "\n".join(
+            f"• {row['ticker']}: 残り{row['distance_to_stop_pct']:.1f}% current={row['current_price']} "
+            f"stop={row['stop_price']}"
+            for row in warnings
+        )
+        try:
+            _post_slack(
+                webhook,
+                f"[検証用アラート] stop まで残り{WARNING_DISTANCE_PCT:g}%以内の銘柄があります。"
+                "確定した売買判断ではありません。\n" + details,
+            )
+            warned_now = {str(row["ticker"]): current.isoformat() for row in warnings}
+        except Exception as exc:  # noqa: BLE001 - not marking them warned makes the next run retry
+            slack_error = slack_error or exc
+
+    _carry_warning_state(rows, previous_by_key, warned_today, warned_now)
     write_status(rows)
     if slack_error is not None:
         raise slack_error

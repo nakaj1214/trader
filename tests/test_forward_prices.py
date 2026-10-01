@@ -13,6 +13,7 @@ import pytest
 
 from scripts.rebuild_inflection_forward_validation import _changed_price_rows, _history_row_hashes
 from src.data.forward_prices import (
+    PRIOR_HISTORY_DAYS,
     PriceHistories,
     fetch_price_histories,
     legacy_hash_window,
@@ -252,12 +253,13 @@ def _touch(directory: Path, *names: str) -> Path:
     return directory
 
 
-def test_window_starts_100_days_before_the_earliest_snapshot_of_any_given_directory(tmp_path: Path) -> None:
+def test_window_starts_460_days_before_the_earliest_snapshot_of_any_given_directory(tmp_path: Path) -> None:
     v3 = _touch(tmp_path / "v3", "2026-09-14.enc", "2026-09-15.enc")
     legacy = _touch(tmp_path / "legacy", "2026-09-09.enc", "notes.txt", "2026-09-10.json", "2026-13-45.enc")
 
-    assert shared_price_window([v3, legacy], date(2026, 10, 1)) == (date(2026, 6, 1), date(2026, 10, 2))
-    assert shared_price_window([v3], date(2026, 10, 1)) == (date(2026, 6, 6), date(2026, 10, 2))
+    assert PRIOR_HISTORY_DAYS == 460  # 273 prior benchmark closes for the regime, with slack (see forward_prices)
+    assert shared_price_window([v3, legacy], date(2026, 10, 1)) == (date(2025, 6, 6), date(2026, 10, 2))
+    assert shared_price_window([v3], date(2026, 10, 1)) == (date(2025, 6, 11), date(2026, 10, 2))
     assert snapshot_dates([legacy]) == [date(2026, 9, 9)]
 
 
@@ -269,7 +271,7 @@ def test_window_follows_cli_given_directories_even_when_the_defaults_are_empty(t
 
     window = shared_price_window([custom_v3, custom_legacy], date(2026, 10, 1))
 
-    assert window is not None and window[0] == date(2024, 9, 28)  # 100 days before 2025-01-06
+    assert window is not None and window[0] == date(2025, 1, 6) - timedelta(days=PRIOR_HISTORY_DAYS)
 
 
 def test_window_is_none_without_snapshots_and_ignores_missing_directories(tmp_path: Path) -> None:
@@ -311,7 +313,7 @@ def test_learning_reuses_forwards_cache_and_both_have_prior_history_for_legacy_s
     legacy = _touch(tmp_path / "legacy", "2026-09-09.enc")
     today = date(2026, 10, 1)
     window = shared_price_window([v3, legacy], today)
-    assert window is not None and window[0] == date(2026, 9, 9) - timedelta(days=100)
+    assert window is not None and window[0] == date(2026, 9, 9) - timedelta(days=PRIOR_HISTORY_DAYS)
     frames = {name: _raw_between(window[0], window[1], 100.0 + n) for n, name in enumerate(("1111.T", "2222.T", "1306.T", "3333.T"))}
     cache = tmp_path / "artifacts" / "price_cache.pkl"
 
@@ -326,4 +328,5 @@ def test_learning_reuses_forwards_cache_and_both_have_prior_history_for_legacy_s
     assert learning_fake.calls == [["3333.T"]]  # only the legacy-only ticker is fetched
     earliest_observation = pd.Timestamp("2026-09-09")
     for ticker, frame in learned.total_return().items():
-        assert (frame.index < earliest_observation).sum() >= 61, ticker  # enough prior closes for volatility
+        # enough prior closes for the 273-close regime reading as well as the 61-close volatility
+        assert (frame.index < earliest_observation).sum() >= 273, ticker

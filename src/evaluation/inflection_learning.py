@@ -19,6 +19,7 @@ from typing import Any
 import pandas as pd
 
 from src.data.snapshot_crypto import decrypt_json
+from src.data.validation import is_finite_number
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
@@ -37,10 +38,14 @@ PROMOTION_NEGATIVE_LIFT = 0.75
 # (jp-inflection-shadow-v3+) split it into near_52w_high/near_listing_high. Both
 # are accepted so old snapshots remain usable as learning material, but schema 3
 # rows never populate the schema-4 fields (or vice versa) so the two are never
-# silently conflated.
+# silently conflated. Schema 5 keeps the schema-4 candidate fields and adds raw
+# features, score details, pre_score and sector (plus a control sample that this
+# loader intentionally does not read yet).
 LEGACY_SCHEMA_VERSION = 3
-CURRENT_SCHEMA_VERSION = 4
-SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION)
+NEAR_HIGH_FLAGS_SINCE_SCHEMA = 4
+RAW_FEATURES_SINCE_SCHEMA = 5
+CURRENT_SCHEMA_VERSION = 5
+SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, 4, CURRENT_SCHEMA_VERSION)
 
 
 def _optional_float(value: Any) -> float | None:
@@ -118,7 +123,7 @@ def load_inflection_learning_observations(
                 raise SnapshotLoadError(f"Candidate identity/score missing: {path.name}")
             if not isfinite(score) or not 0.0 <= score <= 100.0:
                 raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
-            if schema_version == CURRENT_SCHEMA_VERSION:
+            if schema_version >= NEAR_HIGH_FLAGS_SINCE_SCHEMA:
                 near_52w_high = candidate.get("near_52w_high")
                 near_listing_high = candidate.get("near_listing_high")
                 if not isinstance(near_52w_high, bool) or not isinstance(near_listing_high, bool):
@@ -130,6 +135,18 @@ def load_inflection_learning_observations(
                     raise SnapshotLoadError(f"Invalid legacy candidate breakout flag: {path.name}")
                 near_52w_high = None
                 near_listing_high = None
+            features = score_details = pre_score = sector33_code = None
+            if schema_version >= RAW_FEATURES_SINCE_SCHEMA:
+                features = candidate.get("features")
+                score_details = candidate.get("score_details")
+                pre_score = candidate.get("pre_score")
+                if (
+                    not isinstance(features, dict)
+                    or not isinstance(score_details, dict)
+                    or not is_finite_number(pre_score)
+                ):
+                    raise SnapshotLoadError(f"Invalid schema-5 candidate fields: {path.name}:{ticker}")
+                sector33_code = candidate.get("sector33_code")
             key = (market_date, ticker)
             if key in observations:
                 continue
@@ -153,6 +170,10 @@ def load_inflection_learning_observations(
                 "legacy_breakout_52w": legacy_breakout_52w,
                 "avg_turnover_20d_jpy": _optional_float(candidate.get("avg_turnover_20d_jpy")),
                 "reasons": [str(value) for value in reasons] if isinstance(reasons, list) else [],
+                "features": features,
+                "score_details": score_details,
+                "pre_score": float(pre_score) if pre_score is not None else None,
+                "sector33_code": str(sector33_code) if sector33_code else None,
             }
 
     return sorted(observations.values(), key=lambda row: (str(row["signal_date"]), str(row["ticker"])))

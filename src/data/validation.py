@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
+from typing import Any
 
 import pandas as pd
 
@@ -11,6 +13,11 @@ import pandas as pd
 class ValidationIssue:
     code: str
     detail: str
+
+
+def is_finite_number(value: Any) -> bool:
+    """True for a real, finite int/float; bool is excluded even though it subclasses int."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
 
 
 def validate_ohlcv(df: pd.DataFrame) -> list[ValidationIssue]:

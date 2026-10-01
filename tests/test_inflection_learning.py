@@ -228,13 +228,73 @@ def test_legacy_only_snapshots_produce_no_promotion_candidates_for_current_strat
     assert report["lessons"] == []
 
 
-@pytest.mark.parametrize("schema_version", [None, 4.0, "4", 5, True])
+@pytest.mark.parametrize("schema_version", [None, 4.0, "4", 6, True])
 def test_loader_rejects_unsupported_schema(tmp_path: Path, schema_version: object) -> None:
     payload = _payload()
     payload["report_schema_version"] = schema_version
     _write_snapshot(tmp_path, payload)
 
     with pytest.raises(SnapshotLoadError, match="metadata/schema"):
+        load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+
+
+def _candidate_v5(ticker: str = "1111.T", **overrides: Any) -> dict[str, Any]:
+    return _candidate(ticker) | {
+        "features": {"revenue_growth_yoy_pct": 25.0, "turned_profitable": False},
+        "score_details": {"fundamental": 12.0, "momentum": 18.0},
+        "pre_score": 41.5,
+        "sector33_code": "3650",
+        "sector33_name": "電気機器",
+    } | overrides
+
+
+def _payload_v5(market_date: str = "2026-01-06", **candidate_overrides: Any) -> dict[str, Any]:
+    return _payload(market_date, candidates=[_candidate_v5(**candidate_overrides)]) | {"report_schema_version": 5}
+
+
+def test_loader_reads_schema5_fields_and_mixes_with_schema3_and_4(tmp_path: Path) -> None:
+    _write_snapshot(tmp_path, legacy_payload("2026-01-02"))
+    _write_snapshot(tmp_path, _payload("2026-01-05"))
+    _write_snapshot(tmp_path, _payload_v5("2026-01-06"))
+
+    rows = {row["signal_date"]: row for row in load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)}
+
+    assert [rows[d]["report_schema_version"] for d in sorted(rows)] == [3, 4, 5]
+    new = rows["2026-01-06"]
+    assert new["features"] == {"revenue_growth_yoy_pct": 25.0, "turned_profitable": False}
+    assert new["score_details"] == {"fundamental": 12.0, "momentum": 18.0}
+    assert new["pre_score"] == 41.5 and new["sector33_code"] == "3650"
+    assert new["near_52w_high"] is True and new["legacy_breakout_52w"] is None
+    for older in (rows["2026-01-02"], rows["2026-01-05"]):
+        assert older["features"] is None and older["pre_score"] is None and older["sector33_code"] is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"features": None},
+        {"features": ["not", "a", "dict"]},
+        {"score_details": None},
+        {"pre_score": None},
+        {"pre_score": float("nan")},
+        {"pre_score": float("inf")},
+        {"pre_score": True},
+        {"pre_score": "41.5"},
+    ],
+)
+def test_loader_rejects_invalid_schema5_candidate_fields(tmp_path: Path, overrides: dict[str, Any]) -> None:
+    _write_snapshot(tmp_path, _payload_v5(**overrides))
+
+    with pytest.raises(SnapshotLoadError, match="schema-5 candidate fields"):
+        load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+
+
+def test_loader_rejects_schema5_candidate_missing_a_field(tmp_path: Path) -> None:
+    payload = _payload_v5()
+    del payload["candidates"][0]["features"]
+    _write_snapshot(tmp_path, payload)
+
+    with pytest.raises(SnapshotLoadError, match="schema-5 candidate fields"):
         load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
 
 

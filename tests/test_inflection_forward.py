@@ -353,6 +353,27 @@ def test_load_inflection_signals_keeps_optional_market_fields_backward_compatibl
     assert signal["avg_turnover_20d_jpy"] is None
 
 
+# Literal output of the pre-schema-5 loader for the schema-4 snapshot built below.
+# REQ-037 acceptance 3b: schema-4 data must keep loading identically after schema 5.
+SCHEMA4_EXPECTED_SIGNALS = [
+    {
+        "ticker": "1111.T",
+        "signal_date": "2026-09-08",
+        "date": "2026-09-08",
+        "score": 80.0,
+        "classification": "EARLY_CANDIDATE",
+        "market": "Prime",
+        "avg_turnover_20d_jpy": 50_000_000.0,
+        "strategy_version": "jp-inflection-shadow-v3",
+        "report_schema_version": 4,
+        "source_commit_sha": "abc123",
+        "jquants_plan": "free",
+        "jquants_data_delay_weeks": 12,
+        "runtime_versions": {"yfinance": "1.7.0", "pandas": "3.0.5"},
+    }
+]
+
+
 def test_load_inflection_signals_accepts_v3_schema4_snapshot(tmp_path) -> None:
     snapshot_dir = tmp_path / "v3"
     snapshot_dir.mkdir()
@@ -367,6 +388,53 @@ def test_load_inflection_signals_accepts_v3_schema4_snapshot(tmp_path) -> None:
     assert signals[0]["strategy_version"] == "jp-inflection-shadow-v3"
     assert signals[0]["report_schema_version"] == 4
     assert signals[0]["score"] == 80.0
+    assert signals == SCHEMA4_EXPECTED_SIGNALS
+
+
+def _v3_snapshot(directory, market_date: str, schema_version: int) -> None:
+    payload = _payload()
+    payload["strategy_version"] = "jp-inflection-shadow-v3"
+    payload["report_schema_version"] = schema_version
+    payload["latest_price_date"] = market_date
+    payload["candidates"][0]["live_normalized_score"] = 80.0
+    if schema_version == 5:
+        payload["candidates"][0] |= {
+            "features": {"revenue_growth_yoy_pct": 12.5},
+            "score_details": {"fundamental": 10.0},
+            "pre_score": 33.3,
+            "sector33_code": "3650",
+            "sector33_name": "電気機器",
+        }
+        payload["control_sample"] = [{"ticker": "9999.T", "classification": "NONE", "score": 10.0}]
+    (directory / f"{market_date}.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+
+
+def test_load_inflection_signals_mixes_schema4_and_schema5_without_changing_schema4_rows(tmp_path) -> None:
+    snapshot_dir = tmp_path / "v3"
+    snapshot_dir.mkdir()
+    _v3_snapshot(snapshot_dir, "2026-09-08", 4)
+    _v3_snapshot(snapshot_dir, "2026-09-09", 5)
+
+    signals = load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
+
+    assert [signal for signal in signals if signal["signal_date"] == "2026-09-08"] == SCHEMA4_EXPECTED_SIGNALS
+    schema5 = next(signal for signal in signals if signal["signal_date"] == "2026-09-09")
+    assert schema5["report_schema_version"] == 5
+    # New schema-5 fields and the control sample never leak into evaluation signals.
+    assert set(schema5) == set(SCHEMA4_EXPECTED_SIGNALS[0])
+    assert all(signal["ticker"] != "9999.T" for signal in signals)
+
+
+def test_load_inflection_signals_still_rejects_schema3_mixed_with_schema5(tmp_path) -> None:
+    snapshot_dir = tmp_path / "v3"
+    snapshot_dir.mkdir()
+    first = _payload()
+    first["strategy_version"] = "jp-inflection-shadow-v3"
+    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(first, SECRET), encoding="utf-8")
+    _v3_snapshot(snapshot_dir, "2026-09-09", 5)
+
+    with pytest.raises(SnapshotLoadError, match="Mixed strategy/schema"):
+        load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
 
 
 def test_price_hashes_ignore_later_uniform_corporate_action_rescaling() -> None:

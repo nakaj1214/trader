@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from src.data.market_calendar import expected_tse_session_date
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
+from src.data.validation import is_finite_number
 from src.screening.inflection_live import (
     MIN_LATEST_DATE_COVERAGE,
     MIN_PRICE_COVERAGE,
@@ -26,6 +27,23 @@ MIN_UNIVERSE_COUNT = 3000
 MIN_TECHNICAL_COVERAGE = 0.60
 MARKET_NAMES = ("Prime", "Standard", "Growth")
 MARKET_COVERAGE_FIELDS = ("universe", "price_data", "technical_usable", "latest_date_count")
+RAW_FEATURES_SINCE_SCHEMA = 5
+
+
+def _validate_schema5_row(row: object, where: str) -> str:
+    """Check one candidate/control row against what the learning loader will require; return its ticker."""
+    if not isinstance(row, dict):
+        raise RuntimeError(f"DATA_HEALTH: {where} row is not an object")  # noqa: TRY004 - DATA_HEALTH is RuntimeError by contract
+    ticker = row.get("ticker")
+    if not isinstance(ticker, str) or not ticker.strip():
+        raise RuntimeError(f"DATA_HEALTH: {where} ticker missing or invalid")
+    if not isinstance(row.get("features"), dict) or not isinstance(row.get("score_details"), dict):
+        raise RuntimeError(  # noqa: TRY004 - DATA_HEALTH is RuntimeError by contract
+            f"DATA_HEALTH: {where} features/score_details missing: {ticker}"
+        )
+    if not is_finite_number(row.get("pre_score")):
+        raise RuntimeError(f"DATA_HEALTH: {where} pre_score is not a finite number: {ticker}")
+    return ticker
 
 
 def validate_report(report: dict[str, Any]) -> None:
@@ -97,6 +115,31 @@ def validate_report(report: dict[str, Any]) -> None:
         raise RuntimeError("DATA_HEALTH: candidate ticker missing or invalid")
     if len(tickers) != len(set(tickers)):
         raise RuntimeError("DATA_HEALTH: duplicate candidate tickers detected")
+
+    schema_version = report.get("report_schema_version")
+    if isinstance(schema_version, int) and not isinstance(schema_version, bool) and (
+        schema_version >= RAW_FEATURES_SINCE_SCHEMA
+    ):
+        for row in candidates:
+            _validate_schema5_row(row, "candidate")
+        control = report.get("control_sample")
+        control_size = report.get("control_sample_size")
+        if (
+            not isinstance(control, list)
+            or isinstance(control_size, bool)
+            or not isinstance(control_size, int)
+            or control_size < 0
+        ):
+            raise RuntimeError("DATA_HEALTH: control sample metadata missing or invalid")
+        liquid = int(report.get("liquid_candidate_count") or 0)
+        if len(control) != min(control_size, liquid):
+            raise RuntimeError(
+                "DATA_HEALTH: control sample size mismatch: "
+                f"control_sample={len(control)}, expected={min(control_size, liquid)}"
+            )
+        control_tickers = [_validate_schema5_row(row, "control sample") for row in control]
+        if len(control_tickers) != len(set(control_tickers)):
+            raise RuntimeError("DATA_HEALTH: duplicate control sample tickers detected")
 
     if not isinstance(market_coverage, dict) or set(market_coverage) != set(MARKET_NAMES):
         raise RuntimeError("DATA_HEALTH: invalid market coverage keys")

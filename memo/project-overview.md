@@ -62,11 +62,11 @@ dashboard/data/inflection_candidates.enc
 - J-Quants Free の約 12 週間遅延を metadata に明記
 - 専用の `SNAPSHOT_ENCRYPTION_KEY` を推奨し、未設定時のみ `JQUANTS_API_KEY` を鍵素材に利用
 
-REQ-018適用後のsnapshotはstrategy v3 / schema 4として`inflection/v3/`へ分離します。既存v2 snapshotは保持しますがv3のforward validationには混在させないため、評価系列は非連続です。
+REQ-018適用後のsnapshotはstrategy v3として`inflection/v3/`へ分離します（schema 4、2026-10-01以降はschema 5）。schema 5はschema 4のcandidateに生の財務特徴量・スコア内訳・`pre_score`・33業種コードを追加し、別キー`control_sample`に流動性通過銘柄からの無作為抽出（日付由来のseedで決定的）を保存します。forward validationはschema 4と5を同一系列として読み、`control_sample`は評価・学習の入力に混ぜません。既存v2 snapshotは保持しますがv3のforward validationには混在させないため、評価系列は非連続です。
 
 週次検証は暗号化済み snapshot から `EARLY_CANDIDATE` のみを読み、翌営業日始値で entry、5 / 20 / 60 営業日保有、往復コスト 0.2%、TOPIX ETF (`1306.T`) 比較という固定ルールで評価します。
 
-自己改善学習はschema 4の暗号化snapshotだけから全区分のcandidateを読み、strategy versionをまたいで5 / 20 / 60 / 120営業日の事後成績を集計します。未対応schemaや不正なmetadata・candidate型はfail closedで拒否し、学習結果は次期strategy versionへの提案に限定して本番の重みを自動更新しません。
+自己改善学習はschema 3〜5の暗号化snapshotから全区分のcandidateを読み、strategy versionをまたいで5 / 20 / 60 / 120営業日の事後成績を集計します。未対応schemaや不正なmetadata・candidate型はfail closedで拒否し、学習結果は次期strategy versionへの提案に限定して本番の重みを自動更新しません。
 
 ポートフォリオ評価は `EARLY_CANDIDATE` の60営業日保有・通常コストだけを対象に、初期資金300万円、最大8銘柄、1銘柄12.5%の固定配分で算出します。これらはユーザー未確認の既定値です。セクター上限、100株単位、ADVによる発注制限は未実装で、個別銘柄の終値欠損は日数上限なしで前方補完します。CAGRとMax Drawdownは十分なsnapshot蓄積後にのみ意味を持ちます。
 

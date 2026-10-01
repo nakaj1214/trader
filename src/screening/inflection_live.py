@@ -8,8 +8,10 @@ Outputs are research candidates only. They are not BUY recommendations.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
+import random
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -32,13 +34,26 @@ LIVE_MEASURABLE_MAX_SCORE = 58.0
 EARLY_CANDIDATE_SCORE = 70.0
 WATCH_SCORE = 52.0
 STRATEGY_VERSION = "jp-inflection-shadow-v3"
-REPORT_SCHEMA_VERSION = 4
+REPORT_SCHEMA_VERSION = 5
 DEFAULT_JQUANTS_PLAN = "free"
 DEFAULT_FREE_DELAY_WEEKS = 12
 MIN_PRICE_COVERAGE = 0.70
 MIN_LATEST_DATE_COVERAGE = 0.80
 DEFAULT_PRICE_RETRY_COUNT = 2
 DEFAULT_PRICE_RETRY_WAIT_SECONDS = "180,420"
+DEFAULT_CONTROL_SAMPLE_SIZE = 25
+# Raw fundamental inputs persisted per candidate (schema 5) so later learning can use
+# values that cannot be reconstructed point-in-time. Missing data keeps every key.
+FEATURE_DEFAULTS: dict[str, Any] = {
+    "revenue_growth_yoy_pct": None,
+    "operating_profit_growth_yoy_pct": None,
+    "operating_margin_change_pctpt": None,
+    "turned_profitable": False,
+    "upward_revision_pct": None,
+    "negative_operating_cashflow": False,
+    "latest_actual_disclosure_date": None,
+    "latest_disclosure_date": None,
+}
 
 
 class PriceDataRetryExhausted(RuntimeError):
@@ -68,6 +83,11 @@ class LiveCandidate:
     avg_turnover_20d_jpy: float | None
     reasons: list[str]
     limitations: list[str]
+    features: dict[str, Any]
+    score_details: dict[str, float]
+    pre_score: float
+    sector33_code: str | None
+    sector33_name: str | None
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -306,13 +326,97 @@ def _price_retry_waits() -> list[float]:
     return waits
 
 
+def _clean_text(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _evaluate_candidate(
+    ticker: str,
+    tech: dict[str, Any],
+    *,
+    client: JQuantsV2Client,
+    ticker_meta: dict[str, dict[str, Any]],
+    fundamental_limitation: str,
+) -> LiveCandidate:
+    code = str(ticker_meta[ticker].get("Code") or "")
+    fins = client.financial_summary(code)
+    fundamental = _fundamental_features(fins)
+    features = InflectionFeatures(
+        revenue_growth_yoy_pct=fundamental.get("revenue_growth_yoy_pct"),
+        operating_profit_growth_yoy_pct=fundamental.get("operating_profit_growth_yoy_pct"),
+        operating_margin_change_pctpt=fundamental.get("operating_margin_change_pctpt"),
+        turned_profitable=bool(fundamental.get("turned_profitable")),
+        upward_revision_pct=fundamental.get("upward_revision_pct"),
+        return_20d_pct=tech.get("return_20d_pct"),
+        return_60d_pct=tech.get("return_60d_pct"),
+        volume_ratio_20d=tech.get("volume_ratio_20d"),
+        near_52w_high=bool(tech.get("near_52w_high")),
+        near_listing_high=bool(tech.get("near_listing_high")),
+        return_20d_extreme_pct=tech.get("return_20d_pct"),
+        negative_operating_cashflow=bool(fundamental.get("negative_operating_cashflow")),
+    )
+    raw = score_inflection(features)
+    score = _normalize_available_score(raw.fundamental, raw.momentum, raw.risk_penalty)
+    classification = _classify(score, tech)
+    reasons = []
+    if (fundamental.get("revenue_growth_yoy_pct") or 0) >= 20:
+        reasons.append("売上成長")
+    if (fundamental.get("operating_profit_growth_yoy_pct") or 0) >= 50:
+        reasons.append("営業利益急増")
+    if fundamental.get("turned_profitable"):
+        reasons.append("営業黒字転換")
+    if (fundamental.get("upward_revision_pct") or 0) >= 10:
+        reasons.append("業績予想上方修正")
+    if (tech.get("volume_ratio_20d") or 0) >= 1.5:
+        reasons.append("出来高増加")
+    if tech.get("near_52w_high"):
+        reasons.append("52週高値圏")
+    if tech.get("near_listing_high"):
+        reasons.append("上場来高値圏")
+    return LiveCandidate(
+        ticker=ticker,
+        company_name=str(ticker_meta[ticker].get("CoName") or ticker),
+        market=str(ticker_meta[ticker].get("MktNm") or ""),
+        classification=classification,
+        live_normalized_score=round(score, 3),
+        raw_inflection_score=raw.total,
+        current_price=float(tech["current_price"]),
+        return_5d_pct=tech.get("return_5d_pct"),
+        return_20d_pct=tech.get("return_20d_pct"),
+        return_60d_pct=tech.get("return_60d_pct"),
+        volume_ratio_20d=tech.get("volume_ratio_20d"),
+        near_52w_high=bool(tech.get("near_52w_high")),
+        near_listing_high=bool(tech.get("near_listing_high")),
+        avg_turnover_20d_jpy=tech.get("avg_turnover_20d_jpy"),
+        reasons=reasons,
+        limitations=[fundamental_limitation],
+        features={
+            key: (bool(fundamental.get(key)) if isinstance(default, bool) else fundamental.get(key, default))
+            for key, default in FEATURE_DEFAULTS.items()
+        },
+        score_details={
+            **raw.details,
+            "fundamental": raw.fundamental,
+            "momentum": raw.momentum,
+            "risk_penalty": raw.risk_penalty,
+        },
+        pre_score=round(_pre_score(tech), 6),
+        sector33_code=_clean_text(ticker_meta[ticker].get("S33")),
+        sector33_name=_clean_text(ticker_meta[ticker].get("S33Nm")),
+    )
+
+
 def scan_japan_inflection(
     *,
     client: JQuantsV2Client | None = None,
     lookback_days: int = 252,
     deep_candidates: int = 25,
     min_turnover_jpy: float = 100_000_000,
+    control_sample_size: int = DEFAULT_CONTROL_SAMPLE_SIZE,
 ) -> dict[str, Any]:
+    if control_sample_size < 0:
+        raise ValueError("control_sample_size must not be negative")
     generated_at = datetime.now(UTC).isoformat()
     expected_date = expected_tse_session_date(generated_at)
     retry_waits = _price_retry_waits()
@@ -426,6 +530,7 @@ def scan_japan_inflection(
         preselected.append((_pre_score(tech), ticker, tech))
 
     preselected.sort(reverse=True, key=lambda item: item[0])
+    liquid = list(preselected)
     preselected = preselected[:deep_candidates]
 
     candidates: list[LiveCandidate] = []
@@ -439,61 +544,35 @@ def scan_japan_inflection(
     )
 
     for _, ticker, tech in preselected:
-        code = str(ticker_meta[ticker].get("Code") or "")
-        fins = client.financial_summary(code)
-        fundamental = _fundamental_features(fins)
-        features = InflectionFeatures(
-            revenue_growth_yoy_pct=fundamental.get("revenue_growth_yoy_pct"),
-            operating_profit_growth_yoy_pct=fundamental.get("operating_profit_growth_yoy_pct"),
-            operating_margin_change_pctpt=fundamental.get("operating_margin_change_pctpt"),
-            turned_profitable=bool(fundamental.get("turned_profitable")),
-            upward_revision_pct=fundamental.get("upward_revision_pct"),
-            return_20d_pct=tech.get("return_20d_pct"),
-            return_60d_pct=tech.get("return_60d_pct"),
-            volume_ratio_20d=tech.get("volume_ratio_20d"),
-            near_52w_high=bool(tech.get("near_52w_high")),
-            near_listing_high=bool(tech.get("near_listing_high")),
-            return_20d_extreme_pct=tech.get("return_20d_pct"),
-            negative_operating_cashflow=bool(fundamental.get("negative_operating_cashflow")),
-        )
-        raw = score_inflection(features)
-        score = _normalize_available_score(raw.fundamental, raw.momentum, raw.risk_penalty)
-        classification = _classify(score, tech)
-        reasons = []
-        if (fundamental.get("revenue_growth_yoy_pct") or 0) >= 20:
-            reasons.append("売上成長")
-        if (fundamental.get("operating_profit_growth_yoy_pct") or 0) >= 50:
-            reasons.append("営業利益急増")
-        if fundamental.get("turned_profitable"):
-            reasons.append("営業黒字転換")
-        if (fundamental.get("upward_revision_pct") or 0) >= 10:
-            reasons.append("業績予想上方修正")
-        if (tech.get("volume_ratio_20d") or 0) >= 1.5:
-            reasons.append("出来高増加")
-        if tech.get("near_52w_high"):
-            reasons.append("52週高値圏")
-        if tech.get("near_listing_high"):
-            reasons.append("上場来高値圏")
         candidates.append(
-            LiveCandidate(
-                ticker=ticker,
-                company_name=str(ticker_meta[ticker].get("CoName") or ticker),
-                market=str(ticker_meta[ticker].get("MktNm") or ""),
-                classification=classification,
-                live_normalized_score=round(score, 3),
-                raw_inflection_score=raw.total,
-                current_price=float(tech["current_price"]),
-                return_5d_pct=tech.get("return_5d_pct"),
-                return_20d_pct=tech.get("return_20d_pct"),
-                return_60d_pct=tech.get("return_60d_pct"),
-                volume_ratio_20d=tech.get("volume_ratio_20d"),
-                near_52w_high=bool(tech.get("near_52w_high")),
-                near_listing_high=bool(tech.get("near_listing_high")),
-                avg_turnover_20d_jpy=tech.get("avg_turnover_20d_jpy"),
-                reasons=reasons,
-                limitations=[fundamental_limitation],
+            _evaluate_candidate(
+                ticker,
+                tech,
+                client=client,
+                ticker_meta=ticker_meta,
+                fundamental_limitation=fundamental_limitation,
             )
         )
+
+    # Control sample: unbiased draw from every liquid name, evaluated exactly like the deep
+    # candidates but kept apart so existing candidate-based statistics are unchanged.
+    # The seed depends only on the market date, so re-running a day reproduces the draw.
+    control_seed = int.from_bytes(hashlib.sha256(expected_date.encode("utf-8")).digest()[:8], "big")
+    evaluated = {candidate.ticker: candidate for candidate in candidates}
+    technicals = {ticker: tech for _, ticker, tech in liquid}
+    control_sample: list[LiveCandidate] = []
+    if control_sample_size > 0:
+        drawn = random.Random(control_seed).sample(sorted(technicals), k=min(control_sample_size, len(technicals)))
+        for ticker in sorted(drawn):
+            if ticker not in evaluated:
+                evaluated[ticker] = _evaluate_candidate(
+                    ticker,
+                    technicals[ticker],
+                    client=client,
+                    ticker_meta=ticker_meta,
+                    fundamental_limitation=fundamental_limitation,
+                )
+            control_sample.append(evaluated[ticker])
 
     candidates.sort(key=lambda candidate: candidate.live_normalized_score, reverse=True)
     counts: dict[str, int] = {}
@@ -535,6 +614,7 @@ def scan_japan_inflection(
             "lookback_days": lookback_days,
             "deep_candidates": deep_candidates,
             "min_turnover_jpy": min_turnover_jpy,
+            "control_sample_size": control_sample_size,
             "early_candidate_score": EARLY_CANDIDATE_SCORE,
             "watch_score": WATCH_SCORE,
             "measurable_max_score": LIVE_MEASURABLE_MAX_SCORE,
@@ -542,6 +622,9 @@ def scan_japan_inflection(
         "data_policy": policy,
         "runtime_versions": _package_versions(),
         "candidates": [candidate.as_dict() for candidate in candidates],
+        "control_sample_size": control_sample_size,
+        "control_sample_seed": control_seed,
+        "control_sample": [candidate.as_dict() for candidate in control_sample],
         "notes": [
             "Known historical winners are not whitelisted or special-cased.",
             "EARLY_CANDIDATE is a research flag, not a buy signal.",

@@ -18,6 +18,18 @@ from src.evaluation.inflection_backtest import (
 
 BENCHMARK_TICKER = "1306.T"  # NEXT FUNDS TOPIX ETF
 
+# Schema 5 only adds fields to schema 4 candidates, so the two form one evaluation series.
+# Every other schema stays its own family; widen this tuple only after judging compatibility.
+COMPATIBLE_SCHEMA_GROUPS: tuple[frozenset[int], ...] = (frozenset({4, 5}),)
+
+
+def _schema_family(version: int) -> frozenset[int]:
+    for group in COMPATIBLE_SCHEMA_GROUPS:
+        if version in group:
+            return group
+    return frozenset({version})
+
+
 
 class SnapshotLoadError(RuntimeError):
     """Raised when an encrypted inflection snapshot cannot be trusted."""
@@ -37,7 +49,7 @@ def load_inflection_signals(
     """
     signals: dict[tuple[str, str], dict[str, Any]] = {}
     expected_strategy_version: str | None = None
-    expected_schema_version: int | None = None
+    expected_schema_family: frozenset[int] | None = None
     if not snapshot_dir.exists():
         return []
 
@@ -68,8 +80,8 @@ def load_inflection_signals(
             raise SnapshotLoadError(f"Invalid snapshot metadata/schema: {path.name}")
         if expected_strategy_version is None:
             expected_strategy_version = strategy_version
-            expected_schema_version = schema_version
-        elif strategy_version != expected_strategy_version or schema_version != expected_schema_version:
+            expected_schema_family = _schema_family(schema_version)
+        elif strategy_version != expected_strategy_version or _schema_family(schema_version) != expected_schema_family:
             raise SnapshotLoadError(f"Mixed strategy/schema versions: {path.name}")
 
         candidates = payload.get("candidates")

@@ -279,3 +279,82 @@ def test_main_preserves_retry_error_without_github_output(
         main()
 
     assert raised.value is error
+
+
+def _v5_row(ticker: str, **overrides: object) -> dict:
+    return {"ticker": ticker, "features": {}, "score_details": {}, "pre_score": 12.0} | overrides
+
+
+def _healthy_report_v5() -> dict:
+    return _healthy_report() | {
+        "report_schema_version": 5,
+        "liquid_candidate_count": 2500,
+        "candidates": [_v5_row("1111.T"), _v5_row("2222.T")],
+        "control_sample_size": 2,
+        "control_sample": [_v5_row("3333.T"), _v5_row("4444.T")],
+    }
+
+
+def test_validate_report_accepts_healthy_schema5_scan() -> None:
+    validate_report(_healthy_report_v5())
+
+
+def test_validate_report_accepts_schema5_with_empty_control_sample() -> None:
+    validate_report(_healthy_report_v5() | {"control_sample_size": 0, "control_sample": []})
+
+
+def test_validate_report_accepts_control_sample_capped_by_liquid_count() -> None:
+    validate_report(_healthy_report_v5() | {"control_sample_size": 25, "liquid_candidate_count": 2})
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"features": None},
+        {"score_details": None},
+        {"pre_score": float("nan")},
+        {"pre_score": float("inf")},
+        {"pre_score": True},
+        {"pre_score": None},
+    ],
+)
+@pytest.mark.parametrize("section", ["candidates", "control_sample"])
+def test_validate_report_rejects_invalid_schema5_rows(section: str, overrides: dict) -> None:
+    report = _healthy_report_v5()
+    report[section] = [_v5_row("1111.T" if section == "candidates" else "3333.T") | overrides, report[section][1]]
+    with pytest.raises(RuntimeError, match="DATA_HEALTH"):
+        validate_report(report)
+
+
+def test_validate_report_rejects_empty_control_sample_ticker() -> None:
+    report = _healthy_report_v5()
+    report["control_sample"] = [_v5_row("") , _v5_row("4444.T")]
+    with pytest.raises(RuntimeError, match="control sample ticker missing"):
+        validate_report(report)
+
+
+def test_validate_report_rejects_candidate_missing_schema5_field() -> None:
+    report = _healthy_report_v5()
+    del report["candidates"][0]["features"]
+    with pytest.raises(RuntimeError, match="features/score_details missing"):
+        validate_report(report)
+
+
+def test_validate_report_rejects_control_sample_size_mismatch() -> None:
+    report = _healthy_report_v5()
+    report["control_sample"] = report["control_sample"][:1]
+    with pytest.raises(RuntimeError, match="control sample size mismatch"):
+        validate_report(report)
+
+
+def test_validate_report_rejects_duplicate_control_tickers() -> None:
+    report = _healthy_report_v5()
+    report["control_sample"] = [_v5_row("3333.T"), _v5_row("3333.T")]
+    with pytest.raises(RuntimeError, match="duplicate control sample tickers"):
+        validate_report(report)
+
+
+@pytest.mark.parametrize("override", [{"control_sample": None}, {"control_sample_size": None}, {"control_sample_size": True}])
+def test_validate_report_rejects_missing_control_metadata(override: dict) -> None:
+    with pytest.raises(RuntimeError, match="control sample metadata"):
+        validate_report(_healthy_report_v5() | override)

@@ -68,6 +68,8 @@ REQ-018適用後のsnapshotはstrategy v3として`inflection/v3/`へ分離し�
 
 自己改善学習はschema 3〜5の暗号化snapshotから全区分のcandidateを読み、strategy versionをまたいで5 / 20 / 60 / 120営業日の事後成績を集計します。未対応schemaや不正なmetadata・candidate型はfail closedで拒否し、学習結果は次期strategy versionへの提案に限定して本番の重みを自動更新しません。
 
+過去検証（ローカル専用・評価のみ）は`scripts/run_inflection_historical_backtest.py`で実行します。J-Quants Freeの過去データ（約2年分）を`.data/jquants/`へ再開可能に取得（`--fetch`）し、現行v3のロジックを過去の各営業日にpoint-in-timeで再現して（`src/evaluation/inflection_historical.py`）forwardと同じ評価器で集計します。財務を開示当日から使える場合と12週後から使える場合（現行Freeの状態）を比較し、60営業日の対TOPIX超過リターンの信頼区間による撤退条件の一次判定（暫定基準: 独立観測100件以上）を出力します。閾値・重みの探索は行わず、取得データと出力（`artifacts/`）はgit管理外です。Freeプランの2年という期間のため、60営業日の成績まで確定する期間は約1か月分にとどまります。
+
 ポートフォリオ評価は `EARLY_CANDIDATE` の60営業日保有・通常コストだけを対象に、初期資金300万円、最大8銘柄、1銘柄12.5%の固定配分で算出します。これらはユーザー未確認の既定値です。セクター上限、100株単位、ADVによる発注制限は未実装で、個別銘柄の終値欠損は日数上限なしで前方補完します。CAGRとMax Drawdownは十分なsnapshot蓄積後にのみ意味を持ちます。
 
 ## 設定・依存関係

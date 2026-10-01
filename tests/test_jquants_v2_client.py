@@ -164,3 +164,16 @@ def test_get_rejects_repeated_pagination_cursor() -> None:
         pytest.raises(ValueError, match="repeated pagination cursor"),
     ):
         client._get("/equities/master")
+
+
+def test_daily_bars_and_financial_summary_by_date_use_date_endpoints() -> None:
+    client = JQuantsV2Client(api_key="secret", min_interval=0)
+    with patch.object(client, "_get", return_value=[]) as get:
+        client.daily_bars("2026-01-05")
+        client.daily_bars_by_code("72030")
+        client.financial_summary_by_date("2026-01-05")
+    assert [call.args for call in get.call_args_list] == [
+        ("/equities/bars/daily", {"date": "2026-01-05"}),
+        ("/equities/bars/daily", {"code": "72030"}),
+        ("/fins/summary", {"date": "2026-01-05"}),
+    ]

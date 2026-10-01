@@ -40,21 +40,26 @@ jobs:
       - name: Type-check production path
         run: |
           mypy --ignore-missing-imports \
+            src/data/jquants_history.py \
             src/data/jquants_v2_client.py \
             src/data/yfinance_prices.py \
             src/data/live_quote.py \
             src/data/sheets_client.py \
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
+            src/data/validation.py \
             src/evaluation/inflection_backtest.py \
             src/evaluation/inflection_forward.py \
+            src/evaluation/inflection_historical.py \
             src/evaluation/inflection_learning.py \
             src/evaluation/inflection_portfolio.py \
             src/evaluation/inflection_recall.py \
+            src/evaluation/inflection_report.py \
             src/monitoring/position_exit.py \
             src/screening/inflection_live.py \
             scripts/rebuild_inflection_forward_validation.py \
             scripts/rebuild_inflection_learning.py \
+            scripts/run_inflection_historical_backtest.py \
             scripts/run_inflection_shadow.py \
             scripts/run_position_monitor.py
 

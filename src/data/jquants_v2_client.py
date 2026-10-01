@@ -121,3 +121,14 @@ class JQuantsV2Client:
 
     def financial_summary(self, code: str) -> list[dict[str, Any]]:
         return self._get("/fins/summary", {"code": code})
+
+    # Date-keyed endpoints return every listed issue for that single day (used by the
+    # historical backtest); the *_by_code form is for spot checks only.
+    def daily_bars(self, date: str) -> list[dict[str, Any]]:
+        return self._get("/equities/bars/daily", {"date": date})
+
+    def daily_bars_by_code(self, code: str) -> list[dict[str, Any]]:
+        return self._get("/equities/bars/daily", {"code": code})
+
+    def financial_summary_by_date(self, date: str) -> list[dict[str, Any]]:
+        return self._get("/fins/summary", {"date": date})

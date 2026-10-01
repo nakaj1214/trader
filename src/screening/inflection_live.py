@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import Any, Protocol
 
 import pandas as pd
 
@@ -335,7 +335,7 @@ def _evaluate_candidate(
     ticker: str,
     tech: dict[str, Any],
     *,
-    client: JQuantsV2Client,
+    client: FinancialSource,
     ticker_meta: dict[str, dict[str, Any]],
     fundamental_limitation: str,
 ) -> LiveCandidate:
@@ -404,6 +404,96 @@ def _evaluate_candidate(
         pre_score=round(_pre_score(tech), 6),
         sector33_code=_clean_text(ticker_meta[ticker].get("S33")),
         sector33_name=_clean_text(ticker_meta[ticker].get("S33Nm")),
+    )
+
+
+class FinancialSource(Protocol):
+    """Anything that can return J-Quants-style financial summary rows for a 5-digit code."""
+
+    def financial_summary(self, code: str) -> list[dict[str, Any]]: ...
+
+
+@dataclass(frozen=True)
+class Selection:
+    candidates: list[LiveCandidate]  # deep candidates, best score first
+    control_sample: list[LiveCandidate]
+    control_seed: int
+    technical_usable_tickers: set[str]
+    liquid_candidate_count: int
+    deep_candidate_count: int
+
+
+def select_and_evaluate(
+    prices: dict[str, pd.DataFrame],
+    ticker_meta: dict[str, dict[str, Any]],
+    client: FinancialSource,
+    *,
+    seed_date: str,
+    deep_candidates: int,
+    min_turnover_jpy: float,
+    control_sample_size: int,
+    fundamental_limitation: str,
+) -> Selection:
+    """Pick the deep candidates and the control sample from already-fetched prices.
+
+    Shared by the live scan and the historical backtest so both apply identical logic.
+    """
+    preselected: list[tuple[float, str, dict[str, Any]]] = []
+    technical_usable: set[str] = set()
+    for ticker, df in prices.items():
+        tech = _technical_features(df)
+        if not tech:
+            continue
+        technical_usable.add(ticker)
+        turnover = tech.get("avg_turnover_20d_jpy")
+        if turnover is None or float(turnover) < min_turnover_jpy:
+            continue
+        preselected.append((_pre_score(tech), ticker, tech))
+
+    preselected.sort(reverse=True, key=lambda item: item[0])
+    liquid = list(preselected)
+    preselected = preselected[:deep_candidates]
+
+    candidates: list[LiveCandidate] = []
+    for _, ticker, tech in preselected:
+        candidates.append(
+            _evaluate_candidate(
+                ticker,
+                tech,
+                client=client,
+                ticker_meta=ticker_meta,
+                fundamental_limitation=fundamental_limitation,
+            )
+        )
+
+    # Control sample: unbiased draw from every liquid name, evaluated exactly like the deep
+    # candidates but kept apart so existing candidate-based statistics are unchanged.
+    # The seed depends only on the market date, so re-running a day reproduces the draw.
+    control_seed = int.from_bytes(hashlib.sha256(seed_date.encode("utf-8")).digest()[:8], "big")
+    evaluated = {candidate.ticker: candidate for candidate in candidates}
+    technicals = {ticker: tech for _, ticker, tech in liquid}
+    control_sample: list[LiveCandidate] = []
+    if control_sample_size > 0:
+        drawn = random.Random(control_seed).sample(sorted(technicals), k=min(control_sample_size, len(technicals)))
+        for ticker in sorted(drawn):
+            if ticker not in evaluated:
+                evaluated[ticker] = _evaluate_candidate(
+                    ticker,
+                    technicals[ticker],
+                    client=client,
+                    ticker_meta=ticker_meta,
+                    fundamental_limitation=fundamental_limitation,
+                )
+            control_sample.append(evaluated[ticker])
+
+    candidates.sort(key=lambda candidate: candidate.live_normalized_score, reverse=True)
+    return Selection(
+        candidates=candidates,
+        control_sample=control_sample,
+        control_seed=control_seed,
+        technical_usable_tickers=technical_usable,
+        liquid_candidate_count=len(liquid),
+        deep_candidate_count=len(preselected),
     )
 
 
@@ -507,33 +597,14 @@ def scan_japan_inflection(
         time.sleep(wait)
         prices.update(fetch_price_data(retry_tickers, lookback_days))
 
-    preselected: list[tuple[float, str, dict[str, Any]]] = []
-    technical_usable_count = 0
-    liquid_candidate_count = 0
-
+    # Price coverage per market (the technical features are computed in select_and_evaluate).
     for ticker, df in prices.items():
         market_code = str(ticker_meta[ticker].get("Mkt") or "")
-        market = JP_MARKET_NAMES[market_code]
-        market_coverage[market]["price_data"] += 1
+        market_coverage[JP_MARKET_NAMES[market_code]]["price_data"] += 1
         latest_date = _latest_close_date(df)
         if latest_date:
             latest_dates[ticker] = latest_date
-        tech = _technical_features(df)
-        if not tech:
-            continue
-        technical_usable_count += 1
-        market_coverage[market]["technical_usable"] += 1
-        turnover = tech.get("avg_turnover_20d_jpy")
-        if turnover is None or float(turnover) < min_turnover_jpy:
-            continue
-        liquid_candidate_count += 1
-        preselected.append((_pre_score(tech), ticker, tech))
 
-    preselected.sort(reverse=True, key=lambda item: item[0])
-    liquid = list(preselected)
-    preselected = preselected[:deep_candidates]
-
-    candidates: list[LiveCandidate] = []
     policy = _data_policy()
     delay_weeks = int(policy["jquants_data_delay_weeks"])
     fundamental_limitation = (
@@ -542,39 +613,23 @@ def scan_japan_inflection(
         if delay_weeks > 0
         else "財務データの公開時点と取得可能時点を一次情報で確認する必要がある"
     )
-
-    for _, ticker, tech in preselected:
-        candidates.append(
-            _evaluate_candidate(
-                ticker,
-                tech,
-                client=client,
-                ticker_meta=ticker_meta,
-                fundamental_limitation=fundamental_limitation,
-            )
-        )
-
-    # Control sample: unbiased draw from every liquid name, evaluated exactly like the deep
-    # candidates but kept apart so existing candidate-based statistics are unchanged.
-    # The seed depends only on the market date, so re-running a day reproduces the draw.
-    control_seed = int.from_bytes(hashlib.sha256(expected_date.encode("utf-8")).digest()[:8], "big")
-    evaluated = {candidate.ticker: candidate for candidate in candidates}
-    technicals = {ticker: tech for _, ticker, tech in liquid}
-    control_sample: list[LiveCandidate] = []
-    if control_sample_size > 0:
-        drawn = random.Random(control_seed).sample(sorted(technicals), k=min(control_sample_size, len(technicals)))
-        for ticker in sorted(drawn):
-            if ticker not in evaluated:
-                evaluated[ticker] = _evaluate_candidate(
-                    ticker,
-                    technicals[ticker],
-                    client=client,
-                    ticker_meta=ticker_meta,
-                    fundamental_limitation=fundamental_limitation,
-                )
-            control_sample.append(evaluated[ticker])
-
-    candidates.sort(key=lambda candidate: candidate.live_normalized_score, reverse=True)
+    selection = select_and_evaluate(
+        prices,
+        ticker_meta,
+        client,
+        seed_date=expected_date,
+        deep_candidates=deep_candidates,
+        min_turnover_jpy=min_turnover_jpy,
+        control_sample_size=control_sample_size,
+        fundamental_limitation=fundamental_limitation,
+    )
+    candidates = selection.candidates
+    control_sample = selection.control_sample
+    technical_usable_count = len(selection.technical_usable_tickers)
+    liquid_candidate_count = selection.liquid_candidate_count
+    for ticker in selection.technical_usable_tickers:
+        market_code = str(ticker_meta[ticker].get("Mkt") or "")
+        market_coverage[JP_MARKET_NAMES[market_code]]["technical_usable"] += 1
     counts: dict[str, int] = {}
     for item in candidates:
         counts[item.classification] = counts.get(item.classification, 0) + 1
@@ -608,7 +663,7 @@ def scan_japan_inflection(
         "market_coverage": market_coverage,
         "latest_date_histogram": latest_date_histogram,
         "stale_tickers_sample": stale_tickers_sample,
-        "deep_candidate_count": len(preselected),
+        "deep_candidate_count": selection.deep_candidate_count,
         "classification_counts": counts,
         "scan_parameters": {
             "lookback_days": lookback_days,
@@ -623,7 +678,7 @@ def scan_japan_inflection(
         "runtime_versions": _package_versions(),
         "candidates": [candidate.as_dict() for candidate in candidates],
         "control_sample_size": control_sample_size,
-        "control_sample_seed": control_seed,
+        "control_sample_seed": selection.control_seed,
         "control_sample": [candidate.as_dict() for candidate in control_sample],
         "notes": [
             "Known historical winners are not whitelisted or special-cased.",

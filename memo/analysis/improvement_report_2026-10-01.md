@@ -99,6 +99,13 @@
 | e | 【対応済み】CI の mypy 対象に `inflection_backtest/portfolio/learning/recall` と rebuild 系 scripts が含まれていない（`pyproject` は `strict = true`） | [test.yml:42-53](../../.github/workflows/test.yml#L42-L53) |
 | f | 【対応済み】yfinance の東証1分足は実測約15分遅延（2026-10-01 09:53 JST、8銘柄で age 15〜16分）。場中閾値10分では 09:03 / 12:35 / 15:35 の全実行が構造的に stale だったため、閾値を20分に、cron を 09:20 / 12:50 / 15:35 に変更（詳細: [proposal_a8f.md](../implement/proposal_a8f.md)） | [live_quote.py:19-20](../../src/data/live_quote.py#L19-L20) |
 
+### A9 [P1・要調査] 分割のみの価格基準で、分割を二重に調整している可能性が高い（2026-10-01 追記）
+
+- 対象: [live_quote.py](../../src/data/live_quote.py) の `split_adjust_ohlc` と `fetch_split_adjusted_history`（本番の Position Exit Monitor）、forward の trailing stop 評価（`SPLIT_ONLY` 基準）
+- 根拠: yfinance 1.7.0 の `_fix_bad_stock_splits`（`scrapers/history.py` L2953〜）のコメントは、Yahoo が過去の価格に分割調整を**適用して**返す前提で、その調整の欠落や二重適用を修復している。そのため、`history(auto_adjust=False)` の OHLC はすでに分割調整済みである可能性が高い。その上で `split_adjust_ohlc` が分割比で割るのは二重の調整になる。
+- 影響: 分割前に買って分割後も保有している銘柄について、「分割後の基準での買値」と HWM（保有中の最高値）が実際より低くなる。すると stop 価格も低くなり、**売却アラートが出るべきときに出ない**可能性がある。forward では、分割をまたぐ trade の trailing stop の成績がずれる。
+- 状態: ライブラリのソースからの推定で、実データでは未確認である。REQ-042（A4）では挙動を変えない。**verify-before-fix で、分割のあった銘柄の実データを使って確かめる**ことを推奨する。B1 の J-Quants キャッシュ（`AdjFactor`）を、独立した照合データとして使える。
+
 ---
 
 ## 3. 実装したほうが良い機能

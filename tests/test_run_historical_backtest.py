@@ -189,3 +189,14 @@ def test_requests_error_other_than_4xx_is_not_swallowed(monkeypatch: pytest.Monk
     monkeypatch.setattr(cli, "_client", lambda: Down())
     with pytest.raises(requests.HTTPError):
         main(["--repo-root", str(tmp_path), "--fetch", "--start", "2026-01-05", "--end", "2026-01-05"])
+
+
+def test_the_client_waits_out_a_transient_429_instead_of_giving_up_after_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 ended a multi-hour fetch after the default ~14 s of retries; the CLI must be more patient."""
+    monkeypatch.setenv("JQUANTS_API_KEY", "key")
+
+    client = cli._client()
+
+    waits = [client.retry_backoff * 2**attempt for attempt in range(client.max_retries)]
+    assert waits == [15.0, 30.0, 60.0, 120.0, 240.0]
+    assert sum(waits) > 7 * 60 and client.min_interval >= 12.0  # the per-request spacing is unchanged

@@ -44,8 +44,14 @@ DEFAULT_CACHE_DIR = ".data/jquants"
 JST = ZoneInfo("Asia/Tokyo")
 
 
+# A fetch runs for hours. The default client gives up on a 429 after about 14 seconds, which a per-minute
+# window can outlast; waiting 15/30/60/120/240 seconds (about 7.75 minutes) rides out a transient limit.
+PATIENT_MAX_RETRIES = 5
+PATIENT_RETRY_BACKOFF_SECONDS = 15.0
+
+
 def _client() -> JQuantsV2Client:
-    client = JQuantsV2Client()
+    client = JQuantsV2Client(max_retries=PATIENT_MAX_RETRIES, retry_backoff=PATIENT_RETRY_BACKOFF_SECONDS)
     if not client.is_available():
         raise RuntimeError("JQUANTS_API_KEY is required (for example: set -a; . ./.env; set +a)")
     return client

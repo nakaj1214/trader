@@ -741,3 +741,73 @@ def test_report_breakdowns_split_results_by_the_benchmark_regime() -> None:
     assert breakdown["trend"]["up"]["mean_net_return_pct"] > 0 > breakdown["trend"]["down"]["mean_net_return_pct"]
     assert breakdown["trend"]["up"]["mean_excess_return_pct"] is not None
     assert set(breakdown) == {"trend", "volatility"}
+
+
+def _run_forward_for_coverage(tmp_path, monkeypatch, snapshot_days: list[str], clock) -> dict:
+    """Run the forward main on placeholder snapshots with a fixed clock; return the written report."""
+    from datetime import datetime  # local: only this helper needs it
+
+    snapshots = tmp_path / "fixtures" / "v3"
+    snapshots.mkdir(parents=True)
+    for day in snapshot_days:
+        (snapshots / f"{day}.enc").write_text("placeholder", encoding="utf-8")
+    index = pd.bdate_range("2025-10-01", periods=400)
+    history = pd.DataFrame(
+        {"Open": 100.0, "High": 105.0, "Low": 95.0, "Close": 100.0, "Adj Close": 100.0}, index=index
+    )
+    observation = {
+        "ticker": "1111.T", "signal_date": snapshot_days[-1], "date": snapshot_days[-1], "score": 80.0,
+        "classification": "EARLY_CANDIDATE", "strategy_version": "jp-inflection-shadow-v3", "report_schema_version": 4,
+    }
+    prefix = "scripts.rebuild_inflection_forward_validation."
+    monkeypatch.setattr(prefix + "snapshot_encryption_secret", lambda: SECRET)
+    monkeypatch.setattr(prefix + "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(
+        prefix + "fetch_price_histories",
+        lambda tickers, start, end, **_k: PriceHistories(raw=dict.fromkeys(tickers, history), start=start, end=end),
+    )
+    monkeypatch.setattr(prefix + "_persist_price_hashes", lambda *_a, **_k: [])
+    monkeypatch.setattr(prefix + "_utc_now", lambda: datetime.fromisoformat(clock))
+    monkeypatch.setattr(
+        sys, "argv",
+        ["x", "--repo-root", str(tmp_path), "--snapshot-dir", "fixtures/v3", "--legacy-snapshot-dir", "fixtures/none",
+         "--output", "artifacts/report.json"],
+    )
+
+    assert rebuild_main() == 0
+    return json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
+
+
+def test_session_coverage_reports_every_session_missed_after_the_last_snapshot(tmp_path, monkeypatch) -> None:
+    """Review: scans failed Mon-Fri after 9/25; the Sunday 09:30 JST run must list all five sessions."""
+    report = _run_forward_for_coverage(
+        tmp_path, monkeypatch, ["2026-09-24", "2026-09-25"], "2026-10-04T00:30:00+00:00"
+    )
+
+    coverage = report["session_coverage"]
+    assert coverage["missing_sessions"] == ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]
+    assert (coverage["first_snapshot_date"], coverage["last_snapshot_date"]) == ("2026-09-24", "2026-09-25")
+    assert coverage["expected_sessions"] == 7 and coverage["snapshots"] == 2
+
+
+def test_session_coverage_does_not_count_a_session_that_has_not_closed_yet(tmp_path, monkeypatch) -> None:
+    report = _run_forward_for_coverage(
+        tmp_path, monkeypatch, ["2026-09-24", "2026-09-25"], "2026-10-02T05:00:00+00:00"  # Fri 14:00 JST
+    )
+
+    assert report["session_coverage"]["missing_sessions"] == ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01"]
+
+
+def test_session_coverage_is_clean_when_every_settled_session_has_a_snapshot(tmp_path, monkeypatch) -> None:
+    days = ["2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]
+
+    report = _run_forward_for_coverage(tmp_path, monkeypatch, days, "2026-10-04T00:30:00+00:00")
+
+    assert report["session_coverage"]["missing_sessions"] == [] and report["session_coverage"]["snapshots"] == 7
+
+
+def test_session_coverage_keeps_the_report_keys_and_evaluation_unchanged(tmp_path, monkeypatch) -> None:
+    report = _run_forward_for_coverage(tmp_path, monkeypatch, ["2026-09-24"], "2026-09-24T08:00:00+00:00")
+
+    assert {"groups", "portfolio_summary", "tracked_pool_explosion_recall", "benchmark"} <= set(report)
+    assert report["groups"]["early_candidate"]["signal_count"] == 1

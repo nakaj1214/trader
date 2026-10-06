@@ -14,6 +14,7 @@ on:
       - "src/evaluation/inflection_learning.py"
       - "src/data/forward_prices.py"
       - "src/data/live_quote.py"
+      - "src/data/session_gaps.py"
       - "src/data/snapshot_crypto.py"
       - "src/strategy/**"
       - "scripts/rebuild_inflection_forward_validation.py"
@@ -22,6 +23,7 @@ on:
       - "tests/test_exit_rules.py"
       - "tests/test_explosion.py"
       - "tests/test_regime.py"
+      - "tests/test_session_gaps.py"
       - "tests/test_forward_prices.py"
       - "tests/test_snapshot_crypto.py"
       - "tests/test_inflection_strategy.py"
@@ -70,6 +72,7 @@ jobs:
             tests/test_exit_rules.py \
             tests/test_explosion.py \
             tests/test_regime.py \
+            tests/test_session_gaps.py \
             tests/test_forward_prices.py \
             tests/test_snapshot_crypto.py \
             tests/test_inflection_strategy.py \
@@ -79,6 +82,7 @@ jobs:
             tests/test_inflection_recall.py \
             tests/test_inflection_learning.py \
             --cov=src.data.forward_prices \
+            --cov=src.data.session_gaps \
             --cov=src.evaluation.exit_rules \
             --cov=src.evaluation.explosion \
             --cov=src.evaluation.regime \

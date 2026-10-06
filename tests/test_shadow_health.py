@@ -358,3 +358,12 @@ def test_validate_report_rejects_duplicate_control_tickers() -> None:
 def test_validate_report_rejects_missing_control_metadata(override: dict) -> None:
     with pytest.raises(RuntimeError, match="control sample metadata"):
         validate_report(_healthy_report_v5() | override)
+
+
+def test_validate_report_accepts_rows_carrying_the_diagnostic_features() -> None:
+    features = {"disclosure_age_days": 19, "up_day_ratio_60d": None, "max_daily_return_20d_pct": 4.2}
+    report = _healthy_report_v5()
+    report["candidates"] = [_v5_row("1111.T", features=features), _v5_row("2222.T")]
+    report["control_sample"] = [_v5_row("3333.T", features=features), _v5_row("4444.T")]
+
+    validate_report(report)

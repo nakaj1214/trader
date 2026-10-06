@@ -15,7 +15,7 @@ import random
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Protocol
 
@@ -53,7 +53,23 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "negative_operating_cashflow": False,
     "latest_actual_disclosure_date": None,
     "latest_disclosure_date": None,
+    # Diagnostics recorded for later study; none of them enters the score.
+    "forecast_disclosure_date": None,
+    "disclosure_age_days": None,
+    "forecast_age_days": None,
+    "max_daily_return_20d_pct": None,
+    "up_day_ratio_20d": None,
+    "up_day_ratio_60d": None,
+    "daily_volatility_20d_pct": None,
+    "distance_from_period_high_pct": None,
 }
+TECH_DIAGNOSTIC_KEYS = (
+    "max_daily_return_20d_pct",
+    "up_day_ratio_20d",
+    "up_day_ratio_60d",
+    "daily_volatility_20d_pct",
+    "distance_from_period_high_pct",
+)
 
 
 class PriceDataRetryExhausted(RuntimeError):
@@ -128,6 +144,9 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
         else close * volume
     )
     turnover = float(turnover_values.tail(20).mean()) if turnover_values.tail(20).notna().any() else None
+    daily = close.pct_change().dropna()
+    daily = daily[daily.abs() != float("inf")]
+    last20, last60 = daily.tail(20), daily.tail(60)
     return {
         "current_price": current,
         "return_5d_pct": _pct_change(close, 5),
@@ -137,6 +156,11 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
         "near_52w_high": len(close) >= 252 and current >= available_high * 0.99,
         "near_listing_high": len(close) < 252 and current >= available_high * 0.99,
         "avg_turnover_20d_jpy": turnover,
+        "max_daily_return_20d_pct": float(last20.max()) * 100.0 if len(last20) == 20 else None,
+        "up_day_ratio_20d": float((last20 > 0).mean()) if len(last20) == 20 else None,
+        "up_day_ratio_60d": float((last60 > 0).mean()) if len(last60) == 60 else None,
+        "daily_volatility_20d_pct": float(last20.std()) * 100.0 if len(last20) == 20 else None,
+        "distance_from_period_high_pct": (current / available_high - 1.0) * 100.0 if available_high > 0 else None,
     }
 
 
@@ -263,6 +287,7 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "negative_operating_cashflow": bool(latest_cfo is not None and latest_cfo < 0),
         "latest_actual_disclosure_date": latest.get("DiscDate"),
         "latest_disclosure_date": rows[-1].get("DiscDate"),
+        "forecast_disclosure_date": forecast_rows[-1].get("DiscDate") if len(forecast_rows) >= 2 else None,
     }
 
 
@@ -326,6 +351,16 @@ def _price_retry_waits() -> list[float]:
     return waits
 
 
+def _age_days(as_of: str, disclosed: object) -> int | None:
+    """Days from a disclosure date to the scan's market date; ``None`` when either is missing or malformed."""
+    if not disclosed:
+        return None
+    try:
+        return (date.fromisoformat(as_of) - date.fromisoformat(str(disclosed))).days
+    except ValueError:
+        return None
+
+
 def _clean_text(value: Any) -> str | None:
     text = str(value).strip() if value is not None else ""
     return text or None
@@ -338,6 +373,7 @@ def _evaluate_candidate(
     client: FinancialSource,
     ticker_meta: dict[str, dict[str, Any]],
     fundamental_limitation: str,
+    as_of: str,
 ) -> LiveCandidate:
     code = str(ticker_meta[ticker].get("Code") or "")
     fins = client.financial_summary(code)
@@ -374,6 +410,12 @@ def _evaluate_candidate(
         reasons.append("52週高値圏")
     if tech.get("near_listing_high"):
         reasons.append("上場来高値圏")
+    source = {
+        **fundamental,
+        **{key: tech.get(key) for key in TECH_DIAGNOSTIC_KEYS},
+        "disclosure_age_days": _age_days(as_of, fundamental.get("latest_actual_disclosure_date")),
+        "forecast_age_days": _age_days(as_of, fundamental.get("forecast_disclosure_date")),
+    }
     return LiveCandidate(
         ticker=ticker,
         company_name=str(ticker_meta[ticker].get("CoName") or ticker),
@@ -392,7 +434,7 @@ def _evaluate_candidate(
         reasons=reasons,
         limitations=[fundamental_limitation],
         features={
-            key: (bool(fundamental.get(key)) if isinstance(default, bool) else fundamental.get(key, default))
+            key: (bool(source.get(key)) if isinstance(default, bool) else source.get(key, default))
             for key, default in FEATURE_DEFAULTS.items()
         },
         score_details={
@@ -463,6 +505,7 @@ def select_and_evaluate(
                 client=client,
                 ticker_meta=ticker_meta,
                 fundamental_limitation=fundamental_limitation,
+                as_of=seed_date,
             )
         )
 
@@ -483,6 +526,7 @@ def select_and_evaluate(
                     client=client,
                     ticker_meta=ticker_meta,
                     fundamental_limitation=fundamental_limitation,
+                    as_of=seed_date,
                 )
             control_sample.append(evaluated[ticker])
 

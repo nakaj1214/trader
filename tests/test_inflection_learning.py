@@ -866,3 +866,26 @@ def test_regime_is_unknown_when_the_benchmark_has_no_history() -> None:
 
     assert (row["regime_trend"], row["regime_volatility"]) == ("unknown", "unknown")
     assert "regime_trend:unknown" in row["factor_labels"]
+
+
+def test_loader_reads_schema5_snapshots_with_and_without_the_diagnostic_features(tmp_path: Path) -> None:
+    diagnostics = {
+        "forecast_disclosure_date": "2026-08-15",
+        "disclosure_age_days": 19,
+        "forecast_age_days": 5,
+        "max_daily_return_20d_pct": 4.2,
+        "up_day_ratio_20d": 0.55,
+        "up_day_ratio_60d": None,
+        "daily_volatility_20d_pct": 1.9,
+        "distance_from_period_high_pct": -3.1,
+    }
+    old = _payload_v5("2026-01-06")  # written before the diagnostics existed
+    new = _payload_v5("2026-01-07", features={"revenue_growth_yoy_pct": 25.0, **diagnostics})
+    _write_snapshot(tmp_path, old)
+    _write_snapshot(tmp_path, new)
+
+    rows = {r["signal_date"]: r for r in load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)}
+
+    assert "disclosure_age_days" not in rows["2026-01-06"]["features"]
+    assert rows["2026-01-07"]["features"]["disclosure_age_days"] == 19
+    assert rows["2026-01-07"]["features"]["up_day_ratio_60d"] is None

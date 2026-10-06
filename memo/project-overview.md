@@ -66,6 +66,10 @@ REQ-018適用後のsnapshotはstrategy v3として`inflection/v3/`へ分離し�
 
 週次検証は暗号化済み snapshot から `EARLY_CANDIDATE` のみを読み、翌営業日始値で entry、5 / 20 / 60 営業日保有、往復コスト 0.2%、TOPIX ETF (`1306.T`) 比較という固定ルールで評価します。
 
+候補の確認方法は2つあります。(1) 日次 scan が成功してその日の snapshot を新しく作ると、候補のダイジェスト（EARLY_CANDIDATE 全件・上限10件、WATCH 上位5件、件数、欠損営業日の警告）が`SLACK_WEBHOOK_URL`へ1通送られます。送信は best-effort で、失敗しても scan は失敗扱いにならず、公開リポジトリのログには銘柄名を出さず状態だけを出します。同じ市場日の再実行では再送しません。(2) ローカルでは`SNAPSHOT_ENCRYPTION_KEY`を設定して`python scripts/show_candidates.py`を実行すると、最新または`--date`指定の snapshot を復号して表で表示します（`--classification`、`--top`、`--control`。外部通信はしません）。
+
+snapshotの各candidateの`features`には、スコアに使わない診断値も記録します（開示・予想修正からの経過日数、20日の最大日次リターン、20日・60日の上昇日割合、20日の日次ボラティリティ、高値からの距離）。後から再現できない値を今のうちから蓄積するためで、スコア・分類・候補は変わりません。forward validationのレポートには、東証の営業日とsnapshotを突き合わせた`session_coverage`（欠けた営業日。終点は実行時点で確定しているはずの最新営業日）が入ります。
+
 自己改善学習はschema 3〜5の暗号化snapshotから全区分のcandidateを読み、strategy versionをまたいで5 / 20 / 60 / 120営業日の事後成績を集計します。未対応schemaや不正なmetadata・candidate型はfail closedで拒否し、学習結果は次期strategy versionへの提案に限定して本番の重みを自動更新しません。
 
 過去検証（ローカル専用・評価のみ）は`scripts/run_inflection_historical_backtest.py`で実行します。J-Quants Freeの過去データ（約2年分）を`.data/jquants/`へ再開可能に取得（`--fetch`）し、現行v3のロジックを過去の各営業日にpoint-in-timeで再現して（`src/evaluation/inflection_historical.py`）forwardと同じ評価器で集計します。財務を開示当日から使える場合と12週後から使える場合（現行Freeの状態）を比較し、60営業日の対TOPIX超過リターンの信頼区間による撤退条件の一次判定（暫定基準: 独立観測100件以上）を出力します。閾値・重みの探索は行わず、取得データと出力（`artifacts/`）はgit管理外です。Freeプランの2年という期間のため、60営業日の成績まで確定する期間は約1か月分にとどまります。
@@ -93,7 +97,7 @@ python -m pip install -e ".[dev]"
 | Workflow | 役割 |
 |---|---|
 | `test.yml` | Python regression、ruff、現行経路の mypy と coverage |
-| `inflection_shadow.yml` | 平日の日次 scan、暗号化 snapshot の commit、失敗時 Slack 通知 |
+| `inflection_shadow.yml` | 平日の日次 scan、暗号化 snapshot の commit、成功時の候補ダイジェスト（Slack、本人のみ）、失敗時 Slack 通知 |
 | `forward_validation.yml` | 週次および関連 PR の forward validation |
 | `position_monitor.yml` | 平日3回（9:03/12:35/15:35 JST、best-effort）のPosition Exit Monitor。保有銘柄（Googleスプレッドシート）のTrailing Stop状況を評価しSlack通知（実装済み・本番運用中） |
 

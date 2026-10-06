@@ -21,7 +21,9 @@ from src.data.forward_prices import (
     fetch_price_histories,
     legacy_hash_window,
     shared_price_window,
+    snapshot_dates,
 )
+from src.data.session_gaps import latest_settled_session, session_coverage
 from src.data.snapshot_crypto import decrypt_json, encrypt_json, snapshot_encryption_secret
 from src.evaluation.explosion import explosion_definitions
 from src.evaluation.inflection_backtest import (
@@ -143,6 +145,23 @@ def _persist_price_hashes(
     return changed
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _snapshot_session_coverage(snapshot_dir: Path) -> dict[str, Any]:
+    """Which trading sessions have no snapshot, up to the newest session that should have one by now.
+
+    The end is the clock's latest settled session, not the last snapshot: otherwise a run of failed
+    scans after the last good snapshot would not even count as expected sessions.
+    """
+    dates = snapshot_dates([snapshot_dir])
+    through = latest_settled_session(_utc_now())
+    if dates:
+        through = max(through, dates[-1])
+    return session_coverage(snapshot_dir, through)
+
+
 def _legacy_hash_starts(rows: list[dict[str, Any]]) -> dict[str, date]:
     """Where each ticker's price history used to start (earliest signal - 10 days; the benchmark - 45).
 
@@ -235,6 +254,7 @@ def main() -> int:
         "strategy_version": all_observations[0]["strategy_version"],
         "report_schema_version": all_observations[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",
+        "session_coverage": _snapshot_session_coverage(snapshot_dir),
         "portfolio_interpretation": True,
         "portfolio_interpretation_note": (
             "portfolio_summary simulates EARLY_CANDIDATE signals only, with a 60-session holding "

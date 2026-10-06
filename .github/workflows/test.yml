@@ -48,6 +48,7 @@ jobs:
             src/data/sheets_client.py \
             src/data/snapshot_crypto.py \
             src/data/market_calendar.py \
+            src/data/session_gaps.py \
             src/data/validation.py \
             src/evaluation/exit_rules.py \
             src/evaluation/explosion.py \
@@ -60,12 +61,15 @@ jobs:
             src/evaluation/inflection_report.py \
             src/evaluation/regime.py \
             src/monitoring/position_exit.py \
+            src/notify/inflection_digest.py \
+            src/notify/slack.py \
             src/screening/inflection_live.py \
             scripts/rebuild_inflection_forward_validation.py \
             scripts/rebuild_inflection_learning.py \
             scripts/run_inflection_historical_backtest.py \
             scripts/run_inflection_shadow.py \
-            scripts/run_position_monitor.py
+            scripts/run_position_monitor.py \
+            scripts/show_candidates.py
 
   test:
     runs-on: ubuntu-latest

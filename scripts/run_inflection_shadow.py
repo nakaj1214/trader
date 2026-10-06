@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from src.data.market_calendar import expected_tse_session_date
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
 from src.data.validation import is_finite_number
+from src.notify.inflection_digest import send_daily_digest
 from src.screening.inflection_live import (
     MIN_LATEST_DATE_COVERAGE,
     MIN_PRICE_COVERAGE,
@@ -218,6 +219,16 @@ def persist_report(
     return snapshot, snapshot_created
 
 
+def _deliver_digest(report: dict[str, Any], *, snapshot_created: bool) -> str:
+    """Send the daily digest once per market day (only when this run created the snapshot).
+
+    The status string is logged; the digest itself never is (the job log is public).
+    """
+    if not snapshot_created:
+        return "skipped:snapshot-existed"
+    return send_daily_digest(report, snapshot_dir=OUT_DIR, webhook=os.getenv("SLACK_WEBHOOK_URL"))
+
+
 def main() -> None:
     encryption_secret = snapshot_encryption_secret()
     try:
@@ -228,6 +239,7 @@ def main() -> None:
                 output.writelines(f"{key}={value}\n" for key, value in exc.details.items())
         raise
     snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
+    digest_status = _deliver_digest(report, snapshot_created=snapshot_created)
 
     counts = report.get("classification_counts", {})
     market_summary = " ".join(
@@ -248,7 +260,8 @@ def main() -> None:
         f"overextended={counts.get('OVEREXTENDED', 0)} "
         f"{market_summary} "
         f"snapshot={snapshot.name} "
-        f"snapshot_created={snapshot_created}"
+        f"snapshot_created={snapshot_created} "
+        f"digest={digest_status}"
     )
 
 

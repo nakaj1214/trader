@@ -470,6 +470,16 @@ class MultiCodeFakeClient(FakeJQuantsClient):
         return _FINANCIAL_ROWS
 
 
+FUNDAMENTAL_FEATURE_KEYS = (
+    "revenue_growth_yoy_pct",
+    "operating_profit_growth_yoy_pct",
+    "operating_margin_change_pctpt",
+    "turned_profitable",
+    "upward_revision_pct",
+    "negative_operating_cashflow",
+    "latest_actual_disclosure_date",
+    "latest_disclosure_date",
+)
 _FINANCIAL_ROWS = [
     {"DiscDate": "2025-08-01", "DiscTime": "15:00", "CurPerType": "Q1", "CurFYEn": "2026-03-31",
      "Sales": 100.0, "OP": 10.0, "FOP": 20.0, "CFO": 5.0},
@@ -496,7 +506,7 @@ def test_candidate_persists_raw_features_score_details_and_sector() -> None:
     expected = _fundamental_features(_FINANCIAL_ROWS)
 
     assert set(candidate["features"]) == set(FEATURE_DEFAULTS)
-    for key in FEATURE_DEFAULTS:
+    for key in FUNDAMENTAL_FEATURE_KEYS:  # the diagnostics added later are covered by their own tests
         assert candidate["features"][key] == expected.get(key, FEATURE_DEFAULTS[key])
     assert candidate["features"]["latest_actual_disclosure_date"] == "2026-08-01"
     details = candidate["score_details"]
@@ -513,7 +523,12 @@ def test_candidate_features_keep_every_key_without_financials() -> None:
     client = MultiCodeFakeClient(no_financials=frozenset(f"{n}{n}{n}{n}0" for n in range(1, 7)))
     report = _scan_multi(client, deep_candidates=1, control_sample_size=0)
 
-    assert report["candidates"][0]["features"] == FEATURE_DEFAULTS  # type: ignore[index]
+    features = report["candidates"][0]["features"]  # type: ignore[index]
+    # No financials: every fundamental-derived value stays at its default, including the disclosure ages...
+    for key in (*FUNDAMENTAL_FEATURE_KEYS, "forecast_disclosure_date", "disclosure_age_days", "forecast_age_days"):
+        assert features[key] == FEATURE_DEFAULTS[key], key
+    # ...while price-derived diagnostics exist because prices do.
+    assert features["max_daily_return_20d_pct"] is not None and features["distance_from_period_high_pct"] is not None
 
 
 def test_blank_sector_becomes_none() -> None:
@@ -596,3 +611,144 @@ def test_scan_output_satisfies_validator_and_both_loaders(tmp_path) -> None:  # 
 
     assert len(observations) == len(signals) == 3  # control_sample is not mixed into evaluation inputs
     assert all(row["features"] is not None and row["sector33_code"] == "3650" for row in observations)
+
+
+# --- REQ-050: diagnostics recorded for later study -----------------------------------------------------
+
+NEW_DIAGNOSTIC_KEYS = (
+    "forecast_disclosure_date",
+    "disclosure_age_days",
+    "forecast_age_days",
+    "max_daily_return_20d_pct",
+    "up_day_ratio_20d",
+    "up_day_ratio_60d",
+    "daily_volatility_20d_pct",
+    "distance_from_period_high_pct",
+)
+# Taken from the code BEFORE the diagnostics existed: scoring, classification and selection must not move.
+PRE_DIAGNOSTICS_FINGERPRINT = "f8583efe1192924eece3dddcdd8a4188be4be65e04032d6996a4a74e0aee48fc"
+
+
+def _frame_from_returns(returns: list[float], base: float = 100.0) -> pd.DataFrame:
+    closes = [base]
+    for value in returns:
+        closes.append(closes[-1] * (1.0 + value))
+    index = pd.bdate_range("2026-01-05", periods=len(closes))
+    return pd.DataFrame({"Close": closes, "Volume": [1_000_000.0] * len(closes)}, index=index)
+
+
+def test_diagnostics_do_not_change_scores_classifications_or_selection() -> None:
+    import hashlib
+    import json
+
+    report = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
+
+    def stripped(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {**row, "features": {k: v for k, v in row["features"].items() if k not in NEW_DIAGNOSTIC_KEYS}}  # type: ignore[attr-defined]
+            for row in rows
+        ]
+
+    payload = {
+        "candidates": stripped(report["candidates"]),  # type: ignore[arg-type]
+        "control_sample": stripped(report["control_sample"]),  # type: ignore[arg-type]
+        "classification_counts": report["classification_counts"],
+    }
+    blob = json.dumps(payload, sort_keys=True, default=str)
+
+    assert hashlib.sha256(blob.encode()).hexdigest() == PRE_DIAGNOSTICS_FINGERPRINT
+    assert set(NEW_DIAGNOSTIC_KEYS) <= set(report["candidates"][0]["features"])  # type: ignore[index]
+
+
+def test_price_diagnostics_match_a_hand_calculation() -> None:
+    import statistics
+
+    # 61 closes: a spike first (the period high), 39 calm +0.5% days, then 20 days alternating +2% / -1%.
+    returns = [0.50] + [-0.30] + [0.005] * 38 + [0.02, -0.01] * 10
+    frame = _frame_from_returns(returns)
+    last20 = returns[-20:]
+
+    tech = _technical_features(frame)
+
+    assert tech is not None
+    assert tech["max_daily_return_20d_pct"] == pytest.approx(2.0)
+    assert tech["up_day_ratio_20d"] == pytest.approx(0.5)
+    last60 = returns[-60:]
+    assert tech["up_day_ratio_60d"] == pytest.approx(sum(value > 0 for value in last60) / 60)
+    assert tech["daily_volatility_20d_pct"] == pytest.approx(statistics.stdev(last20) * 100, rel=1e-9)
+    closes = frame["Close"]
+    assert tech["distance_from_period_high_pct"] == pytest.approx((closes.iloc[-1] / closes.max() - 1) * 100)
+    assert tech["distance_from_period_high_pct"] < 0
+
+
+def test_price_diagnostics_need_enough_history_and_never_raise() -> None:
+    twenty_returns = _technical_features(_frame_from_returns([0.01] * 20))  # 21 closes: the minimum
+    forty_returns = _technical_features(_frame_from_returns([0.01] * 40))
+
+    assert twenty_returns is not None and forty_returns is not None
+    for tech in (twenty_returns, forty_returns):
+        assert tech["max_daily_return_20d_pct"] == pytest.approx(1.0) and tech["up_day_ratio_20d"] == 1.0
+        assert tech["up_day_ratio_60d"] is None  # fewer than 60 returns
+        assert tech["daily_volatility_20d_pct"] == pytest.approx(0.0, abs=1e-9)
+        assert tech["distance_from_period_high_pct"] == pytest.approx(0.0)  # at its high
+
+
+def test_price_diagnostics_ignore_a_zero_price_instead_of_failing() -> None:
+    frame = _frame_from_returns([0.01] * 40)
+    frame.iloc[10, frame.columns.get_loc("Close")] = 0.0  # a bad print makes one return infinite
+
+    tech = _technical_features(frame)
+
+    assert tech is not None and tech["max_daily_return_20d_pct"] == pytest.approx(1.0)  # last 20 days are clean
+
+
+def test_disclosure_ages_are_counted_from_the_scan_market_date() -> None:
+    prices = {"1111.T": _price_frame()}
+    expected_date = str(prices["1111.T"].index[-1].date())
+    with (
+        patch("src.screening.inflection_live.fetch_price_data", return_value=prices),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+    ):
+        report = scan_japan_inflection(client=FakeJQuantsClient(), deep_candidates=1, min_turnover_jpy=0)
+
+    features = report["candidates"][0]["features"]
+    market_date = pd.Timestamp(expected_date)
+    assert features["latest_actual_disclosure_date"] == "2026-08-01"
+    assert features["disclosure_age_days"] == (market_date - pd.Timestamp("2026-08-01")).days
+    assert features["forecast_disclosure_date"] == "2026-08-15"  # the revision filing used for the upward revision
+    assert features["forecast_age_days"] == (market_date - pd.Timestamp("2026-08-15")).days
+    assert features["upward_revision_pct"] == pytest.approx(20.0)
+
+
+def test_forecast_disclosure_is_none_with_fewer_than_two_forecasts() -> None:
+    rows = _fundamental_features(_FINANCIAL_ROWS)  # only one forecast for the latest fiscal year
+
+    assert rows["forecast_disclosure_date"] is None and rows["upward_revision_pct"] is None
+
+
+@pytest.mark.parametrize("disclosed", [None, "", "not-a-date", "2026/08/01", "2026-13-40"])
+def test_age_is_none_for_a_missing_or_malformed_disclosure_date(disclosed: object) -> None:
+    from src.screening.inflection_live import _age_days
+
+    assert _age_days("2026-08-20", disclosed) is None
+
+
+def test_age_accepts_the_iso_basic_date_form_too() -> None:
+    from src.screening.inflection_live import _age_days
+
+    assert _age_days("2026-08-20", "20260801") == 19  # YYYYMMDD is valid ISO 8601 and parsed as such
+
+
+def test_age_counts_days_including_same_day_disclosures() -> None:
+    from src.screening.inflection_live import _age_days
+
+    assert _age_days("2026-08-20", "2026-08-20") == 0
+    assert _age_days("2026-08-20", "2026-05-22") == 90
+    assert _age_days("2026-08-20", "2026-08-21") == -1  # a future-dated filing is reported, not hidden
+
+
+def test_no_financials_means_no_disclosure_ages() -> None:
+    client = MultiCodeFakeClient(no_financials=frozenset(f"{n}{n}{n}{n}0" for n in range(1, 7)))
+    features = _scan_multi(client, deep_candidates=1, control_sample_size=0)["candidates"][0]["features"]  # type: ignore[index]
+
+    assert features["disclosure_age_days"] is None and features["forecast_age_days"] is None

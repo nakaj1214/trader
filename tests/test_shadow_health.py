@@ -30,6 +30,8 @@ def _retry_exhausted() -> PriceDataRetryExhausted:
             "latest_coverage": "99.6%",
             "failed_gate": "price_coverage",
             "attempts": "3",
+            "latest_dates": "2026-09-25:2504",
+            "dropped_future_bars": "0",
         }
     )
 

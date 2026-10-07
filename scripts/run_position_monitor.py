@@ -16,6 +16,7 @@ import requests
 from src.data.live_quote import build_today_quote, fetch_split_adjusted_history, fetch_today_bars
 from src.data.market_calendar import TSE_CALENDAR
 from src.data.sheets_client import read_holdings, read_status, write_status
+from src.data.validation import is_finite_number
 from src.monitoring.position_exit import (
     DEFAULT_TRAILING_STOP_PCT,
     StaleQuoteError,
@@ -26,6 +27,7 @@ JST = ZoneInfo("Asia/Tokyo")
 SLACK_TIMEOUT_SECONDS = 10
 CLOSE_GRACE_MINUTES = 30
 WARNING_DISTANCE_PCT = 3.0  # warn when the price is within this % above the stop (stop not yet hit)
+OVEREXTENDED_RETURN_20D_PCT = 50.0  # matches inflection_live._classify's r20 >= 50%; no scan dependency
 
 
 def _number(value: Any, name: str) -> float:
@@ -134,6 +136,27 @@ def _stop_proximity_candidates(ok_rows: list[dict[str, Any]], warned_today: dict
         if ticker not in closest or distance < closest[ticker]["distance_to_stop_pct"]:
             closest[ticker] = row
     return [closest[ticker] for ticker in sorted(closest)]
+
+
+def _warning_candidates(ok_rows: list[dict[str, Any]], warned_today: dict[str, datetime]) -> list[dict[str, Any]]:
+    candidates = {str(row["ticker"]): dict(row) for row in _stop_proximity_candidates(ok_rows, warned_today)}
+    for row in candidates.values():
+        row["warning_details"] = (
+            f"残り{row['distance_to_stop_pct']:.1f}% current={row['current_price']} stop={row['stop_price']}"
+        )
+    for row in ok_rows:
+        ticker = str(row["ticker"])
+        change = row.get("return_20d_pct")
+        if row.get("triggered") is True or ticker in warned_today:
+            continue
+        if change is None or not is_finite_number(change) or change < OVEREXTENDED_RETURN_20D_PCT:
+            continue
+        # Multiple positions of the same ticker share one market return and one warning.
+        warning = candidates.setdefault(ticker, {**row, "warning_details": ""})
+        if "過熱" not in warning["warning_details"]:
+            prefix = warning["warning_details"]
+            warning["warning_details"] = (prefix + " / " if prefix else "") + f"過熱: 20日で +{change:.1f}%"
+    return [candidates[ticker] for ticker in sorted(candidates)]
 
 
 def _carry_warning_state(
@@ -314,17 +337,16 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             slack_error = slack_error or exc
 
     warned_now: dict[str, str] = {}
-    warnings = _stop_proximity_candidates(ok_rows, warned_today)
+    warnings = _warning_candidates(ok_rows, warned_today)
     if not dry_run and warnings:
         details = "\n".join(
-            f"• {row['ticker']}: 残り{row['distance_to_stop_pct']:.1f}% current={row['current_price']} "
-            f"stop={row['stop_price']}"
+            f"• {row['ticker']}: {row['warning_details']}"
             for row in warnings
         )
         try:
             _post_slack(
                 webhook,
-                f"[検証用アラート] stop まで残り{WARNING_DISTANCE_PCT:g}%以内の銘柄があります。"
+                f"[検証用アラート] stop まで残り{WARNING_DISTANCE_PCT:g}%以内・過熱の注意喚起。"
                 "確定した売買判断ではありません。\n" + details,
             )
             warned_now = {str(row["ticker"]): current.isoformat() for row in warnings}

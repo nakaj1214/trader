@@ -44,6 +44,24 @@ PROMOTION_NEGATIVE_LIFT = 0.75
 # Benjamini-Hochberg false-discovery rate over every factor x horizon tested in one report.
 PROMOTION_MAX_Q_VALUE = 0.10
 
+# Fixed diagnostic bands; they do not change production scores or weights.
+AGE_BANDS = ((31.0, 61.0, 91.0), ("le30", "31to60", "61to90", "gt90"))  # ages are whole calendar days
+GROWTH_BANDS = ((-10.0, 0.0, 10.0), ("lt-10", "-10to0", "0to10", "ge10"))
+FEATURE_BANDS: dict[str, tuple[str, tuple[float, ...], tuple[str, ...]]] = {
+    "disclosure_age_days": ("disclosure_age_band", *AGE_BANDS),
+    "forecast_age_days": ("forecast_age_band", *AGE_BANDS),
+    "up_day_ratio_60d": ("up_day_ratio_60d_band", (0.4, 0.5, 0.6), ("lt0.4", "0.4to0.5", "0.5to0.6", "ge0.6")),
+    "max_daily_return_20d_pct": ("max_daily_return_20d_band", (5.0, 10.0, 20.0), ("lt5", "5to10", "10to20", "ge20")),
+    "daily_volatility_20d_pct": ("daily_volatility_20d_band", (2.0, 4.0, 6.0), ("lt2", "2to4", "4to6", "ge6")),
+    "distance_from_period_high_pct": (
+        "distance_from_period_high_band", (-20.0, -10.0, -5.0), ("lt-20", "-20to-10", "-10to-5", "ge-5")
+    ),
+    "quarterly_sales_growth_accel_pctpt": ("quarterly_sales_growth_accel_band", *GROWTH_BANDS),
+    "quarterly_op_growth_accel_pctpt": ("quarterly_op_growth_accel_band", *GROWTH_BANDS),
+    "relative_return_20d_vs_sector_pct": ("relative_return_20d_vs_sector_band", *GROWTH_BANDS),
+    "relative_return_60d_vs_sector_pct": ("relative_return_60d_vs_sector_band", *GROWTH_BANDS),
+}
+
 # schema 3 (jp-inflection-shadow-v2) used a single breakout_52w flag; schema 4
 # (jp-inflection-shadow-v3+) split it into near_52w_high/near_listing_high. Both
 # are accepted so old snapshots remain usable as learning material, but schema 3
@@ -239,6 +257,15 @@ def factor_labels(observation: dict[str, Any]) -> list[str]:
         labels.append(f"legacy_breakout_52w:{bool(legacy_breakout_52w)}")
     for reason in observation.get("reasons", []):
         labels.append(f"reason:{reason}")
+    features = observation.get("features")
+    if isinstance(features, dict):
+        for key, (label, cuts, bands) in FEATURE_BANDS.items():
+            value = features.get(key)
+            if value is not None and is_finite_number(value):
+                labels.append(f"{label}:{_bucket(float(value), cuts, bands)}")
+    sector = observation.get("sector33_code")
+    if isinstance(sector, str) and sector.strip():
+        labels.append(f"sector33:{sector}")
     return labels
 
 

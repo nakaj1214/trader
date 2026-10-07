@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
+from statistics import median
 from typing import Any, Protocol
 
 import pandas as pd
@@ -62,6 +63,14 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "up_day_ratio_60d": None,
     "daily_volatility_20d_pct": None,
     "distance_from_period_high_pct": None,
+    "quarterly_sales_growth_yoy_pct": None,
+    "quarterly_op_growth_yoy_pct": None,
+    "quarterly_sales_growth_accel_pctpt": None,
+    "quarterly_op_growth_accel_pctpt": None,
+    "sector33_return_20d_pct": None,
+    "sector33_return_60d_pct": None,
+    "relative_return_20d_vs_sector_pct": None,
+    "relative_return_60d_vs_sector_pct": None,
 }
 TECH_DIAGNOSTIC_KEYS = (
     "max_daily_return_20d_pct",
@@ -232,7 +241,7 @@ def _previous_comparable_actual(
     return candidates[-1] if candidates else None
 
 
-def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _fundamental_features(rows: list[dict[str, Any]], *, as_of: str | None = None) -> dict[str, Any]:
     rows = sorted(rows, key=_row_sort_key)
     actual_rows = [row for row in rows if _has_actual_financials(row)]
     if not actual_rows:
@@ -279,6 +288,10 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
     latest_cfo = _to_float(cashflow_rows[-1].get("CFO")) if cashflow_rows else None
 
     return {
+        # The live client returns full history; bound only the new diagnostics so legacy scores stay unchanged.
+        **_quarterly_features(
+            [row for row in actual_rows if as_of is None or str(row.get("DiscDate") or "") <= as_of]
+        ),
         "revenue_growth_yoy_pct": revenue_growth,
         "operating_profit_growth_yoy_pct": op_growth,
         "operating_margin_change_pctpt": margin_change,
@@ -289,6 +302,72 @@ def _fundamental_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "latest_disclosure_date": rows[-1].get("DiscDate"),
         "forecast_disclosure_date": forecast_rows[-1].get("DiscDate") if len(forecast_rows) >= 2 else None,
     }
+
+
+def _quarterly_features(actual_rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    """Compare standalone quarters within one reporting basis; missing inputs stay missing."""
+    result: dict[str, float | None] = {
+        "quarterly_sales_growth_yoy_pct": None,
+        "quarterly_op_growth_yoy_pct": None,
+        "quarterly_sales_growth_accel_pctpt": None,
+        "quarterly_op_growth_accel_pctpt": None,
+    }
+    if not actual_rows:
+        return result
+    latest = actual_rows[-1]
+    periods = {"1Q": 1, "2Q": 2, "3Q": 3, "FY": 4, "4Q": 4}
+    quarter = periods.get(str(latest.get("CurPerType")))
+    _, marker, basis = str(latest.get("DocType") or "").partition("FinancialStatements_")
+    if quarter is None or not marker or not basis:
+        return result
+    try:
+        fiscal_end = date.fromisoformat(str(latest.get("CurFYEn")))
+    except ValueError:
+        return result
+
+    cumulative: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in actual_rows:
+        period = str(row.get("CurPerType") or "")
+        doc_period, _, row_basis = str(row.get("DocType") or "").partition("FinancialStatements_")
+        if period not in periods or periods.get(doc_period) != periods[period] or row_basis != basis:
+            continue
+        # Live rows include period dates; reject irregular fiscal periods when available.
+        if row.get("CurPerSt") and row.get("CurPerEn"):
+            try:
+                start = pd.Timestamp(row["CurPerSt"])
+                end = pd.Timestamp(row["CurPerEn"])
+                if start + pd.DateOffset(months=3 * periods[period]) - pd.Timedelta(days=1) != end:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        cumulative[(str(row.get("CurFYEn")), periods[period])] = row
+
+    def prior_year(end: str) -> str:
+        return str((pd.Timestamp(end) - pd.DateOffset(years=1)).date())
+
+    def standalone(end: str, q: int, column: str) -> float | None:
+        value = _to_float(cumulative.get((end, q), {}).get(column))
+        previous = 0.0 if q == 1 else _to_float(cumulative.get((end, q - 1), {}).get(column))
+        if value is None or previous is None or not math.isfinite(value) or not math.isfinite(previous):
+            return None
+        return value - previous
+
+    def growth(end: str, q: int, column: str) -> float | None:
+        value = standalone(end, q, column)
+        previous = standalone(prior_year(end), q, column)
+        if value is None or previous is None or previous == 0 or (column == "OP" and previous < 0):
+            return None
+        return (value / previous - 1.0) * 100.0
+
+    end = str(fiscal_end)
+    prev_end, prev_quarter = (prior_year(end), 4) if quarter == 1 else (end, quarter - 1)
+    for column, label in (("Sales", "sales"), ("OP", "op")):
+        current = growth(end, quarter, column)
+        previous = growth(prev_end, prev_quarter, column)
+        result[f"quarterly_{label}_growth_yoy_pct"] = current
+        if current is not None and previous is not None:
+            result[f"quarterly_{label}_growth_accel_pctpt"] = current - previous
+    return result
 
 
 def _normalize_available_score(fundamental: float, momentum: float, risk: float) -> float:
@@ -374,10 +453,11 @@ def _evaluate_candidate(
     ticker_meta: dict[str, dict[str, Any]],
     fundamental_limitation: str,
     as_of: str,
+    sector_returns: dict[str, dict[int, float]] | None = None,
 ) -> LiveCandidate:
     code = str(ticker_meta[ticker].get("Code") or "")
     fins = client.financial_summary(code)
-    fundamental = _fundamental_features(fins)
+    fundamental = _fundamental_features(fins, as_of=as_of)
     features = InflectionFeatures(
         revenue_growth_yoy_pct=fundamental.get("revenue_growth_yoy_pct"),
         operating_profit_growth_yoy_pct=fundamental.get("operating_profit_growth_yoy_pct"),
@@ -416,6 +496,13 @@ def _evaluate_candidate(
         "disclosure_age_days": _age_days(as_of, fundamental.get("latest_actual_disclosure_date")),
         "forecast_age_days": _age_days(as_of, fundamental.get("forecast_disclosure_date")),
     }
+    sector = _clean_text(ticker_meta[ticker].get("S33"))
+    for horizon in (20, 60):
+        own = tech.get(f"return_{horizon}d_pct")
+        sector_return = (sector_returns or {}).get(sector or "", {}).get(horizon)
+        if own is not None and sector_return is not None:
+            source[f"sector33_return_{horizon}d_pct"] = sector_return
+            source[f"relative_return_{horizon}d_vs_sector_pct"] = float(own) - sector_return
     return LiveCandidate(
         ticker=ticker,
         company_name=str(ticker_meta[ticker].get("CoName") or ticker),
@@ -482,16 +569,28 @@ def select_and_evaluate(
     """
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable: set[str] = set()
+    sector_samples: dict[str, dict[int, list[float]]] = {}
     for ticker, df in prices.items():
         tech = _technical_features(df)
         if not tech:
             continue
         technical_usable.add(ticker)
+        sector = _clean_text(ticker_meta[ticker].get("S33"))
+        if sector:
+            samples = sector_samples.setdefault(sector, {20: [], 60: []})
+            for horizon in (20, 60):
+                value = tech.get(f"return_{horizon}d_pct")
+                if value is not None and math.isfinite(float(value)):
+                    samples[horizon].append(float(value))
         turnover = tech.get("avg_turnover_20d_jpy")
         if turnover is None or float(turnover) < min_turnover_jpy:
             continue
         preselected.append((_pre_score(tech), ticker, tech))
 
+    sector_returns = {
+        sector: {horizon: median(values) for horizon, values in samples.items() if len(values) >= 5}
+        for sector, samples in sector_samples.items()
+    }
     preselected.sort(reverse=True, key=lambda item: item[0])
     liquid = list(preselected)
     preselected = preselected[:deep_candidates]
@@ -506,6 +605,7 @@ def select_and_evaluate(
                 ticker_meta=ticker_meta,
                 fundamental_limitation=fundamental_limitation,
                 as_of=seed_date,
+                sector_returns=sector_returns,
             )
         )
 
@@ -527,6 +627,7 @@ def select_and_evaluate(
                     ticker_meta=ticker_meta,
                     fundamental_limitation=fundamental_limitation,
                     as_of=seed_date,
+                    sector_returns=sector_returns,
                 )
             control_sample.append(evaluated[ticker])
 
@@ -539,6 +640,21 @@ def select_and_evaluate(
         liquid_candidate_count=len(liquid),
         deep_candidate_count=len(preselected),
     )
+
+
+def _drop_future_bars(prices: dict[str, pd.DataFrame], expected_date: str) -> set[str]:
+    """Trim by the provider's local market date, preserving the original index and values."""
+    dropped: set[str] = set()
+    for ticker, frame in prices.items():
+        try:
+            index = pd.DatetimeIndex(pd.to_datetime(frame.index, format="mixed")).tz_localize(None).normalize()
+        except (TypeError, ValueError):
+            continue
+        future = index > pd.Timestamp(expected_date)
+        if future.any():
+            prices[ticker] = frame.loc[~future]
+            dropped.add(ticker)
+    return dropped
 
 
 def scan_japan_inflection(
@@ -580,13 +696,18 @@ def scan_japan_inflection(
 
     prices = fetch_price_data(tickers, lookback_days)
     latest_dates: dict[str, str] = {}
+    dropped_future: set[str] = set()
     for attempt in range(len(retry_waits) + 1):
+        dropped_future.update(_drop_future_bars(prices, expected_date))
         latest_dates = {
             ticker: latest_date
             for ticker, frame in prices.items()
             if (latest_date := _latest_close_date(frame)) is not None
         }
         price_data = len(prices)
+        histogram = ",".join(
+            f"{day}:{count}" for day, count in sorted(Counter(latest_dates.values()).items(), reverse=True)[:5]
+        )
         fresh = sum(value == expected_date for value in latest_dates.values())
         price_coverage = price_data / len(tickers) if tickers else 0.0
         latest_coverage = fresh / price_data if price_data else 0.0
@@ -625,6 +746,8 @@ def scan_japan_inflection(
                     "latest_coverage": f"{latest_coverage:.1%}",
                     "failed_gate": ",".join(failed_gates),
                     "attempts": str(attempt + 1),
+                    "latest_dates": histogram,
+                    "dropped_future_bars": str(len(dropped_future)),
                 }
             )
         if not retry_tickers:
@@ -636,7 +759,8 @@ def scan_japan_inflection(
             f"universe={len(tickers)} missing={len(tickers) - price_data} "
             f"price_data={price_data} price_coverage={price_coverage:.1%} "
             f"fresh={fresh} latest_coverage={latest_coverage:.1%} "
-            f"failed_gate={','.join(failed_gates)} wait={wait:g}s"
+            f"failed_gate={','.join(failed_gates)} wait={wait:g}s "
+            f"latest_dates={histogram} dropped_future_bars={len(dropped_future)}"
         )
         time.sleep(wait)
         prices.update(fetch_price_data(retry_tickers, lookback_days))

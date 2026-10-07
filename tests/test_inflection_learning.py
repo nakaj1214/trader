@@ -759,6 +759,67 @@ def test_report_records_the_test_family_and_exposes_p_and_q_values() -> None:
     assert any("uncorrected" in text for text in report["limitations"])
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("disclosure_age_days", 30, "disclosure_age_band:le30"),
+        ("disclosure_age_days", 31, "disclosure_age_band:31to60"),
+        ("forecast_age_days", 60, "forecast_age_band:31to60"),
+        ("forecast_age_days", 61, "forecast_age_band:61to90"),
+        ("forecast_age_days", 90, "forecast_age_band:61to90"),
+        ("forecast_age_days", 91, "forecast_age_band:gt90"),
+        ("up_day_ratio_60d", 0.5, "up_day_ratio_60d_band:0.5to0.6"),
+        ("max_daily_return_20d_pct", 10, "max_daily_return_20d_band:10to20"),
+        ("daily_volatility_20d_pct", 4, "daily_volatility_20d_band:4to6"),
+        ("distance_from_period_high_pct", -10, "distance_from_period_high_band:-10to-5"),
+        ("quarterly_sales_growth_accel_pctpt", 0, "quarterly_sales_growth_accel_band:0to10"),
+        ("quarterly_op_growth_accel_pctpt", -10, "quarterly_op_growth_accel_band:-10to0"),
+        ("relative_return_20d_vs_sector_pct", 10, "relative_return_20d_vs_sector_band:ge10"),
+        ("relative_return_60d_vs_sector_pct", -11, "relative_return_60d_vs_sector_band:lt-10"),
+    ],
+)
+def test_diagnostic_factor_bands_preserve_existing_labels(key: str, value: float, expected: str) -> None:
+    observation = _candidate()
+    original = observation.copy()
+    old_labels = factor_labels(observation)
+    updated = {**observation, "features": {key: value}, "sector33_code": "3650"}
+    assert factor_labels(updated) == [*old_labels, expected, "sector33:3650"]
+    assert observation == original
+
+
+@pytest.mark.parametrize("features", [None, [], {}, {"disclosure_age_days": None}, {"forecast_age_days": "30"}])
+def test_absent_or_invalid_diagnostic_features_add_no_labels(features: object) -> None:
+    row = _candidate()
+    assert factor_labels({**row, "features": features}) == factor_labels(row)
+
+
+@pytest.mark.parametrize("value", [True, "invalid", [], float("nan"), float("inf")])
+def test_invalid_feature_values_are_skipped(value: object) -> None:
+    from src.evaluation.inflection_learning import FEATURE_BANDS
+
+    row = _candidate()
+    assert factor_labels({**row, "features": dict.fromkeys(FEATURE_BANDS, value)}) == factor_labels(row)
+
+
+def test_new_diagnostic_factors_increase_the_promotion_test_family() -> None:
+    history = _history([100.0 + index * 0.5 for index in range(160)])
+    observations = [
+        {**_candidate(ticker=ticker), "signal_date": str(history.index[10].date()),
+         "strategy_version": "jp-inflection-shadow-v3"}
+        for ticker in ("1111.T", "2222.T")
+    ]
+    histories = dict.fromkeys(("1111.T", "2222.T"), history)
+    before = build_learning_report(observations, histories, history, promotion_strategy_version="jp-inflection-shadow-v3")
+    observations[0]["features"] = {"disclosure_age_days": 30}
+    after = build_learning_report(observations, histories, history, promotion_strategy_version="jp-inflection-shadow-v3")
+    assert after["promotion_gate"]["tests_in_family"] == before["promotion_gate"]["tests_in_family"] + 4
+    for horizon in ("h5", "h20", "h60", "h120"):
+        factor = next(row for row in after["promotion_factor_statistics"][horizon]
+                      if row["factor"] == "disclosure_age_band:le30")
+        assert factor["bh_q_value"] is not None
+    assert after["lessons"] == before["lessons"]
+
+
 def test_main_fetches_once_over_the_shared_window_for_cli_given_snapshot_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

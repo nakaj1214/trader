@@ -8,10 +8,32 @@ import pandas as pd
 import pytest
 
 from src.data.live_quote import TodayQuote
-from src.monitoring.position_exit import StaleQuoteError, evaluate_position
+from src.monitoring.position_exit import StaleQuoteError, _return_20d_pct, evaluate_position
 
 JST = ZoneInfo("Asia/Tokyo")
 NOW = datetime(2026, 9, 8, 12, 35, tzinfo=JST)
+
+
+@pytest.mark.parametrize(("count", "expected"), [(19, None), (20, 50.0), (21, 50.0)])
+def test_twentieth_prior_close_is_used_for_the_overheating_return(count: int, expected: float | None) -> None:
+    closes = pd.Series([999.0] * max(0, count - 20) + [100.0] * min(count, 20))
+    assert _return_20d_pct(closes, 150.0) == expected
+
+
+def test_overheating_return_leaves_the_exit_decision_unchanged() -> None:
+    quote = _quote()
+    highs = pd.Series([120.0], index=pd.to_datetime(["2026-09-07"]))
+    statuses = []
+    for count in (19, 20):
+        closes = pd.Series([70.0] * count, index=pd.bdate_range(end="2026-09-07", periods=count))
+        statuses.append(evaluate_position(
+            100.0, "2026-07-01", highs, closes, quote, _bar_frame(quote), 10.0, NOW, "1111.T", in_session=False
+        ))
+    assert statuses[0].return_20d_pct is None
+    assert statuses[1].return_20d_pct == pytest.approx(60.0)
+    assert (statuses[0].triggered, statuses[0].exit_reason, statuses[0].stop_price) == (
+        statuses[1].triggered, statuses[1].exit_reason, statuses[1].stop_price
+    )
 
 
 def _quote(**changes: object) -> TodayQuote:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pandas as pd
@@ -32,6 +33,7 @@ from src.evaluation.inflection_forward import (
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
+from src.evaluation.inflection_report import _deflated_sharpe, _deflated_sharpe_report, _return_moments
 
 SECRET = "test-snapshot-secret"
 
@@ -507,6 +509,60 @@ def test_group_report_has_all_horizons_stops_and_aligned_breakdowns() -> None:
         -BENCHMARK_ROUND_TRIP_COST_PCT
     )
     assert trailing["benchmark_excess"]["evaluated"] == 1
+    assert report["deflated_sharpe"]["value"] is None
+    assert report["deflated_sharpe"]["trial_count"] == 0
+
+
+def test_return_moments_and_dsr_match_a_hand_calculated_reference() -> None:
+    # [0, 1, 2]: mean=1, sample variance=1, m2=2/3, m3=0, m4=2/3.
+    assert _return_moments([0.0, 1.0, 2.0]) == pytest.approx({"sharpe": 1.0, "skew": 0.0, "kurt": 1.5})
+    # N=2: first normal quantile is 0; second is 0.9004525966377901.
+    # SR0=0.25987767214029694, denominator=sqrt(1.125), z=1.2191447777542417.
+    assert _deflated_sharpe(0.5, 0.0, 3.0, 30, 0.25, 2) == pytest.approx(0.8886053764511643)
+    values = [_deflated_sharpe(0.5, 0.0, 3.0, 30, 0.25, count) for count in (2, 5, 10)]
+    assert all(value is not None for value in values)
+    assert values[0] > values[1] > values[2]
+
+
+def _dsr_trades(count: int = 30, offset: float = 0.0):
+    history = pd.DataFrame(
+        {"Open": [100.0] * 3, "High": [101.0] * 3, "Low": [99.0] * 3, "Close": [100.0] * 3},
+        index=pd.bdate_range("2026-01-05", periods=3),
+    )
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-05", "score": 80}, history, holding_days=1)
+    return [replace(trade, ticker=f"{index}.T", net_return_pct=float(index % 3 - 1) + offset) for index in range(count)]
+
+
+def test_dsr_report_selects_best_matured_rule_and_preserves_trades() -> None:
+    weaker, stronger = _dsr_trades(), _dsr_trades(offset=0.5)
+    report = _deflated_sharpe_report({"weaker": weaker, "stronger": stronger, "short": _dsr_trades(29)})
+    assert report["best_rule"] == "stronger" and report["trial_count"] == 2 and report["trade_count"] == 30
+    # Best SR=sqrt(29/80), variance across the two SRs=0.18125, skew=0, kurt=1.5.
+    assert report["value"] == pytest.approx(0.9775580905962915)
+    assert stronger[0].net_return_pct == -0.5 and stronger[0].horizon_matured is True
+
+
+@pytest.mark.parametrize("case", ["few_trades", "one_rule", "overlapping", "censored", "constant", "non_finite"])
+def test_dsr_report_explains_why_it_cannot_be_computed(case: str) -> None:
+    trades = _dsr_trades(29 if case == "few_trades" else 30)
+    if case == "overlapping":
+        trades = [replace(trade, ticker="same.T") for trade in trades]
+    if case == "censored":
+        trades = [replace(trade, horizon_matured=False) for trade in trades]
+    if case in ("constant", "non_finite"):
+        trades = [replace(trade, net_return_pct=1.0 if case == "constant" else float("nan")) for trade in trades]
+    rules = {"first": trades} if case == "one_rule" else {"first": trades, "second": trades}
+    report = _deflated_sharpe_report(rules)
+    assert report["value"] is None and report["reason"]
+
+
+def test_dsr_invalid_inputs_do_not_break_report_generation() -> None:
+    assert _deflated_sharpe(1.0, 0.0, 3.0, 29, 0.25, 2) is None
+    assert _deflated_sharpe(1.0, 0.0, 3.0, 30, 0.25, 1) is None
+    assert _deflated_sharpe(1.0, 3.0, 1.0, 30, 0.25, 2) is None
+    assert _deflated_sharpe(1.0, 0.0, 3.0, 30, -1.0, 2) is None
+    assert _return_moments([float("inf"), 1.0]) is None
+    assert _return_moments([1.0]) is None
 
 
 def test_report_breakdowns_exclude_incomplete_trades() -> None:

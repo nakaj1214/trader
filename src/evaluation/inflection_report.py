@@ -6,6 +6,8 @@ paths build identically shaped group reports.
 
 from __future__ import annotations
 
+import math
+from statistics import NormalDist, mean, pvariance, stdev, variance
 from typing import Any
 
 import pandas as pd
@@ -41,6 +43,8 @@ STRESS_ROUND_TRIP_COST_PCT = 1.2
 BENCHMARK_ROUND_TRIP_COST_PCT = 0.05
 TAX_RATE_PCT = 20.315
 NEW_EXIT_HOLDING_DAYS = 126
+DSR_MIN_TRADES = 30
+EULER_MASCHERONI = 0.5772156649015329
 # Candidate exit rules compared alongside the fixed-percentage trailing stops. Their parameters are fixed
 # in advance; they are not searched, so a good-looking cell is not evidence of a tuned optimum.
 NEW_EXIT_RULES: dict[str, ExitRule] = {
@@ -175,6 +179,81 @@ def _exit_strategy_report(
     }
 
 
+def _return_moments(returns: list[float]) -> dict[str, float] | None:
+    """Sample Sharpe and standardized central moments (Pearson kurtosis, normal = 3)."""
+    if len(returns) < 2 or not all(math.isfinite(value) for value in returns):
+        return None
+    try:
+        average = mean(returns)
+        sample_std = stdev(returns)
+        moment_std = math.sqrt(pvariance(returns))
+        if sample_std == 0 or moment_std == 0:
+            return None
+        standardized = [(value - average) / moment_std for value in returns]
+        moments = {
+            "sharpe": average / sample_std,
+            "skew": mean(value**3 for value in standardized),
+            "kurt": mean(value**4 for value in standardized),
+        }
+        return moments if all(math.isfinite(value) for value in moments.values()) else None
+    except (OverflowError, ValueError):
+        return None
+
+
+def _deflated_sharpe(
+    sharpe: float, skew: float, kurt: float, trade_count: int, sharpe_variance: float, trial_count: int
+) -> float | None:
+    """Bailey & López de Prado (2014), equation 2; returns are not annualized."""
+    if trial_count < 2 or trade_count < DSR_MIN_TRADES:
+        return None
+    try:
+        normal = NormalDist()
+        expected_max = math.sqrt(sharpe_variance) * (
+            (1.0 - EULER_MASCHERONI) * normal.inv_cdf(1.0 - 1.0 / trial_count)
+            + EULER_MASCHERONI * normal.inv_cdf(1.0 - 1.0 / (trial_count * math.e))
+        )
+        denominator = 1.0 - skew * sharpe + (kurt - 1.0) / 4.0 * sharpe**2
+        if denominator <= 0:
+            return None
+        z = (sharpe - expected_max) * math.sqrt(trade_count - 1) / math.sqrt(denominator)
+        return normal.cdf(z) if math.isfinite(z) else None
+    except (OverflowError, ValueError):
+        return None
+
+
+def _deflated_sharpe_report(rule_trades: dict[str, list[TradeResult]]) -> dict[str, Any]:
+    eligible: dict[str, list[float]] = {}
+    for rule, trades in rule_trades.items():
+        selected = select_non_overlapping_trades(filter_matured(trades))
+        returns = [float(trade.net_return_pct) for trade in selected if trade.net_return_pct is not None]
+        if len(returns) >= DSR_MIN_TRADES:
+            eligible[rule] = returns
+    trial_count = len(eligible)
+    caveat = "Reference only: assumes independent trades and trials; does not select an exit rule automatically."
+    if trial_count < 2:
+        return {"value": None, "reason": "fewer_than_two_rules_with_30_matured_non_overlapping_trades", "trial_count": trial_count}
+    moments = {rule: _return_moments(returns) for rule, returns in eligible.items()}
+    if any(value is None for value in moments.values()):
+        return {"value": None, "reason": "zero_return_std_or_invalid_moments", "trial_count": trial_count}
+    valid = {rule: value for rule, value in moments.items() if value is not None}
+    best_rule = max(valid, key=lambda rule: valid[rule]["sharpe"])
+    best = valid[best_rule]
+    trade_count = len(eligible[best_rule])
+    value = _deflated_sharpe(
+        best["sharpe"], best["skew"], best["kurt"], trade_count,
+        variance(item["sharpe"] for item in valid.values()), trial_count,
+    )
+    return {
+        "value": value,
+        "reason": None if value is not None else "invalid_dsr_denominator_or_non_finite_result",
+        "best_rule": best_rule,
+        **best,
+        "trial_count": trial_count,
+        "trade_count": trade_count,
+        "caveat": caveat,
+    }
+
+
 def _build_group_report(
     signals: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
@@ -225,6 +304,7 @@ def _build_group_report(
         }
 
     exit_strategies: dict[str, object] = {}
+    base_rule_trades: dict[str, list[TradeResult]] = {}
     for trailing_stop_pct in (10.0, 15.0, 20.0):
         for holding_days in (60, 126, 252):
             trades = simulate_signals(
@@ -243,7 +323,9 @@ def _build_group_report(
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
             )
-            exit_strategies[f"trailing_{int(trailing_stop_pct)}pct_h{holding_days}"] = _exit_strategy_report(
+            key = f"trailing_{int(trailing_stop_pct)}pct_h{holding_days}"
+            base_rule_trades[key] = trades
+            exit_strategies[key] = _exit_strategy_report(
                 trades,
                 stress_trades,
                 rule="prior_confirmed_high_water_mark",
@@ -278,8 +360,10 @@ def _build_group_report(
             max_holding_days=NEW_EXIT_HOLDING_DAYS,
             benchmark_history=benchmark_history,
         )
+        base_rule_trades[key] = rule_trades
     return {
         "signal_count": len(signals),
         "horizons": horizons,
         "exit_strategies": exit_strategies,
+        "deflated_sharpe": _deflated_sharpe_report(base_rule_trades),
     }

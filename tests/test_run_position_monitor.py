@@ -458,3 +458,47 @@ def test_unreadable_or_non_numeric_warning_state_is_ignored(monkeypatch: pytest.
         run(dry_run=False, evaluated_at=NOW)
 
     assert len(_warning_posts(deps)) == 1  # junk does not suppress the warning
+
+
+@pytest.mark.parametrize(("count", "reference", "warn"), [(20, 80.0, True), (20, 84.0, False), (19, 80.0, False)])
+def test_overheating_warning_boundaries_and_deduplication(
+    monkeypatch: pytest.MonkeyPatch, count: int, reference: float, warn: bool
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    closes = pd.Series([reference] * count, index=pd.bdate_range(end="2026-09-07", periods=count))
+    history = SplitAdjustedHistory(100.0, pd.Series(dtype=float), closes)
+    with _dependencies([HOLDING], bars=FAR_BARS, quote=FAR_QUOTE) as deps:
+        deps["fetch_history"].return_value = history
+        run(dry_run=False, evaluated_at=NOW)
+        rows = _written(deps)
+    texts = [call.kwargs["json"]["text"] for call in deps["post"].call_args_list]
+    assert bool(texts) is warn
+    if warn:
+        assert len(texts) == 1 and "1111.T: 過熱: 20日で +56.2%" in texts[0]
+        assert rows[0]["last_warned_at"] == NOW.isoformat()
+        with _dependencies([HOLDING], previous=rows, bars=FAR_BARS, quote=FAR_QUOTE) as second:
+            second["fetch_history"].return_value = history
+            run(dry_run=False, evaluated_at=NOW)
+        second["post"].assert_not_called()
+
+
+def test_overheating_and_stop_proximity_share_one_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    # The same ticker can have different stop distances across purchase dates.
+    closes = pd.Series([70.0] * 20, index=pd.bdate_range(end="2026-09-07", periods=20))
+    with _dependencies([HOLDING, OTHER_ENTRY], bars=NEAR_BARS, quote=NEAR_QUOTE) as deps:
+        deps["fetch_history"].return_value = SplitAdjustedHistory(100.0, pd.Series(dtype=float), closes)
+        run(dry_run=False, evaluated_at=NOW)
+    (text,) = _warning_posts(deps)
+    assert text.count("1111.T") == 1 and "残り" in text and "過熱: 20日で" in text
+    assert [row["last_warned_at"] for row in _written(deps)] == [NOW.isoformat()] * 2
+
+
+def test_exactly_fifty_percent_is_an_overheating_candidate() -> None:
+    from scripts.run_position_monitor import _warning_candidates
+
+    row = {"ticker": "1111.T", "triggered": False, "distance_to_stop_pct": 10.0, "return_20d_pct": 50.0}
+    assert len(_warning_candidates([row], {})) == 1
+    assert _warning_candidates([{**row, "return_20d_pct": 49.999}], {}) == []
+    assert _warning_candidates([row], {"1111.T": NOW}) == []
+    assert _warning_candidates([{**row, "triggered": True}], {}) == []

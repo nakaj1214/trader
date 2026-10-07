@@ -428,6 +428,8 @@ def test_scan_raises_diagnostic_error_after_retries_are_exhausted() -> None:
         "latest_coverage": "50.0%",
         "failed_gate": "latest_coverage",
         "attempts": "3",
+        "latest_dates": f"{expected_date}:1,{stale.index[-1].date()}:1",
+        "dropped_future_bars": "0",
     }
 
 
@@ -592,13 +594,18 @@ def test_negative_control_sample_size_is_rejected() -> None:
         scan_japan_inflection(client=MultiCodeFakeClient(), control_sample_size=-1)
 
 
-def test_scan_output_satisfies_validator_and_both_loaders(tmp_path) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize("include_new_features", [True, False])
+def test_scan_output_satisfies_validator_and_both_loaders(tmp_path, include_new_features: bool) -> None:  # type: ignore[no-untyped-def]
     from scripts.run_inflection_shadow import _validate_schema5_row
     from src.data.snapshot_crypto import encrypt_json
     from src.evaluation.inflection_forward import load_inflection_signals
     from src.evaluation.inflection_learning import load_inflection_learning_observations
 
     report = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
+    if not include_new_features:
+        for row in report["candidates"] + report["control_sample"]:  # type: ignore[operator]
+            for key in NEW_DIAGNOSTIC_KEYS[:8]:
+                row["features"].pop(key)
     for row in report["candidates"] + report["control_sample"]:  # type: ignore[operator]
         _validate_schema5_row(row, "scan row")
 
@@ -616,6 +623,14 @@ def test_scan_output_satisfies_validator_and_both_loaders(tmp_path) -> None:  # 
 # --- REQ-050: diagnostics recorded for later study -----------------------------------------------------
 
 NEW_DIAGNOSTIC_KEYS = (
+    "quarterly_sales_growth_yoy_pct",
+    "quarterly_op_growth_yoy_pct",
+    "quarterly_sales_growth_accel_pctpt",
+    "quarterly_op_growth_accel_pctpt",
+    "sector33_return_20d_pct",
+    "sector33_return_60d_pct",
+    "relative_return_20d_vs_sector_pct",
+    "relative_return_60d_vs_sector_pct",
     "forecast_disclosure_date",
     "disclosure_age_days",
     "forecast_age_days",
@@ -752,3 +767,189 @@ def test_no_financials_means_no_disclosure_ages() -> None:
     features = _scan_multi(client, deep_candidates=1, control_sample_size=0)["candidates"][0]["features"]  # type: ignore[index]
 
     assert features["disclosure_age_days"] is None and features["forecast_age_days"] is None
+
+
+def test_scan_discards_future_bars_on_initial_fetch_and_retry() -> None:
+    current = _price_frame()
+    expected = str(current.index[-1].date())
+    future = pd.concat([current, current.tail(1).set_axis([current.index[-1] + pd.offsets.BDay()])])
+    future.iloc[-1, 0] = 10_000_000.0
+    client = FakeJQuantsClient()
+    for initial in (future, current.iloc[:-1]):
+        with (
+            patch("src.screening.inflection_live.fetch_price_data", side_effect=[{"1111.T": initial}, {"1111.T": future}]),
+            patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected),
+            patch.dict("os.environ", {"INFLECTION_PRICE_RETRY_COUNT": "1", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"}),
+        ):
+            report = scan_japan_inflection(client=client, deep_candidates=1, min_turnover_jpy=0)
+        assert report["latest_price_date_count"] == 1
+        assert report["candidates"][0]["current_price"] == float(current["Close"].iloc[-1])
+        assert report["latest_date_histogram"] == {expected: 1}
+    pd.testing.assert_frame_equal(future.iloc[:-1], current, check_freq=False)
+
+
+def test_drop_future_bars_preserves_timezone_and_handles_unparseable_index() -> None:
+    from src.screening.inflection_live import _drop_future_bars
+
+    frame = _price_frame(22)
+    frame.index = frame.index.tz_localize("Asia/Tokyo")
+    prices = {"A.T": frame, "invalid": frame.set_axis(["bad"] * len(frame))}
+    assert _drop_future_bars(prices, str(frame.index[-2].date())) == {"A.T"}
+    pd.testing.assert_frame_equal(prices["A.T"], frame.iloc[:-1])
+    assert len(prices["invalid"]) == len(frame)
+
+
+def test_failure_histogram_is_redacted_and_counts_unique_trimmed_tickers(capsys: pytest.CaptureFixture[str]) -> None:
+    current = _price_frame()
+    future_only = current.tail(1).set_axis([current.index[-1] + pd.offsets.BDay()])
+    with (
+        patch("src.screening.inflection_live.fetch_price_data", return_value={"1111.T": future_only}),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=str(current.index[-1].date())),
+        patch.dict("os.environ", {"INFLECTION_PRICE_RETRY_COUNT": "1", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"}),
+        pytest.raises(PriceDataRetryExhausted) as raised,
+    ):
+        scan_japan_inflection(client=FakeJQuantsClient())
+    assert raised.value.details["latest_dates"] == ""
+    assert raised.value.details["dropped_future_bars"] == "1"
+    captured = capsys.readouterr()
+    assert "latest_dates=" in captured.out
+    assert "1111.T" not in captured.out + captured.err + str(raised.value)
+
+
+def _quarter_rows() -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for year, sales, profits in ((2024, [100, 200, 300, 400], [10, 20, 30, 40]),
+                                (2025, [110, 240, 390, 560], [12, 26, 42, 60])):
+        start = pd.Timestamp(f"{year - 1}-04-01")
+        for q, period in enumerate(("1Q", "2Q", "3Q", "FY"), start=1):
+            end = start + pd.DateOffset(months=3 * q) - pd.Timedelta(days=1)
+            rows.append({
+                "Code": "11110", "DiscDate": str((end + pd.Timedelta(days=30)).date()), "DiscTime": "15:00",
+                "CurPerType": period, "CurFYEn": f"{year}-03-31",
+                "CurPerSt": str(start.date()), "CurPerEn": str(end.date()),
+                "DocType": f"{period}FinancialStatements_Consolidated_JP",
+                "Sales": sum(sales[:q]), "OP": sum(profits[:q]),
+            })
+    return rows
+
+
+@pytest.mark.parametrize(("period", "sales_growth", "op_growth", "accel"), [
+    ("1Q", 10.0, 20.0, None), ("2Q", 20.0, 30.0, 10.0),
+    ("3Q", 30.0, 40.0, 10.0), ("FY", 40.0, 50.0, 10.0),
+])
+def test_quarterly_growth_uses_standalone_values(period: str, sales_growth: float, op_growth: float,
+                                                accel: float | None) -> None:
+    rows = _quarter_rows()
+    cutoff = next(str(r["DiscDate"]) for r in rows if r["CurFYEn"] == "2025-03-31" and r["CurPerType"] == period)
+    features = _fundamental_features([r for r in rows if str(r["DiscDate"]) <= cutoff])
+    assert features["quarterly_sales_growth_yoy_pct"] == pytest.approx(sales_growth)
+    assert features["quarterly_op_growth_yoy_pct"] == pytest.approx(op_growth)
+    for label in ("sales", "op"):
+        value = features[f"quarterly_{label}_growth_accel_pctpt"]
+        assert value is None if accel is None else value == pytest.approx(accel)
+
+
+@pytest.mark.parametrize("missing_period", ["1Q", "2Q", "3Q"])
+def test_quarterly_missing_previous_cumulative_is_not_zero(missing_period: str) -> None:
+    rows = _quarter_rows()
+    periods = ["1Q", "2Q", "3Q", "FY"]
+    target = periods[periods.index(missing_period) + 1]
+    cutoff = next(str(r["DiscDate"]) for r in rows if r["CurFYEn"] == "2025-03-31" and r["CurPerType"] == target)
+    rows = [r for r in rows if str(r["DiscDate"]) <= cutoff and
+            not (r["CurFYEn"] == "2025-03-31" and r["CurPerType"] == missing_period)]
+    features = _fundamental_features(rows)
+    assert features["quarterly_sales_growth_yoy_pct"] is None
+    assert features["quarterly_sales_growth_accel_pctpt"] is None
+
+
+@pytest.mark.parametrize("profit", [0, -5])
+def test_quarterly_nonpositive_prior_profit_is_missing(profit: int) -> None:
+    rows = _quarter_rows()
+    previous = next(r for r in rows if r["CurFYEn"] == "2024-03-31" and r["CurPerType"] == "FY")
+    previous["OP"] = 60 + profit  # Previous 3Q's cumulative profit is 60.
+    features = _fundamental_features(rows)
+    assert features["quarterly_op_growth_yoy_pct"] is None
+    assert features["quarterly_op_growth_accel_pctpt"] is None
+
+
+def test_quarterly_first_quarter_acceleration_crosses_fiscal_year() -> None:
+    rows = _quarter_rows()
+    rows.append({"Code": "11110", "DiscDate": "2025-07-30", "DiscTime": "15:00", "CurPerType": "1Q",
+                 "CurFYEn": "2026-03-31", "DocType": "1QFinancialStatements_Consolidated_JP",
+                 "Sales": 180, "OP": 24})
+    features = _fundamental_features(rows)
+    assert features["quarterly_sales_growth_accel_pctpt"] == pytest.approx((180 / 110 - 1) * 100 - 40)
+    assert features["quarterly_op_growth_accel_pctpt"] == pytest.approx(50)
+
+
+def test_quarterly_corrections_basis_and_point_in_time() -> None:
+    from src.evaluation.inflection_historical import FinancialsStore
+
+    rows = _quarter_rows()
+    latest = rows[-1]
+    revised = {**latest, "DiscDate": "2025-05-01", "Sales": 1400}
+    foreign = {**rows[-2], "DiscDate": "2025-04-30", "DocType": "3QFinancialStatements_NonConsolidated_JP",
+               "Sales": 9999}
+    source = FinancialsStore([*rows, revised, foreign])
+    before = _fundamental_features(source.view("2025-04-30", "disclosure").financial_summary("11110"))
+    after = _fundamental_features(source.view("2025-05-01", "disclosure").financial_summary("11110"))
+    # On 4/30 the latest actual is the non-consolidated 3Q, which has no comparable history.
+    assert before["quarterly_sales_growth_yoy_pct"] is None
+    assert after["quarterly_sales_growth_yoy_pct"] == pytest.approx(65)
+    live_bounded = _fundamental_features([*rows, revised], as_of="2025-04-30")
+    assert live_bounded["quarterly_sales_growth_yoy_pct"] == pytest.approx(40)
+    assert live_bounded["revenue_growth_yoy_pct"] == pytest.approx(40)  # legacy uses the latest revision (1400/1000).
+
+
+def test_quarterly_irregular_period_and_invalid_values_stay_missing() -> None:
+    rows = _quarter_rows()
+    rows[-1]["CurPerSt"] = "2024-07-01"  # A short fiscal year is not a normal 4Q.
+    assert _fundamental_features(rows)["quarterly_sales_growth_yoy_pct"] is None
+    rows[-1].pop("CurPerSt")
+    rows[-1]["Sales"] = float("nan")
+    assert _fundamental_features(rows)["quarterly_sales_growth_yoy_pct"] is None
+
+
+def test_quarterly_accepts_fourth_quarter_alias() -> None:
+    rows = _quarter_rows()
+    rows[-1]["CurPerType"] = "4Q"
+    assert _fundamental_features(rows)["quarterly_sales_growth_yoy_pct"] == pytest.approx(40)
+
+
+def test_sector_median_includes_illiquid_names_and_both_candidate_pools() -> None:
+    from src.screening.inflection_live import select_and_evaluate
+
+    prices = {f"{n}.T": _frame_from_returns([0.0] * 40 + [value / 20] * 20)
+              for n, value in enumerate((0.0, 0.1, 0.2, 0.3, 9.0))}
+    meta = {ticker: {"Code": "11110", "S33": "3650"} for ticker in prices}
+    prices["4.T"]["Volume"] = 0  # The outlier is illiquid but belongs to the sector sample.
+    prices["B.T"] = _frame_from_returns([0.0] * 60)
+    meta["B.T"] = {"Code": "11110", "S33": "9999"}
+    prices["C.T"] = _frame_from_returns([0.0] * 60)
+    meta["C.T"] = {"Code": "11110"}
+    selected = select_and_evaluate(prices, meta, FakeJQuantsClient(), seed_date="2026-04-01", deep_candidates=2,
+                                   min_turnover_jpy=1, control_sample_size=20, fundamental_limitation="test")
+    median_return = ((1 + 0.2 / 20) ** 20 - 1) * 100
+    for candidate in [*selected.candidates, *selected.control_sample]:
+        if meta[candidate.ticker].get("S33") == "3650":
+            assert candidate.features["sector33_return_20d_pct"] == pytest.approx(median_return)
+            assert candidate.features["relative_return_20d_vs_sector_pct"] == pytest.approx(
+                candidate.return_20d_pct - median_return)
+            assert candidate.features["sector33_return_60d_pct"] == pytest.approx(median_return)
+        else:
+            assert candidate.features["sector33_return_20d_pct"] is None
+            assert candidate.features["relative_return_60d_vs_sector_pct"] is None
+
+
+@pytest.mark.parametrize("count", [4, 5])
+def test_sector_threshold_and_missing_long_history(count: int) -> None:
+    client = MultiCodeFakeClient(count=count)
+    report = _scan_multi(client, periods=21, deep_candidates=2, control_sample_size=10)
+    for row in report["candidates"] + report["control_sample"]:  # type: ignore[operator]
+        features = row["features"]
+        if row["sector33_code"] == "3650" and count == 5:
+            assert features["sector33_return_20d_pct"] is not None
+        else:
+            assert features["sector33_return_20d_pct"] is None
+        assert features["sector33_return_60d_pct"] is None
+        assert features["relative_return_60d_vs_sector_pct"] is None

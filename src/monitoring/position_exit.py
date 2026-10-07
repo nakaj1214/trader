@@ -43,6 +43,7 @@ class PositionStatus:
     max_drawdown_pct: float | None
     triggered: bool
     exit_reason: str | None
+    return_20d_pct: float | None = None
 
 
 def _positive(value: Any, name: str) -> float:
@@ -61,6 +62,13 @@ def _prices(values: pd.Series, name: str) -> pd.Series:
     if result.index.isna().any():
         raise ValueError(f"{name} contains an invalid timestamp")
     return result.sort_index()
+
+
+def _return_20d_pct(closes: pd.Series, current_price: float) -> float | None:
+    """The current quote is day 0, so the 20th preceding close is day -20."""
+    if len(closes) < 20:
+        return None
+    return (current_price / float(closes.iloc[-20]) - 1.0) * 100.0
 
 
 def _minute_bars(values: pd.DataFrame, quote_at: datetime, evaluated_at: datetime) -> pd.DataFrame:
@@ -179,4 +187,5 @@ def evaluate_position(
         max_drawdown_pct=round(drawdown, 6) if drawdown is not None else None,
         triggered=triggered,
         exit_reason=exit_reason,
+        return_20d_pct=_return_20d_pct(closes, last),
     )

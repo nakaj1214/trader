@@ -100,11 +100,27 @@ def test_full_run_writes_a_report_and_a_ticker_free_summary(tmp_path: Path, caps
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["signal_days"] == len([d for d in DATES if d >= DATES[295]]) == 5
     assert set(out["kill_criterion"]) == {"disclosure", "free_12w"}
-    full = json.loads((tmp_path / "artifacts/inflection_historical_backtest.json").read_text(encoding="utf-8"))
     summary_text = (tmp_path / "artifacts/inflection_historical_backtest_summary.json").read_text(encoding="utf-8")
-    assert full["lags"]["disclosure"]["groups"]["control"]["signal_count"] > 0
+    summary = json.loads(summary_text)
+    assert summary["lags"]["disclosure"]["groups"]["control"]["signal_count"] > 0
     assert '"trades"' not in summary_text
     assert not any(f"{c[:4]}.T" in summary_text for c in CODES)
+    # By default only the small aggregate file is written: the per-trade report needs far more memory.
+    assert out["output"] is None and not (tmp_path / "artifacts/inflection_historical_backtest.json").exists()
+
+
+def test_include_trades_also_streams_the_full_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_cache(tmp_path)
+
+    assert main(["--repo-root", str(tmp_path), "--signal-start", DATES[298], "--include-trades"]) == 0
+
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    full_path = tmp_path / "artifacts/inflection_historical_backtest.json"
+    assert out["output"] == str(full_path)
+    full = json.loads(full_path.read_text(encoding="utf-8"))
+    assert full["lags"]["disclosure"]["groups"]["control"]["signal_count"] > 0
+    assert '"trades"' in full_path.read_text(encoding="utf-8")  # the trade rows are only in this file
+    assert (tmp_path / "artifacts/inflection_historical_backtest_summary.json").exists()
 
 
 def test_no_scan_days_is_an_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

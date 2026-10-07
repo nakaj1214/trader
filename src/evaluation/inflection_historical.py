@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import random
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from statistics import mean
@@ -188,21 +188,33 @@ class BarPanel:
 
 
 class MasterHistory:
-    def __init__(self, masters: dict[str, list[dict[str, Any]]]) -> None:
-        self._days = sorted(masters)
+    def __init__(
+        self,
+        masters: Mapping[str, list[dict[str, Any]]] | Iterable[tuple[str, list[dict[str, Any]]]],
+    ) -> None:
+        """Keep only the fields scans use, one master day at a time.
+
+        Days are consumed one by one (so raw rows are never all in memory at once), and a row that is
+        identical on several days is stored once and shared: 188 daily masters of ~4,400 rows differ by a
+        handful of listings, and holding each separately took over a gigabyte.
+        """
+        pairs = masters.items() if isinstance(masters, Mapping) else masters
         self._meta: dict[str, dict[str, dict[str, Any]]] = {}
-        for day, rows in masters.items():
+        shared: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for day, rows in pairs:
             meta: dict[str, dict[str, Any]] = {}
             for row in rows:
                 code = str(row.get("Code") or "")
                 if str(row.get("Mkt") or "") not in JP_MARKET_CODES or not _is_ordinary_code(code):
                     continue
-                meta[_ticker_from_code(code)] = {key: row.get(key) for key in MASTER_FIELDS}
+                fields = tuple(row.get(key) for key in MASTER_FIELDS)
+                meta[_ticker_from_code(code)] = shared.setdefault(fields, dict(zip(MASTER_FIELDS, fields, strict=True)))
             self._meta[day] = meta
+        self._days = sorted(self._meta)
 
     @classmethod
     def from_cache(cls, cache: HistoryCache) -> MasterHistory:
-        return cls({day: cache.read("master", day) for day in cache.days("master")})
+        return cls((day, cache.read("master", day)) for day in cache.days("master"))
 
     def as_of(self, day: str) -> tuple[str, dict[str, dict[str, Any]]]:
         """The latest master dated on or before ``day`` (never a later one)."""
@@ -635,8 +647,11 @@ def build_backtest_report(
     min_turnover_jpy: float = 100_000_000,
     control_sample_size: int = DEFAULT_CONTROL_SAMPLE_SIZE,
     min_independent: int = DEFAULT_MIN_INDEPENDENT,
+    include_trades: bool = True,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
+    """Assemble the report. ``include_trades=False`` drops every per-trade row as soon as a lag is evaluated,
+    which keeps the peak memory to one lag's rows instead of both (the rows dominate it)."""
     histories = data.panel.evaluation_histories()
     if BENCHMARK_TICKER not in histories:
         raise RuntimeError(f"benchmark {BENCHMARK_TICKER} is not in the cached daily bars")
@@ -660,6 +675,8 @@ def build_backtest_report(
             benchmark_history,
             min_independent=min_independent,
         )
+        if not include_trades:
+            lag_reports[lag] = _summary_only(lag_reports[lag])
         log(f"evaluated lag={lag}: kill_criterion={lag_reports[lag]['kill_criterion']['verdict']}")
     return {
         "report_type": "inflection_historical_backtest",

@@ -94,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--signal-start", help="first scan day (default: price and fundamentals warm-up)")
     parser.add_argument("--min-independent", type=int, default=DEFAULT_MIN_INDEPENDENT)
     parser.add_argument("--output", default="artifacts/inflection_historical_backtest.json")
+    parser.add_argument(
+        "--include-trades",
+        action="store_true",
+        help="also write the full report with every trade row (hundreds of thousands of rows; needs lots of memory)",
+    )
     parser.add_argument("--summary-output", default="artifacts/inflection_historical_backtest_summary.json")
     args = parser.parse_args(argv)
 
@@ -130,22 +135,30 @@ def main(argv: list[str] | None = None) -> int:
     if not days:
         print("No scan days: the cache lacks 252 days of prices or enough fundamentals history.", file=sys.stderr)
         return 1
-    report = build_backtest_report(data, days, min_independent=args.min_independent)
+    report = build_backtest_report(
+        data, days, min_independent=args.min_independent, include_trades=args.include_trades
+    )
 
-    output = repo_root / args.output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # The aggregates are small and are the result, so they are written first: a crash while writing the huge
+    # per-trade file (an out-of-memory kill took WSL down once) can no longer lose them.
     summary_output = repo_root / args.summary_output
+    summary_output.parent.mkdir(parents=True, exist_ok=True)
     summary_output.write_text(
         json.dumps(summary_report(report), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    output: Path | None = None
+    if args.include_trades:
+        output = repo_root / args.output
+        with output.open("w", encoding="utf-8") as handle:
+            json.dump(report, handle, ensure_ascii=False)  # streamed in pieces: no giant in-memory string
+            handle.write("\n")
     print(
         json.dumps(
             {
                 "signal_days": len(days),
                 "kill_criterion": {lag: item["kill_criterion"]["verdict"] for lag, item in report["lags"].items()},
                 "lag_difference": (report["lag_comparison"] or {}).get("difference"),
-                "output": str(output),
+                "output": str(output) if output else None,
                 "summary_output": str(summary_output),
             },
             ensure_ascii=False,

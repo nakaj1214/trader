@@ -547,3 +547,47 @@ def test_the_two_lags_classify_the_same_day_differently_when_the_filing_is_recen
         score_now = next(r["score"] for r in now["candidates"] if r["ticker"] == ticker)
         score_delayed = next(r["score"] for r in delayed["candidates"] if r["ticker"] == ticker)
         assert score_now > score_delayed
+
+
+# --- memory: shared master rows and optional trade rows --------------------------------------------------
+
+
+def test_master_rows_identical_on_several_days_are_stored_once_without_changing_results() -> None:
+    day1, day2, day3 = "2026-02-02", "2026-02-03", "2026-02-04"
+    moved = [{**row, "Mkt": "0113", "MktNm": "Growth"} if row["Code"] == CODES[0] else row for row in _master()]
+    masters = MasterHistory({day1: _master(), day2: _master(), day3: moved})
+
+    _, first = masters.as_of(day1)
+    _, second = masters.as_of(day2)
+    _, third = masters.as_of(day3)
+
+    assert all(first[t] is second[t] for t in first)  # identical rows: one shared object
+    assert third["1111.T"] is not first["1111.T"] and third["1111.T"]["MktNm"] == "Growth"  # a changed row is its own
+    assert third["2222.T"] is first["2222.T"]
+    assert first["1111.T"]["MktNm"] == "Prime"  # the change did not leak back into earlier days
+
+
+def test_master_history_accepts_a_one_pass_iterator_of_days() -> None:
+    days = iter([("2026-02-03", _master()), ("2026-02-02", _master())])  # also out of order
+
+    masters = MasterHistory(days)
+
+    assert masters.as_of("2026-02-02")[0] == "2026-02-02" and masters.as_of("2026-02-10")[0] == "2026-02-03"
+    with pytest.raises(ValueError, match="no master"):
+        masters.as_of("2026-01-01")
+
+
+def test_dropping_trade_rows_keeps_every_aggregate_identical() -> None:
+    import json
+
+    from src.evaluation.inflection_historical import build_backtest_report, summary_report
+
+    days = DATES[255:259]
+    kwargs = {"deep_candidates": 2, "min_turnover_jpy": 0, "control_sample_size": 3, "log": lambda _: None}
+
+    full = build_backtest_report(_data(), days, **kwargs)  # type: ignore[arg-type]
+    lean = build_backtest_report(_data(), days, include_trades=False, **kwargs)  # type: ignore[arg-type]
+
+    assert '"trades"' in json.dumps(full) and '"trades"' not in json.dumps(lean)
+    stable = {key: value for key, value in summary_report(full).items() if key != "generated_at"}
+    assert stable == {key: value for key, value in lean.items() if key != "generated_at"}

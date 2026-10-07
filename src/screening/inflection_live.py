@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from src.data.edinet import EdinetError, fetch_live_holder_filings, holder_filing_features
 from src.data.jquants_v2_client import JQuantsV2Client
 from src.data.market_calendar import expected_tse_session_date
 from src.data.yfinance_prices import fetch_price_data
@@ -71,6 +72,9 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "sector33_return_60d_pct": None,
     "relative_return_20d_vs_sector_pct": None,
     "relative_return_60d_vs_sector_pct": None,
+    "major_holder_filings_60d": None,
+    "major_holder_new_filings_60d": None,
+    "days_since_major_holder_filing": None,
 }
 TECH_DIAGNOSTIC_KEYS = (
     "max_daily_return_20d_pct",
@@ -454,6 +458,7 @@ def _evaluate_candidate(
     fundamental_limitation: str,
     as_of: str,
     sector_returns: dict[str, dict[int, float]] | None = None,
+    holder_filings: list[dict[str, Any]] | None = None,
 ) -> LiveCandidate:
     code = str(ticker_meta[ticker].get("Code") or "")
     fins = client.financial_summary(code)
@@ -490,11 +495,14 @@ def _evaluate_candidate(
         reasons.append("52週高値圏")
     if tech.get("near_listing_high"):
         reasons.append("上場来高値圏")
-    source = {
+    source: dict[str, Any] = {
         **fundamental,
         **{key: tech.get(key) for key in TECH_DIAGNOSTIC_KEYS},
         "disclosure_age_days": _age_days(as_of, fundamental.get("latest_actual_disclosure_date")),
         "forecast_age_days": _age_days(as_of, fundamental.get("forecast_disclosure_date")),
+        **holder_filing_features(
+            holder_filings, ticker, date.fromisoformat(as_of), datetime.fromisoformat(f"{as_of}T16:40:00+09:00"),
+        ),
     }
     sector = _clean_text(ticker_meta[ticker].get("S33"))
     for horizon in (20, 60):
@@ -562,6 +570,7 @@ def select_and_evaluate(
     min_turnover_jpy: float,
     control_sample_size: int,
     fundamental_limitation: str,
+    holder_filings: list[dict[str, Any]] | None = None,
 ) -> Selection:
     """Pick the deep candidates and the control sample from already-fetched prices.
 
@@ -606,6 +615,7 @@ def select_and_evaluate(
                 fundamental_limitation=fundamental_limitation,
                 as_of=seed_date,
                 sector_returns=sector_returns,
+                holder_filings=holder_filings,
             )
         )
 
@@ -628,6 +638,7 @@ def select_and_evaluate(
                     fundamental_limitation=fundamental_limitation,
                     as_of=seed_date,
                     sector_returns=sector_returns,
+                    holder_filings=holder_filings,
                 )
             control_sample.append(evaluated[ticker])
 
@@ -781,6 +792,16 @@ def scan_japan_inflection(
         if delay_weeks > 0
         else "財務データの公開時点と取得可能時点を一次情報で確認する必要がある"
     )
+    holder_filings = None
+    if os.getenv("EDINET_API_KEY", "").strip():
+        try:
+            holder_filings = fetch_live_holder_filings(expected_date)
+            # Validate all filing metadata before evaluating either candidate pool.
+            holder_filing_features(holder_filings, "", date.fromisoformat(expected_date),
+                                   datetime.fromisoformat(f"{expected_date}T16:40:00+09:00"))
+        except EdinetError as exc:
+            holder_filings = None
+            print(f"EDINET_UNAVAILABLE: {type(exc).__name__} days=60")
     selection = select_and_evaluate(
         prices,
         ticker_meta,
@@ -790,6 +811,7 @@ def scan_japan_inflection(
         min_turnover_jpy=min_turnover_jpy,
         control_sample_size=control_sample_size,
         fundamental_limitation=fundamental_limitation,
+        holder_filings=holder_filings,
     )
     candidates = selection.candidates
     control_sample = selection.control_sample

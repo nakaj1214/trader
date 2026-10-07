@@ -363,7 +363,8 @@ def test_validate_report_rejects_missing_control_metadata(override: dict) -> Non
 
 
 def test_validate_report_accepts_rows_carrying_the_diagnostic_features() -> None:
-    features = {"disclosure_age_days": 19, "up_day_ratio_60d": None, "max_daily_return_20d_pct": 4.2}
+    features = {"disclosure_age_days": 19, "up_day_ratio_60d": None, "max_daily_return_20d_pct": 4.2,
+                "major_holder_filings_60d": 2, "major_holder_new_filings_60d": 1, "days_since_major_holder_filing": None}
     report = _healthy_report_v5()
     report["candidates"] = [_v5_row("1111.T", features=features), _v5_row("2222.T")]
     report["control_sample"] = [_v5_row("3333.T", features=features), _v5_row("4444.T")]

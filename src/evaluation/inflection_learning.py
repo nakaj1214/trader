@@ -263,6 +263,12 @@ def factor_labels(observation: dict[str, Any]) -> list[str]:
             value = features.get(key)
             if value is not None and is_finite_number(value):
                 labels.append(f"{label}:{_bucket(float(value), cuts, bands)}")
+        count = features.get("major_holder_filings_60d")
+        if count is not None and is_finite_number(count) and float(count) >= 0:
+            labels.append("major_holder_filings_60d_band:" + _bucket(float(count), (1.0, 2.0), ("0", "1", "ge2")))
+        new_count = features.get("major_holder_new_filings_60d")
+        if new_count is not None and is_finite_number(new_count) and float(new_count) >= 0:
+            labels.append(f"major_holder_new_filings_60d:{bool(float(new_count) > 0)}")
     sector = observation.get("sector33_code")
     if isinstance(sector, str) and sector.strip():
         labels.append(f"sector33:{sector}")

@@ -296,7 +296,8 @@ def _v3_snapshot(directory, market_date: str, schema_version: int) -> None:
     payload["candidates"][0]["live_normalized_score"] = 80.0
     if schema_version == 5:
         payload["candidates"][0] |= {
-            "features": {"revenue_growth_yoy_pct": 12.5},
+            "features": {"revenue_growth_yoy_pct": 12.5, "major_holder_filings_60d": 2,
+                         "major_holder_new_filings_60d": 1, "days_since_major_holder_filing": None},
             "score_details": {"fundamental": 10.0},
             "pre_score": 33.3,
             "sector33_code": "3650",

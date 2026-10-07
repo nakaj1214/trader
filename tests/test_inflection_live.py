@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+from src.data.edinet import HOLDER_FEATURE_KEYS, EdinetError
 from src.screening.inflection_live import (
     FEATURE_DEFAULTS,
     LIVE_MEASURABLE_MAX_SCORE,
@@ -19,6 +20,12 @@ from src.screening.inflection_live import (
     _technical_features,
     scan_japan_inflection,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_edinet_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EDINET_API_KEY", raising=False)
+    monkeypatch.setattr("src.data.edinet.requests.get", lambda *a, **kw: pytest.fail("unexpected HTTP"))
 
 
 class FakeJQuantsClient:
@@ -604,7 +611,7 @@ def test_scan_output_satisfies_validator_and_both_loaders(tmp_path, include_new_
     report = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
     if not include_new_features:
         for row in report["candidates"] + report["control_sample"]:  # type: ignore[operator]
-            for key in NEW_DIAGNOSTIC_KEYS[:8]:
+            for key in (*NEW_DIAGNOSTIC_KEYS[:8], *HOLDER_FEATURE_KEYS):
                 row["features"].pop(key)
     for row in report["candidates"] + report["control_sample"]:  # type: ignore[operator]
         _validate_schema5_row(row, "scan row")
@@ -660,7 +667,7 @@ def test_diagnostics_do_not_change_scores_classifications_or_selection() -> None
 
     def stripped(rows: list[dict[str, object]]) -> list[dict[str, object]]:
         return [
-            {**row, "features": {k: v for k, v in row["features"].items() if k not in NEW_DIAGNOSTIC_KEYS}}  # type: ignore[attr-defined]
+            {**row, "features": {k: v for k, v in row["features"].items() if k not in (*NEW_DIAGNOSTIC_KEYS, *HOLDER_FEATURE_KEYS)}}  # type: ignore[attr-defined]
             for row in rows
         ]
 
@@ -673,6 +680,53 @@ def test_diagnostics_do_not_change_scores_classifications_or_selection() -> None
 
     assert hashlib.sha256(blob.encode()).hexdigest() == PRE_DIAGNOSTICS_FINGERPRINT
     assert set(NEW_DIAGNOSTIC_KEYS) <= set(report["candidates"][0]["features"])  # type: ignore[index]
+
+
+def test_edinet_changes_only_features_in_both_pools(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.run_inflection_shadow import _validate_schema5_row
+
+    before = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=7)
+    as_of = before["latest_price_date"]
+    rows = [{"docID": ticker, "ticker": ticker, "docTypeCode": "350", "formCode": "010000",
+             "submitDateTime": f"{as_of}T16:40:00", "withdrawalStatus": "0"}
+            for ticker in {row["ticker"] for row in before["candidates"] + before["control_sample"]}]
+    monkeypatch.setenv("EDINET_API_KEY", "private-test-key")
+    with patch("src.screening.inflection_live.fetch_live_holder_filings", return_value=rows) as fetch:
+        after = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=7)
+    fetch.assert_called_once_with(as_of)
+    for row in after["candidates"] + after["control_sample"]:
+        _validate_schema5_row(row, "scan row")
+    assert after["classification_counts"] == before["classification_counts"]
+    assert after["strategy_version"] == before["strategy_version"] == STRATEGY_VERSION
+    assert after["report_schema_version"] == before["report_schema_version"] == REPORT_SCHEMA_VERSION
+    for pool in ("candidates", "control_sample"):
+        assert [row["ticker"] for row in before[pool]] == [row["ticker"] for row in after[pool]]
+        for old, new in zip(before[pool], after[pool], strict=True):
+            assert {k: v for k, v in old.items() if k != "features"} == {k: v for k, v in new.items() if k != "features"}
+            assert {k: v for k, v in old["features"].items() if k not in HOLDER_FEATURE_KEYS} == {
+                k: v for k, v in new["features"].items() if k not in HOLDER_FEATURE_KEYS}
+            assert {key: new["features"][key] for key in HOLDER_FEATURE_KEYS} == {
+                "major_holder_filings_60d": 1, "major_holder_new_filings_60d": 1, "days_since_major_holder_filing": 0}
+
+
+@pytest.mark.parametrize("failure", ["no_key", "fetch", "metadata", "empty"])
+def test_edinet_best_effort_does_not_stop_scan_or_log_private_data(
+    failure: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    if failure != "no_key":
+        monkeypatch.setenv("EDINET_API_KEY", "private-test-key")
+    rows = [{"docID": "private-document", "docTypeCode": "350", "submitDateTime": "private-holder"}]
+    with patch("src.screening.inflection_live.fetch_live_holder_filings", return_value=rows if failure == "metadata" else [],
+               side_effect=EdinetError("private-holder private-test-key") if failure == "fetch" else None) as fetch:
+        report = _scan_multi(MultiCodeFakeClient(), deep_candidates=2, control_sample_size=2)
+    assert fetch.call_count == (failure != "no_key")
+    for row in report["candidates"] + report["control_sample"]:
+        assert row["features"]["major_holder_filings_60d"] == (0 if failure == "empty" else None)
+        assert row["features"]["major_holder_new_filings_60d"] == (0 if failure == "empty" else None)
+        assert row["features"]["days_since_major_holder_filing"] is None
+    output = capsys.readouterr().out
+    assert all(secret not in output for secret in ("private-test-key", "private-holder", "private-document"))
+    assert ("EDINET_UNAVAILABLE: EdinetError days=60" in output) == (failure in ("fetch", "metadata"))
 
 
 def test_price_diagnostics_match_a_hand_calculation() -> None:

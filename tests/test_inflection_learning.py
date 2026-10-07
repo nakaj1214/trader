@@ -820,6 +820,38 @@ def test_new_diagnostic_factors_increase_the_promotion_test_family() -> None:
     assert after["lessons"] == before["lessons"]
 
 
+@pytest.mark.parametrize("count,band,new_count,new", [(0, "0", 0, False), (1, "1", 1, True), (2, "ge2", 2, True),
+                                                      (9, "ge2", 0, False)])
+def test_holder_factor_bands_preserve_existing_labels(count: int, band: str, new_count: int, new: bool) -> None:
+    row = _candidate()
+    labels = factor_labels(row)
+    row["features"] = {"major_holder_filings_60d": count, "major_holder_new_filings_60d": new_count}
+    assert factor_labels(row) == labels + [f"major_holder_filings_60d_band:{band}", f"major_holder_new_filings_60d:{new}"]
+
+
+@pytest.mark.parametrize("value", [None, True, "1", -1, float("nan"), float("inf"), float("-inf")])
+def test_missing_or_invalid_holder_features_add_no_labels(value: object) -> None:
+    row = _candidate()
+    assert factor_labels({**row, "features": {"major_holder_filings_60d": value,
+                                             "major_holder_new_filings_60d": value}}) == factor_labels(row)
+
+
+def test_holder_factors_join_fisher_and_bh_family() -> None:
+    history = _history([100.0 + index * 0.5 for index in range(160)])
+    observations = [{**_candidate(ticker=ticker), "signal_date": str(history.index[10].date()),
+                     "strategy_version": "jp-inflection-shadow-v3"} for ticker in ("1111.T", "2222.T")]
+    histories = dict.fromkeys(("1111.T", "2222.T"), history)
+    before = build_learning_report(observations, histories, history, promotion_strategy_version="jp-inflection-shadow-v3")
+    observations[0]["features"] = {"major_holder_filings_60d": 2, "major_holder_new_filings_60d": 1}
+    after = build_learning_report(observations, histories, history, promotion_strategy_version="jp-inflection-shadow-v3")
+    assert after["promotion_gate"]["tests_in_family"] == before["promotion_gate"]["tests_in_family"] + 8
+    for horizon in ("h5", "h20", "h60", "h120"):
+        factors = {row["factor"]: row for row in after["promotion_factor_statistics"][horizon]}
+        for label in ("major_holder_filings_60d_band:ge2", "major_holder_new_filings_60d:True"):
+            assert factors[label]["fisher_p_value"] is not None and factors[label]["bh_q_value"] is not None
+    assert after["lessons"] == before["lessons"]
+
+
 def test_main_fetches_once_over_the_shared_window_for_cli_given_snapshot_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -939,6 +971,9 @@ def test_loader_reads_schema5_snapshots_with_and_without_the_diagnostic_features
         "up_day_ratio_60d": None,
         "daily_volatility_20d_pct": 1.9,
         "distance_from_period_high_pct": -3.1,
+        "major_holder_filings_60d": 2,
+        "major_holder_new_filings_60d": 1,
+        "days_since_major_holder_filing": None,
     }
     old = _payload_v5("2026-01-06")  # written before the diagnostics existed
     new = _payload_v5("2026-01-07", features={"revenue_growth_yoy_pct": 25.0, **diagnostics})
@@ -948,5 +983,7 @@ def test_loader_reads_schema5_snapshots_with_and_without_the_diagnostic_features
     rows = {r["signal_date"]: r for r in load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)}
 
     assert "disclosure_age_days" not in rows["2026-01-06"]["features"]
+    assert "major_holder_filings_60d" not in rows["2026-01-06"]["features"]
+    assert all(rows["2026-01-07"]["features"][key] == value for key, value in diagnostics.items())
     assert rows["2026-01-07"]["features"]["disclosure_age_days"] == 19
     assert rows["2026-01-07"]["features"]["up_day_ratio_60d"] is None

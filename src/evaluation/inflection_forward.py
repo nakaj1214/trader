@@ -17,6 +17,7 @@ from src.evaluation.inflection_backtest import (
 )
 
 BENCHMARK_TICKER = "1306.T"  # NEXT FUNDS TOPIX ETF
+MARKET_BENCHMARK_TICKERS = {"グロース": "2516.T", "プライム": BENCHMARK_TICKER, "スタンダード": BENCHMARK_TICKER}
 
 # Schema 5 only adds fields to schema 4 candidates, so the two form one evaluation series.
 # Every other schema stays its own family; widen this tuple only after judging compatibility.
@@ -177,6 +178,7 @@ def paired_benchmark_returns(
     benchmark_history: pd.DataFrame,
     *,
     round_trip_cost_pct: float,
+    benchmark_ticker: str = BENCHMARK_TICKER,
 ) -> list[dict[str, Any]]:
     """Attach a benchmark return over each trade's actual entry/exit dates."""
     opens = _series(benchmark_history, "Open")
@@ -184,7 +186,7 @@ def paired_benchmark_returns(
     rows: list[dict[str, Any]] = []
     for trade in trades:
         empty = {
-            "benchmark_ticker": BENCHMARK_TICKER,
+            "benchmark_ticker": benchmark_ticker,
             "benchmark_entry_date": None,
             "benchmark_exit_date": None,
             "benchmark_net_return_pct": None,
@@ -211,7 +213,7 @@ def paired_benchmark_returns(
         excess = float(trade.net_return_pct) - benchmark_return
         rows.append(
             {
-                "benchmark_ticker": BENCHMARK_TICKER,
+                "benchmark_ticker": benchmark_ticker,
                 "benchmark_entry_date": str(entries.index[0].date()),
                 "benchmark_exit_date": str(exits.index[-1].date()),
                 "benchmark_net_return_pct": round(benchmark_return, 6),

@@ -31,6 +31,7 @@ from src.evaluation.inflection_backtest import (
     summarize_trades,
 )
 from src.evaluation.inflection_forward import (
+    MARKET_BENCHMARK_TICKERS,
     benchmark_returns_by_signal_date,
     enrich_trades_with_benchmark,
     paired_benchmark_returns,
@@ -139,6 +140,33 @@ def _paired_trade_rows(
     return [trade.as_dict() | benchmark for trade, benchmark in zip(trades, benchmarks, strict=True)]
 
 
+def _market_benchmark_excess(
+    trades: list[TradeResult],
+    market_benchmarks: dict[str, pd.DataFrame],
+    ticker_markets: dict[tuple[str, str], str],
+) -> dict[str, Any]:
+    markets: dict[str, list[TradeResult]] = {}
+    for trade in trades:
+        market = ticker_markets.get((trade.signal_date, trade.ticker), "unknown")
+        markets.setdefault(market, []).append(trade)
+    result: dict[str, Any] = {}
+    for market, selected in sorted(markets.items()):
+        ticker = MARKET_BENCHMARK_TICKERS.get(market)
+        history = market_benchmarks.get(ticker) if ticker is not None else None
+        if ticker is None or history is None or history.empty:
+            result[market] = {
+                "benchmark_ticker": ticker, "value": None,
+                "reason": "unsupported_market" if ticker is None else "unavailable",
+            }
+            continue
+        paired = paired_benchmark_returns(
+            selected, history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT, benchmark_ticker=ticker,
+        )
+        rows = [trade.as_dict() | row for trade, row in zip(selected, paired, strict=True)]
+        result[market] = {"benchmark_ticker": ticker, **summarize_benchmark_excess(rows)}
+    return result
+
+
 def _exit_strategy_report(
     trades: list[TradeResult],
     stress_trades: list[TradeResult],
@@ -146,6 +174,9 @@ def _exit_strategy_report(
     rule: str,
     max_holding_days: int,
     benchmark_history: pd.DataFrame,
+    market_benchmarks: dict[str, pd.DataFrame] | None = None,
+    ticker_markets: dict[tuple[str, str], str] | None = None,
+    market_benchmark_error: str | None = None,
 ) -> dict[str, Any]:
     """The per-exit-rule block of a group report (same shape for every rule)."""
     matured_trades = filter_matured(trades)
@@ -164,7 +195,7 @@ def _exit_strategy_report(
         **_report_breakdowns(matured_stress_trades, benchmark_history),
         "trades": stress_trade_rows,
     }
-    return {
+    report = {
         "rule": rule,
         "max_holding_days": max_holding_days,
         "eligible_count": len(matured_trades),
@@ -177,6 +208,17 @@ def _exit_strategy_report(
         "trades": trade_rows,
         "stress": stress_report,
     }
+    if market_benchmarks is not None and ticker_markets is not None:
+        if market_benchmark_error is not None:
+            report["market_benchmark_excess"] = {"value": None, "reason": market_benchmark_error}
+        else:
+            try:
+                report["market_benchmark_excess"] = _market_benchmark_excess(
+                    matured_trades, market_benchmarks, ticker_markets
+                )
+            except (ValueError, TypeError, KeyError, OverflowError) as exc:
+                report["market_benchmark_excess"] = {"value": None, "reason": f"calculation_failed:{type(exc).__name__}"}
+    return report
 
 
 def _return_moments(returns: list[float]) -> dict[str, float] | None:
@@ -260,6 +302,10 @@ def _build_group_report(
     split_histories: dict[str, pd.DataFrame],
     benchmark_history: pd.DataFrame,
     signal_dates: list[str],
+    *,
+    market_benchmarks: dict[str, pd.DataFrame] | None = None,
+    ticker_markets: dict[tuple[str, str], str] | None = None,
+    market_benchmark_error: str | None = None,
 ) -> dict[str, Any]:
     horizons: dict[str, object] = {}
     for holding_days in (5, 20, 60, 126, 252):
@@ -331,6 +377,9 @@ def _build_group_report(
                 rule="prior_confirmed_high_water_mark",
                 max_holding_days=holding_days,
                 benchmark_history=benchmark_history,
+                market_benchmarks=market_benchmarks,
+                ticker_markets=ticker_markets,
+                market_benchmark_error=market_benchmark_error,
             )
     for key, exit_rule in NEW_EXIT_RULES.items():
         rule_trades = [
@@ -359,6 +408,9 @@ def _build_group_report(
             rule=describe_rule(exit_rule),
             max_holding_days=NEW_EXIT_HOLDING_DAYS,
             benchmark_history=benchmark_history,
+            market_benchmarks=market_benchmarks,
+            ticker_markets=ticker_markets,
+            market_benchmark_error=market_benchmark_error,
         )
         base_rule_trades[key] = rule_trades
     return {

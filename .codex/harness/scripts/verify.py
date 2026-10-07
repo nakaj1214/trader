@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+# adaptive-codex-harness-v6.10-minimal-diff-preflight:begin
+def _adaptive_harness_v610_minimal_diff_preflight() -> None:
+    import subprocess as _subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
 
-
-
+    _root = _Path(__file__).resolve().parents[3]
+    _guard = _root / ".codex" / "harness" / "scripts" / "minimal_diff_guard.py"
+    if _guard.exists():
+        _cp = _subprocess.run([_sys.executable, str(_guard), "--quiet"], cwd=_root)
+        if _cp.returncode != 0:
+            raise SystemExit(
+                "Harness minimal-diff preflight failed; reduce rewrite-like edits before formal verification."
+            )
+_adaptive_harness_v610_minimal_diff_preflight()
+# adaptive-codex-harness-v6.10-minimal-diff-preflight:end
 # adaptive-codex-harness-v6.5-side-effect-preflight:begin
 # Fail closed before formal verification can launch any Laravel test command.
 def _adaptive_harness_v65_preflight() -> None:

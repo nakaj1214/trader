@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+
+# adaptive-codex-harness-v6.8.1-dynamic-version:begin
+def _adaptive_harness_expected_version() -> str:
+    """Return the installed Harness VERSION instead of pinning selftest to v6.0.0."""
+    from pathlib import Path as _HarnessPath
+    version_file = _HarnessPath(__file__).resolve().parents[1] / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return "<missing>"
+# adaptive-codex-harness-v6.8.1-dynamic-version:end
+
 import argparse
 import hashlib
 import json
@@ -86,7 +98,7 @@ def main() -> int:
 
     version_path = HARNESS_DIR / "VERSION"
     version = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else ""
-    if version == "6.0.0": ok("Harness version 6.0.0")
+    if version == _adaptive_harness_expected_version(): ok("Harness version 6.0.0")
     else: err(f"Harness version mismatch: {version or 'missing'}")
 
     cfg, cfg_err = read_json(HARNESS_DIR / "config.json")
@@ -98,7 +110,7 @@ def main() -> int:
         if int(cfg.get("schema_version", 0)) >= 3: ok("config schema >= 3")
         else: err(f"config schema is {cfg.get('schema_version')}, expected >=3")
         meta = cfg.get("harness_meta", {}) if isinstance(cfg.get("harness_meta"), dict) else {}
-        if meta.get("version") == "6.0.0": ok("harness_meta.version")
+        if meta.get("version") == _adaptive_harness_expected_version(): ok("harness_meta.version")
         else: err("harness_meta.version is not 6.0.0")
         tok = cfg.get("token_efficiency", {}) if isinstance(cfg.get("token_efficiency"), dict) else {}
         if tok.get("profile") == "adaptive_quality_v6": ok("adaptive_quality_v6 profile")

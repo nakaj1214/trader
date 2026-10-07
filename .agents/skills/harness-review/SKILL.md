@@ -20,3 +20,41 @@ description: Perform a bounded independent review only when the Harness quality 
 - When tests or integration code changed, explicitly check that tests cannot reach persistent DBs, external HTTP, real mail/notification channels, real queues, real disks/NAS/S3, printers/CUPS, scheduler/workers, or uncontrolled child processes.
 - Do not repeatedly poll a reviewer or spawn replacement reviewers. If a reviewer cannot complete, report that once instead of starting a loop.
 - A review PASS is invalidated only by later edits relevant to the reviewed scope, not by unrelated pre-existing worktree changes.
+
+<!-- adaptive-codex-harness-v6.8.1-plan-scope-skill:begin -->
+### v6.8.1 review-convergence + Blocking Qualification policy
+Review for implementability and requirement coverage, not maximal detail.
+
+Before recording **each** Blocking finding, run this qualification gate and record the matching reason:
+- B1 requirement conflict prevents choosing implementation direction;
+- B2 required dependency/data/interface is missing and prevents implementation;
+- B3 planned approach would materially corrupt protected data or break a required existing path;
+- B4 an acceptance condition cannot be met;
+- B5 unresolved scope/integration boundary materially changes the implementation approach.
+
+If none of B1-B5 applies, Blocking is forbidden. Classify as:
+- Implementation note: actionable detail that can be resolved during implementation/verification; or
+- Future/out-of-scope: valid concern intentionally deferred.
+
+Important classification examples:
+- wrong test command/service name -> Implementation note unless acceptance becomes impossible;
+- Harness doctor/version-label mismatch -> Implementation note unless it prevents required verification entirely;
+- test runner incompatibility such as a disabled runtime function -> Implementation note when the guard can be repaired without changing the product plan;
+- optional DB hardening / alternative locking strategy -> Implementation note unless current plan risks protected data;
+- future Phase design -> Future/out-of-scope, not Blocking.
+
+Round behavior:
+- Round 1: discover findings comprehensively, but qualify every blocker before writing it.
+- Round 2+: verify previous blockers; new blocker categories require prior-fix causation or new evidence of data loss/build impossibility/acceptance impossibility.
+- Do not promote implementation notes into plan requirements on later rounds.
+- If Plan Ready passes, write READY and stop expanding review.md.
+<!-- adaptive-codex-harness-v6.8.1-plan-scope-skill:end -->
+
+<!-- adaptive-codex-harness-v6.10:begin -->
+### v6.10 minimal edits / explanation clarity
+- Preserve unchanged existing content; use targeted patches instead of whole-file regeneration.
+- Run `python3 .codex/harness/scripts/minimal_diff_guard.py` before expensive/final verification.
+- Explain bugs briefly: normally 1–3 sentences.
+- Include only the concrete code value/boundary or calculation needed to understand the cause.
+- Do not mechanically enumerate every internal step or repeat the same fact in multiple forms.
+<!-- adaptive-codex-harness-v6.10:end -->

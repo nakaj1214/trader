@@ -24,3 +24,22 @@ description: Deterministic verification with progressive log disclosure and mini
 9. Do not create new test files just to satisfy verification. Prefer existing coverage or extending an existing test.
 10. Do not re-run an unchanged full gate repeatedly. After a small edit, re-run only invalidated checks unless final risk justifies a full pass.
 11. Use bounded detail first; raw/full logs only when bounded detail cannot diagnose the failure.
+
+<!-- adaptive-codex-harness-v6.9-execution-safety:begin -->
+### v6.9 verification policy
+- PASS requires both a successful terminal status and the expected postcondition; Started/Created/sent/loading/rollback-start messages are insufficient.
+- Verify the effective operation, not only the requested command, when Harness/wrappers/Compose/environment injection may change execution.
+- Classify timeout/cancel/signal/dependency failures separately from assertion/business failures.
+- For persistent mutations, require the critical preconditions to be revalidated close to the mutation boundary when the state can change between preflight and write.
+- Verify rollback/compensation by command result plus restored post-state.
+- Do not turn ordinary tooling/test-runner mistakes into planning blockers when the product plan and acceptance remain implementable.
+<!-- adaptive-codex-harness-v6.9-execution-safety:end -->
+
+<!-- adaptive-codex-harness-v6.10:begin -->
+### v6.10 minimal edits / explanation clarity
+- Preserve unchanged existing content; use targeted patches instead of whole-file regeneration.
+- Run `python3 .codex/harness/scripts/minimal_diff_guard.py` before expensive/final verification.
+- Explain bugs briefly: normally 1–3 sentences.
+- Include only the concrete code value/boundary or calculation needed to understand the cause.
+- Do not mechanically enumerate every internal step or repeat the same fact in multiple forms.
+<!-- adaptive-codex-harness-v6.10:end -->

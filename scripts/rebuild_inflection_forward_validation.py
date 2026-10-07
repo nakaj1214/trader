@@ -31,6 +31,7 @@ from src.evaluation.inflection_backtest import (
 )
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
+    MARKET_BENCHMARK_TICKERS,
     load_inflection_signals,
 )
 from src.evaluation.inflection_portfolio import simulate_portfolio
@@ -175,6 +176,8 @@ def _legacy_hash_starts(rows: list[dict[str, Any]]) -> dict[str, date]:
         earliest[ticker] = min(signal, earliest.get(ticker, signal))
     starts = {ticker: day - timedelta(days=10) for ticker, day in earliest.items()}
     starts[BENCHMARK_TICKER] = min(earliest.values()) - timedelta(days=10 + 35)
+    for ticker in MARKET_BENCHMARK_TICKERS.values():
+        starts[ticker] = starts[BENCHMARK_TICKER]
     return starts
 
 
@@ -226,12 +229,30 @@ def main() -> int:
     }
     if fetched.unavailable:
         print(json.dumps({"price_unavailable_ticker_count": fetched.unavailable}))
+    market_benchmarks = {BENCHMARK_TICKER: benchmark_history}
+    market_benchmark_error = None
+    for ticker in sorted(set(MARKET_BENCHMARK_TICKERS.values()) - {BENCHMARK_TICKER}):
+        try:
+            optional = fetch_price_histories(
+                [ticker], *window, cache_path=repo_root / DEFAULT_CACHE_RELATIVE_PATH, required={ticker},
+            )
+        except RuntimeError as exc:
+            market_benchmark_error = f"{type(exc).__name__}: {exc}"
+            market_benchmarks = {}
+            break
+        market_benchmarks.update(optional.total_return())
+    ticker_markets = {
+        (str(row["signal_date"]), str(row["ticker"])): str(row.get("market") or "unknown")
+        for row in all_observations
+    }
     starts = _legacy_hash_starts(all_observations)
     price_hashes = _price_hashes(
         {
             TOTAL_RETURN_ADJUSTED: {
                 **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in histories.items()},
                 BENCHMARK_TICKER: legacy_hash_window(benchmark_history, starts[BENCHMARK_TICKER]),
+                **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in market_benchmarks.items()
+                   if ticker != BENCHMARK_TICKER},
             },
             SPLIT_ONLY: {
                 ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in split_histories.items()
@@ -318,6 +339,9 @@ def main() -> int:
             split_histories,
             benchmark_history,
             [str(signal["signal_date"]) for signal in signals],
+            market_benchmarks=market_benchmarks,
+            ticker_markets=ticker_markets,
+            market_benchmark_error=market_benchmark_error,
         )
     report["groups"] = groups
     portfolio_signals = [

@@ -33,7 +33,12 @@ from src.evaluation.inflection_forward import (
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
-from src.evaluation.inflection_report import _deflated_sharpe, _deflated_sharpe_report, _return_moments
+from src.evaluation.inflection_report import (
+    _deflated_sharpe,
+    _deflated_sharpe_report,
+    _exit_strategy_report,
+    _return_moments,
+)
 
 SECRET = "test-snapshot-secret"
 
@@ -448,6 +453,88 @@ def test_paired_benchmark_rejects_dates_that_invert_after_fill() -> None:
     assert row["excess_return_pct"] is None
 
 
+def test_paired_benchmark_accepts_an_explicit_ticker_without_changing_default_results() -> None:
+    trade = _dsr_trades(1)[0]
+    history = pd.DataFrame(
+        {"Open": [100.0, 100.0], "Close": [100.0, 120.0]},
+        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+    )
+    default = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05)[0]
+    explicit = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05, benchmark_ticker="growth")[0]
+    assert default["benchmark_ticker"] == "1306.T"
+    assert explicit == {**default, "benchmark_ticker": "growth"}
+    empty = paired_benchmark_returns([trade], pd.DataFrame(), round_trip_cost_pct=0.05, benchmark_ticker="growth")[0]
+    assert empty["benchmark_ticker"] == "growth" and empty["excess_return_pct"] is None
+
+
+def test_market_excess_uses_the_market_on_the_signal_date_and_preserves_existing_report(monkeypatch) -> None:
+    import src.evaluation.inflection_report as module
+
+    assert module.MARKET_BENCHMARK_TICKERS == {"グロース": "2516.T", "プライム": "1306.T", "スタンダード": "1306.T"}
+    template = _dsr_trades(1)[0]
+    first = replace(template, ticker="A.T", net_return_pct=10.0)
+    second = replace(first, signal_date="2026-01-06")
+    other = replace(first, ticker="other.T")
+    censored = replace(first, ticker="censored.T", horizon_matured=False)
+    index = pd.to_datetime([first.entry_date, first.exit_date])
+    topix = pd.DataFrame({"Open": [100.0, 100.0], "Close": [100.0, 110.0]}, index=index)
+    growth = pd.DataFrame({"Open": [100.0, 100.0], "Close": [100.0, 120.0]}, index=index)
+    trades = [first, second, other, censored]
+    kwargs = {"rule": "synthetic", "max_holding_days": 1, "benchmark_history": topix}
+    old = _exit_strategy_report(trades, trades, **kwargs)
+    new = _exit_strategy_report(
+        trades, trades, **kwargs, market_benchmarks={"1306.T": topix, "2516.T": growth},
+        ticker_markets={(first.signal_date, "A.T"): "グロース", (second.signal_date, "A.T"): "プライム",
+                        (first.signal_date, "other.T"): "その他", (first.signal_date, "censored.T"): "グロース"},
+    )
+    assert {key: value for key, value in new.items() if key != "market_benchmark_excess"} == old
+    assert list(new)[:-1] == list(old)
+    markets = new["market_benchmark_excess"]
+    assert markets["グロース"]["benchmark_ticker"] == "2516.T"
+    assert markets["グロース"]["evaluated"] == 1 and markets["グロース"]["mean_excess_return_pct"] == -9.95
+    assert markets["プライム"]["benchmark_ticker"] == "1306.T"
+    assert markets["プライム"]["evaluated"] == 1 and markets["プライム"]["mean_excess_return_pct"] == 0.05
+    assert markets["その他"]["value"] is None and markets["その他"]["reason"] == "unsupported_market"
+
+
+@pytest.mark.parametrize("history", [None, pd.DataFrame(), pd.DataFrame({"Open": ["invalid"], "Close": ["invalid"]})])
+def test_missing_market_benchmark_has_a_reason_and_leaves_topix_intact(history) -> None:
+    trade = _dsr_trades(1)[0]
+    topix = pd.DataFrame(
+        {"Open": [100.0, 100.0], "Close": [100.0, 110.0]},
+        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+    )
+    report = _exit_strategy_report(
+        [trade], [trade], rule="synthetic", max_holding_days=1, benchmark_history=topix,
+        market_benchmarks={} if history is None else {"1306.T": history},
+        ticker_markets={(trade.signal_date, trade.ticker): "プライム"},
+    )
+    assert report["benchmark_excess"]["evaluated"] == 1
+    market = report["market_benchmark_excess"]["プライム"]
+    assert market.get("value") is None
+    assert market.get("reason") == "unavailable" or market["evaluated"] == 0
+
+
+def test_market_calculation_failure_is_confined_to_the_added_summary(monkeypatch) -> None:
+    import src.evaluation.inflection_report as module
+
+    def fail(*_args):
+        raise ValueError("bad optional benchmark")
+
+    monkeypatch.setattr(module, "_market_benchmark_excess", fail)
+    trade = _dsr_trades(1)[0]
+    topix = pd.DataFrame(
+        {"Open": [100.0, 100.0], "Close": [100.0, 110.0]},
+        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+    )
+    report = _exit_strategy_report(
+        [trade], [trade], rule="synthetic", max_holding_days=1, benchmark_history=topix,
+        market_benchmarks={}, ticker_markets={},
+    )
+    assert report["market_benchmark_excess"] == {"value": None, "reason": "calculation_failed:ValueError"}
+    assert report["matured_summary"]["completed"] == 1
+
+
 @pytest.mark.parametrize(
     ("first", "last", "expected"),
     [(100.0, 99.0, "down"), (100.0, 100.0, "up"), (100.0, 101.0, "up")],
@@ -659,11 +746,13 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     )
 
     assert rebuild_main() == 0
-    # One batched fetch for every observed ticker plus the benchmark, over the shared window.
-    assert len(fetch_calls) == 1
+    # The existing batched fetch stays unchanged; the optional ETF is fetched separately.
+    assert len(fetch_calls) == 2
     assert set(fetch_calls[0]["tickers"]) == {"1111.T", "2222.T", "3333.T", "4444.T", BENCHMARK_TICKER}
     assert fetch_calls[0]["start"] == date(2026, 1, 29) - timedelta(days=PRIOR_HISTORY_DAYS)
     assert fetch_calls[0]["required"] == {BENCHMARK_TICKER}
+    assert fetch_calls[1]["tickers"] == ["2516.T"] and fetch_calls[1]["required"] == {"2516.T"}
+    assert fetch_calls[1]["cache_path"] == fetch_calls[0]["cache_path"]
     report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
     assert set(report["groups"]) == {"early_candidate", "watch", "none"}
     assert report["tracked_pool_explosion_recall"]["exploded_ticker_count"] == 0
@@ -724,6 +813,82 @@ def test_main_sizes_the_window_from_cli_snapshot_dirs_and_hashes_only_the_histor
     assert min(saved["1111.T"]["total_return_adjusted"]) == "2026-01-19"  # signal 2026-01-29 minus 10 days, not the wider fetch start
     assert min(saved["1111.T"]["split_only"]) == "2026-01-19"
     assert min(saved["1306.T"]["total_return_adjusted"]) == "2025-12-15"  # signal minus 10 + 35 days
+    assert min(saved["2516.T"]["total_return_adjusted"]) == "2025-12-15"
+
+
+@pytest.mark.parametrize("missing", [None, "growth", "1306.T", "1111.T"])
+def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate_histories(
+    tmp_path, monkeypatch, missing
+) -> None:
+    import pickle
+    from functools import partial
+
+    import scripts.rebuild_inflection_forward_validation as script
+    from src.data.forward_prices import fetch_price_histories
+    from tests.test_forward_prices import FakeDownload, _raw
+
+    monkeypatch.setitem(script.MARKET_BENCHMARK_TICKERS, "グロース", "growth")
+    snapshots = tmp_path / "fixtures"
+    snapshots.mkdir()
+    (snapshots / "2026-01-05.enc").write_text("placeholder", encoding="utf-8")
+    observation = {
+        "ticker": "1111.T", "signal_date": "2026-01-05", "date": "2026-01-05", "score": 80.0,
+        "market": "グロース", "classification": "EARLY_CANDIDATE",
+        "strategy_version": "jp-inflection-shadow-v3", "report_schema_version": 5,
+    }
+    frames = {"1111.T": _raw(100.0), "1306.T": _raw(200.0), "growth": _raw(300.0)}
+    fake = FakeDownload(frames, missing={missing} if missing else set())
+    monkeypatch.setattr("yfinance.download", fake)
+    monkeypatch.setattr(script, "snapshot_encryption_secret", lambda: SECRET)
+    monkeypatch.setattr(script, "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(script, "fetch_price_histories", partial(
+        fetch_price_histories, max_retries=0, batch_interval_seconds=0.0, sleep=lambda _: None,
+    ))
+    saved = {}
+    monkeypatch.setattr(script, "_persist_price_hashes", lambda _p, hashes, _s: saved.update(hashes) or [])
+
+    def build_group(signals, histories, split_histories, benchmark, _dates, **kwargs):
+        assert set(histories) == set(split_histories) == {"1111.T"}
+        trades = [simulate_signal(signal, split_histories[signal["ticker"]], holding_days=1) for signal in signals]
+        base_kwargs = {"rule": "synthetic", "max_holding_days": 1, "benchmark_history": benchmark}
+        before = _exit_strategy_report(trades, trades, **base_kwargs)
+        after = _exit_strategy_report(trades, trades, **base_kwargs, **kwargs)
+        assert {key: value for key, value in after.items() if key != "market_benchmark_excess"} == before
+        return {"exit_strategies": {"synthetic": after}}
+
+    monkeypatch.setattr(script, "_build_group_report", build_group)
+    monkeypatch.setattr(sys, "argv", [
+        "x", "--repo-root", str(tmp_path), "--snapshot-dir", "fixtures",
+        "--legacy-snapshot-dir", "missing", "--output", "artifacts/report.json",
+    ])
+    if missing in ("1306.T", "1111.T"):
+        with pytest.raises(RuntimeError, match="Required price history" if missing == "1306.T" else "Price retrieval failed"):
+            rebuild_main()
+        assert fake.calls == [["1111.T", "1306.T"]]
+        assert not (tmp_path / "artifacts/report.json").exists()
+        return
+
+    assert rebuild_main() == 0
+    assert fake.calls == [["1111.T", "1306.T"], ["growth"]]
+    report = json.loads((tmp_path / "artifacts/report.json").read_text())
+    market = report["groups"]["early_candidate"]["exit_strategies"]["synthetic"]["market_benchmark_excess"]
+    assert report["benchmark"]["ticker"] == "1306.T" and report["price_unavailable_ticker_count"] == 0
+    if missing:
+        assert market["value"] is None and market["reason"] == "RuntimeError: Required price history is unavailable"
+        assert "growth" not in saved
+    else:
+        assert market["グロース"]["benchmark_ticker"] == "growth" and market["グロース"]["evaluated"] == 1
+        assert set(saved) == {"1111.T", "1306.T", "growth"}
+        from src.data.forward_prices import legacy_hash_window
+
+        baseline_hashes = _history_row_hashes(legacy_hash_window(frames["1306.T"], date(2025, 11, 21)))
+        assert saved["1306.T"]["total_return_adjusted"] == baseline_hashes
+        assert saved["growth"]["total_return_adjusted"] == _history_row_hashes(
+            legacy_hash_window(frames["growth"], date(2025, 11, 21))
+        )
+    cached = pickle.loads((tmp_path / "artifacts/price_cache.pkl").read_bytes())["entries"]
+    for ticker in ("1111.T", "1306.T"):
+        pd.testing.assert_frame_equal(cached[ticker]["frame"], frames[ticker])
 
 
 ADDED_AFTER_THE_FINGERPRINTS = {"exit_legs", "regime_breakdown"}  # keys introduced since they were taken

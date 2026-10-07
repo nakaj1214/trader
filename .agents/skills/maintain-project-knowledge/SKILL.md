@@ -17,3 +17,10 @@ description: Record only verified durable project knowledge that will materially
 - Promote only stable, repeated, evidenced patterns or explicit user decisions.
 - Safety incidents that can cause persistent/external side effects may be promoted when the rule is general and mechanically enforceable.
 - Do not turn one-off debugging observations, temporary failures, or task-local implementation details into durable rules.
+
+<!-- adaptive-codex-harness-v6.9-execution-safety:begin -->
+### v6.9 guard-promotion policy
+- Do not generalize one ordinary incident into a new Skill, broad lint, or global rule. Prefer existing docs/tests/skills and wait for repeated, structurally similar failures.
+- Exception: one incident may justify an automatic guard when impact is severe (persistent data destruction, unauthorized action, external mis-send, secret leakage, irrecoverable mutation) **and** the hazardous condition is mechanically identifiable with an acceptably narrow fail-closed check.
+- Record the evidence for promotion: concrete incident/risk, detection condition, expected false-positive cost, fail-closed behavior, and why an existing guard/test cannot cover it.
+<!-- adaptive-codex-harness-v6.9-execution-safety:end -->

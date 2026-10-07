@@ -1,80 +1,58 @@
-# 実装要件書（REQ-055〜057: 記録した特徴量の評価への接続、過熱の事前警告、売却ルール比較の多重比較補正）
+# 実装要件書（REQ-058: 市場区分別のベンチマークを、forward のレポートに併記する）
 
-> このファイルは create-plan の入力です（作成済み: [plan_req055-057.md](plan_req055-057.md)）。
-> 出典: [memo/analysis/improvement_report_2026-10-01.md](../analysis/improvement_report_2026-10-01.md) の §4（A7 の入力の利用）、B3（過熱の警告）、§4.2（Deflated Sharpe Ratio）。
-> 現在の `proposal.md` / `plan.md`（REQ-052〜054）は未実装なので、上書きしないため、別ファイルにした。実装の順序は **REQ-052〜054 が先**（REQ-055 は、REQ-053・054 で増える特徴量も扱う）。
+> このファイルは create-plan の入力です。
+> 出典: [memo/analysis/improvement_report_2026-10-01.md](../analysis/improvement_report_2026-10-01.md) の A8-d。
+> 以前の要件書: REQ-001〜057 → それぞれ `proposal_req*.md`
 
 ## 背景
 
-- REQ-050（実装済み）、REQ-053・054（計画済み）で、診断用の特徴量を `features` に記録し始めたが、**learning（自己学習）はそれを使っていない**。使わないと、記録した値は評価に反映されない。
-- Monitor の警告は、「stop まで残り3%以内」だけである。報告書 B3 は、過熱（20日で +50% 超）の注意喚起を挙げている。
-- forward のレポートは、売却ルールを多数並べて比較しているが、多重比較は定性的な注意書き（`multiple_comparisons_caveat`）だけである。
+- forward のレポートは、全銘柄を共通のベンチマーク `1306.T`（TOPIX 連動 ETF）と比べている。**グロース市場の小型株の超過リターンには、size 要因の差（小型株が TOPIX に対して持つ構造的な差）が混入する**。戦略の良し悪しと、市場区分の差を、区別できない。
+- 候補の `market` は、snapshot の各候補に記録済み（`プライム`、`スタンダード`、`グロース`）。
 
 ## 決定済みの事項
 
-- **戦略・スコア・分類・候補の選定・売却ルールの採用は変えない。** `STRATEGY_VERSION`（v3）と `REPORT_SCHEMA_VERSION`（5）は変えない。
-- 戦略に影響する項目は保留（2026-10-07 ユーザー確認）。
-- 自己学習は、重みを直接更新しない現設計を維持する。新しい factor は、既存の昇格判定（Fisher 検定と BH 補正）を通る。
+- **戦略・スコア・分類・候補の選定は変えない。** `STRATEGY_VERSION`（v3）と `REPORT_SCHEMA_VERSION`（5）は変えない。
+- **既存のベンチマーク（`1306.T`）の結果、レポートのキーと値は変えない。** 市場別のベンチマークは**併記**であり、置き換えではない。撤退判定（B1 の kill criterion）も、現行の `1306.T` のままである。
+- グロースのベンチマークは、`2516.T`（グロース市場250指数連動の ETF とされる）を使う。**ETF の銘柄コードは、実装前にユーザーが確認する**（[要確認]）。yfinance で取得できることは、2026-10-07 に確認済み（2年分の日足、出来高の中央値は約66万株）。
+- プライムとスタンダードは `1306.T`（TOPIX）のままとする。
+
+## 事実確認（2026-10-07）
+
+- `2516.T`: 取得できる履歴は 2024-10-07〜（486日）。`1306.T`: 同 487日。
+- 候補の `market` は、J-Quants の `MktNm`（日本語の名前）である。市場コードの `Mkt` ではない。
+- 価格の改ざん検知（`price_hashes`）は、ティッカーごとに記録する構造で、新しいティッカーを足しても既存のハッシュに影響しない。
 
 ---
 
 ## 要件一覧
 
-### REQ-055: 記録した特徴量を、learning の factor ラベルに接続する
+### REQ-058: 市場区分別のベンチマークの超過リターンを、forward のレポートに併記する
 
-- **画面**: なし（learning のレポート）
-- **対象ファイル**: [src/evaluation/inflection_learning.py](../../src/evaluation/inflection_learning.py)（`factor_labels`）、`tests/test_inflection_learning.py`
-- **Before（現状）**: `factor_labels` は、classification、market、score、return、出来高比、52週高値圏、理由だけをラベルにする。観測には `features`（辞書）と `sector33_code` が渡っているが、使われていない。
-- **After（期待）**: `features` に値がある（`None` でない）場合だけ、次のラベルを追加する。値がない観測（過去の snapshot）にはラベルを付けない。
-  - `disclosure_age_band`（開示からの経過日数: 〜30日、30〜60日、60〜90日、90日超）
-  - `forecast_age_band`（予想修正からの経過日数: 同じ区分）
-  - `up_day_ratio_60d_band`、`max_daily_return_20d_band`、`daily_volatility_20d_band`、`distance_from_period_high_band`（それぞれ区切りを定義する）
-  - REQ-053・054 の特徴量（`quarterly_sales_growth_accel_pctpt`、`quarterly_op_growth_accel_pctpt`、`relative_return_20d_vs_sector_pct`、`relative_return_60d_vs_sector_pct`）。キーが `features` にあるときだけ。
-  - `sector33:{コード}`
-  - 区切りは、実装時にコードで定義し、定数にまとめる。区切りの値は診断用の初期値であり、チューニングしない。
-- **受入条件**:
-  1. 特徴量のある観測で、期待するラベルが付く（区切りの境界値を含む）。
-  2. 特徴量のない観測（`features` が `None`、または該当キーがない）で、例外にならず、該当のラベルが付かない。
-  3. 既存のラベル（classification、market など）が、変更前と同じである。
-  4. 新しいラベルが、昇格判定（BH 補正）の対象に入る。**ラベルが増えると、BH 補正は厳しくなる**。これは意図した挙動で、レポートの `promotion_gate` の検定数に反映される。既存のテストが PASS する。
-  5. 新しいラベルを付けても、スコア、分類、候補、本番の scan の出力は変わらない（learning のレポートだけが変わる）。
-- **備考**: 現在の snapshot は、新しい特徴量を持つものが少ない。ラベルを付けても、標本が溜まるまで昇格は起きない。
-
-### REQ-056: Monitor に、過熱の事前警告を追加する
-
-- **画面**: Slack（Monitor の警告）、Monitor のシート
-- **対象ファイル**: [scripts/run_position_monitor.py](../../scripts/run_position_monitor.py)、[src/monitoring/position_exit.py](../../src/monitoring/position_exit.py)、`tests/` の Monitor のテスト
-- **Before（現状）**: 警告は、stop まで残り3%以内（`WARNING_DISTANCE_PCT`）の1種類だけである。急騰した後の過熱の注意喚起はない。
+- **画面**: forward のレポート（`inflection_forward_validation_summary.json`）
+- **対象ファイル**:
+  - [src/evaluation/inflection_forward.py](../../src/evaluation/inflection_forward.py)（ベンチマークの定義、`paired_benchmark_returns`）
+  - [src/evaluation/inflection_report.py](../../src/evaluation/inflection_report.py)（`_exit_strategy_report`、`_build_group_report`）
+  - [scripts/rebuild_inflection_forward_validation.py](../../scripts/rebuild_inflection_forward_validation.py)（価格の取得、ベンチマークの受け渡し、価格ハッシュ）
+  - テスト: `tests/test_inflection_forward.py`、`tests/test_inflection_report.py`（あれば）
+- **Before（現状）**: 各取引の超過リターンは、全銘柄で `1306.T` と比べる。市場区分ごとの比較はない。
 - **After（期待）**:
-  - 保有銘柄の現在値が、**20営業日前の確定終値より +50% 以上**高いとき、「過熱: 20日で +N%」の警告を出す（注意喚起のみ。売却の判断・stop の変更はしない）。
-  - 閾値 50% は、本番の `OVEREXTENDED` 分類（r20 ≥ 50%）と同じ値にする（定数を共有できるなら共有する）。
-  - 警告は、既存の stop 接近の警告と**同じ仕組み**（1営業日に1銘柄1回、`last_warned_at`）で出す。1銘柄に両方の条件が重なる場合は、1通にまとめる。
-  - 20営業日分の確定終値がない場合は、警告しない。出来高の指標（出来高クライマックス）は含めない。
+  - 市場区分とベンチマークの対応を定数で定義する（`グロース` → `2516.T`、`プライム`・`スタンダード` → `1306.T`）。対応がない市場（`その他` など）は、市場別の併記の対象外とする。
+  - forward の価格取得で、`2516.T` も取得する。**`2516.T` が取得できなくても、レポートは生成する**（市場別の併記を `None` と理由にする。既存の `1306.T` は従来どおり必須）。
+  - 各売却ルールのレポート（`_exit_strategy_report`）に、`market_benchmark_excess`（追加のキー）を加える。**市場区分ごと**に、その市場のベンチマークとの超過リターンの要約（既存の `summarize_benchmark_excess` と同じ形）を出す。対象は、満期までの取引（matured）。
+  - 各市場の要約に、使ったベンチマークのティッカーを含める。
+  - 既存のキー（`benchmark_excess`、取引ごとの `benchmark_*`、`excess_return_pct` など）は変更しない。
+  - 市場区分は、取引の銘柄の候補の `market` から求める（銘柄 → 市場の対応は、観測から作る）。同じ銘柄で市場が途中で変わった場合は、その取引のシグナル日の観測の市場を使う。
+  - `2516.T` の価格ハッシュを、既存の仕組みで記録する。
 - **受入条件**:
-  1. 20日前の終値の +50% 以上の合成データで、警告の対象になり、メッセージに銘柄と上昇率が入る。+50% 未満、履歴が20日に満たない場合は対象にならない。
-  2. 同じ日に2回目の実行で、同じ銘柄に再度警告しない（stop 接近の警告との重複も含む）。
-  3. 両方の条件が重なる銘柄で、1通にまとまる。
-  4. 売却の判定（`triggered`、`exit_reason`、`stop_price`）が、変更前と同じである。
-  5. 既存の Monitor のテストが PASS する。
-- **備考**: 実装時に、Monitor が確定終値の履歴をどの範囲で取得しているかを確認する。20営業日分が取得できていなければ、取得範囲の拡大が必要になる（その場合は、影響を報告する）。
-
-### REQ-057: 売却ルールの比較に、Deflated Sharpe Ratio を加える
-
-- **画面**: なし（forward のレポート）
-- **対象ファイル**: [src/evaluation/inflection_report.py](../../src/evaluation/inflection_report.py)、`tests/test_inflection_forward.py`（または report のテスト）
-- **Before（現状）**: 売却ルールを多数並べて、最良のものを見られるが、「多数から選んだ最良の成績」の過大評価を補正する指標がない。`multiple_comparisons_caveat` は文章だけである。
-- **After（期待）**: 各グループのレポートに、`deflated_sharpe`（追加のキー）を加える。
-  - 対象: そのグループの売却ルール（`exit_strategies`）のうち、**ベースのコストのシナリオ**で、満期までの取引（matured）が一定数（既定 30 件）以上あるもの。
-  - 各ルールについて、取引ごとのリターンから Sharpe（取引単位。年率化しない）、歪度、尖度を求め、最良のルールを選ぶ。試行数 N = 対象のルールの数として、Bailey & López de Prado (2014) の Deflated Sharpe Ratio（最良のルールの Sharpe が、N 個のランダムな試行の期待最大値を上回る確率）を求める。標準ライブラリだけで計算する（`statistics.NormalDist`）。
-  - 出力: 最良のルール名、Sharpe、DSR（確率）、N、取引数。対象が2ルール未満、または取引が30件未満のときは、`None` と理由を出す。
-  - 取引は重なりのない取引（既存の `select_non_overlapping_trades`）を使う。
-- **受入条件**:
-  1. 手計算できる合成のリターンで、Sharpe、歪度、尖度、DSR が期待どおりになる（既知の値との比較）。
-  2. N が増えると、同じ Sharpe でも DSR が下がる。
-  3. 取引が30件未満、ルールが2つ未満のとき、`None` と理由が出る。
-  4. 既存のレポートのキーと値が変わらない（`deflated_sharpe` が増えるだけ）。
-  5. 既存のレポートのテストが PASS する。
-- **備考**: DSR は、取引が独立であることを前提にする。現在の標本は少ないので、当面は `None` になる可能性が高い。標本が溜まったときのための、先行実装である。
+  1. グロースの取引は `2516.T`、プライムの取引は `1306.T` との超過リターンが、`market_benchmark_excess` に出る（合成の価格で、手計算の値と一致する）。
+  2. 既存の `benchmark_excess`、取引ごとの `benchmark_*`、`excess_return_pct`、`regime_*` などのキーと値が、変更前と同じである。
+  3. `2516.T` の価格が取得できないとき、レポートは生成され、`market_benchmark_excess` は理由つきの `None` になる。`1306.T` が取得できないときは、従来どおり失敗する。
+  4. 市場が `その他` などの対応がない取引は、`market_benchmark_excess` の対象外になり、例外にならない。
+  5. 価格ハッシュに `2516.T` が加わり、既存のティッカーのハッシュが変わらない。
+  6. 既存の forward のテストが PASS する。
+- **備考**:
+  - 学習側（`rebuild_inflection_learning.py`）の超過リターンは、今回の対象外（`1306.T` のまま）。必要になれば別の要件にする。
+  - B1 の過去検証（`inflection_historical.py`）も対象外。J-Quants の過去データのキャッシュに `2516` の日足があるかは未確認（`bars` は全銘柄の日足なので、ある可能性が高い）。
 
 ---
 
@@ -87,14 +65,10 @@
 ## 完了済み・保留中
 
 ### 完了済み
-- REQ-045〜051（売却ルールの比較、相場環境、stop 接近の警告、候補の見える化、診断用の特徴量、欠損営業日）
-
-### 計画済み・未実装
-- REQ-052〜054（日次 scan の耐性、四半期の業績の加速、業種の相対モメンタム）: [proposal.md](proposal.md) / [plan.md](plan.md)
+- REQ-048〜057（候補の見える化、診断用の特徴量、日次 scan の耐性、learning への接続、過熱警告、DSR）: コミット済み（`941cbbb`）、未 push
 
 ### 保留中（今回のスコープ外）
 - **決算発表日の警告。** J-Quants の client に決算発表予定日のエンドポイントがない。取得方法の調査が先。
-- **A8-d（市場別のベンチマーク）。** 追加のベンチマーク（例: グロース250連動 ETF）の取得と、forward・learning の価格取得の変更が必要。ETF の選定をユーザーに確認してから。
-- **出来高クライマックスの警告。** Monitor が出来高の履歴を持っていない。
-- **戦略に影響する項目**（A7 の減衰、A8-a・b、相場環境による切り替え、売却ルールの採用、B5）、**B6**（TDnet・EDINET・信用残）。
-- **連続する複数週の昇格条件、Beta-Binomial による縮小推定。** 昇格の判定を変えるため、標本が溜まってから。
+- **B6（TDnet・EDINET・信用残）。** 調査が先。
+- **戦略に影響する項目**（A7 の減衰、A8-a・b、相場環境による切り替え、売却ルールの採用、B5）。forward の標本が溜まってから。
+- **学習側・B1 の市場別ベンチマーク。** 今回は forward のみ。

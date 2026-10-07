@@ -38,3 +38,46 @@ description: Develop with GPT-5.6 Sol high while minimizing duplicated context, 
 - Never use a test failure as justification to run migrations/wipes, DROP/TRUNCATE, destructive import/restore, recursive deletion, remote upload, printer submission, scheduler/worker commands, or persistent writes.
 - Persistent/external mutations are user-supervised operations, not autonomous Harness verification. Prepare a bounded command + backup/recovery plan; do not execute the mutation yourself.
 - Use targeted verification by default. Full verification is not an automatic closeout step.
+
+### v6.6 semantic investigation policy
+- Treat task-like sections in project documents as work queues by meaning, not by filename. New memo/checklist files do not need Harness registration.
+- If the user asks to check/investigate/status-review items in such a section, first extract the active items and then inspect the implementation/configuration/test/Git evidence needed for each one. Do not finish by paraphrasing the queue.
+- If the user asks only for a summary/list/read-through, stay document-only unless implementation evidence is necessary to explain ambiguity.
+- `current code` means the checked-out working tree, including relevant uncommitted changes, unless a branch/ref is explicitly named.
+- Prefer bounded, directly relevant evidence. One concrete source is usually enough to establish a simple item; use more only where the behavior spans components or evidence conflicts.
+
+### v6.7 conversation continuity
+- On follow-up implementation requests, inherit the nearest compatible user-established objective, target entities, dates, branch/environment, and success criteria.
+- Do not swap the requested target for an easier example or sibling case. If a substitute is technically necessary, disclose it before using it and keep it separate from the requested target.
+- Before editing or executing against an entity not named in the latest turn, verify it is the active target from the recent conversation chain.
+- Interpret elliptical follow-ups as CONTINUE by default; parameter changes are REFINE; only a clear incompatible request is SWITCH.
+
+<!-- adaptive-codex-harness-v6.8-plan-scope-skill:begin -->
+### v6.8 plan-scope policy
+Before finalizing plan.md:
+1. Map each plan step to an explicit requirement/acceptance condition.
+2. Remove detailed design for anything marked Phase 2/3/later or otherwise out of scope; retain only defer reason + target phase.
+3. Move code-level discoveries (sentinel values, exact private method implementation, SQL/driver branches, complete column enumerations) out of plan.md unless they are required to explain an acceptance-critical compatibility constraint.
+4. Challenge every newly proposed artifact not named or implied by the requirements: keep it only if acceptance requires it or existing-code evidence makes it necessary.
+5. Apply the Plan Ready gate. If it passes, finish the plan rather than searching for more design detail.
+6. Run `.codex/harness/scripts/plan_scope_guard.py <plan-path> [--proposal <proposal-path>]` when available. WARN findings are advisory cleanup prompts, not automatic blockers.
+<!-- adaptive-codex-harness-v6.8-plan-scope-skill:end -->
+
+<!-- adaptive-codex-harness-v6.9-execution-safety:begin -->
+### v6.9 implementation-safety policy
+- For time-varying production-like data, validate structural invariants (keys, mappings, references, versions) instead of unbound total-count literals.
+- Prefer isolated copies/worktrees/temporary artifacts when historical code or destructive experiments would otherwise rewrite the active worktree.
+- Verify that the real execution user can read/write generated files, caches, build outputs, mounts, and target paths.
+- Prefer structured argv/process APIs over shell-string concatenation. When shell use is unavoidable, preserve safe argument boundaries and explicit working directory; do not interpolate untrusted external input directly into shell commands.
+- Persistent updates must re-check critical mutable conditions near the write boundary; use transactions, locks, version checks, idempotency, or compensation when partial success/concurrency matters.
+- Preserve causal exceptions when translating them into domain-facing messages, while redacting secret/personal values from logs and surfaced diagnostics.
+<!-- adaptive-codex-harness-v6.9-execution-safety:end -->
+
+<!-- adaptive-codex-harness-v6.10:begin -->
+### v6.10 minimal edits / explanation clarity
+- Preserve unchanged existing content; use targeted patches instead of whole-file regeneration.
+- Run `python3 .codex/harness/scripts/minimal_diff_guard.py` before expensive/final verification.
+- Explain bugs briefly: normally 1–3 sentences.
+- Include only the concrete code value/boundary or calculation needed to understand the cause.
+- Do not mechanically enumerate every internal step or repeat the same fact in multiple forms.
+<!-- adaptive-codex-harness-v6.10:end -->

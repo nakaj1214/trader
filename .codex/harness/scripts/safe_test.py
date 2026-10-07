@@ -41,7 +41,7 @@ EXTRA_SIDE_EFFECTS = (
 )
 
 PHP_DISABLED_FUNCTIONS = ",".join((
-    "exec", "shell_exec", "system", "passthru", "proc_open", "popen",
+    "exec", "shell_exec", "system", "passthru", "popen",
     "curl_exec", "curl_multi_exec", "fsockopen", "pfsockopen", "stream_socket_client",
     "mail",
     "smbclient_state_new", "smbclient_state_init", "smbclient_open", "smbclient_unlink",

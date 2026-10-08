@@ -19,6 +19,19 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.setup.outcome == 'failure' && 'setup' || steps.install.outcome == 'failure' && 'install' || steps.scan.outputs.failure_stage || steps.persist.outcome == 'failure' && 'git_push' || 'data_acquisition' }}
+      retry_exhausted: ${{ steps.scan.outputs.retry_exhausted }}
+      expected_date: ${{ steps.scan.outputs.expected_date }}
+      universe: ${{ steps.scan.outputs.universe }}
+      missing: ${{ steps.scan.outputs.missing }}
+      price_data: ${{ steps.scan.outputs.price_data }}
+      price_coverage: ${{ steps.scan.outputs.price_coverage }}
+      latest_coverage: ${{ steps.scan.outputs.latest_coverage }}
+      latest_dates: ${{ steps.scan.outputs.latest_dates }}
+      dropped_future_bars: ${{ steps.scan.outputs.dropped_future_bars }}
+      failed_gate: ${{ steps.scan.outputs.failed_gate }}
+      attempts: ${{ steps.scan.outputs.attempts }}
 
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -28,17 +41,20 @@ jobs:
 
     steps:
       - name: Checkout repository
+        id: checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
+        id: setup
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install runtime dependencies
+        id: install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
@@ -52,6 +68,7 @@ jobs:
 
       # Intentional direct push: this step writes encrypted generated data only, never source code.
       - name: Commit encrypted immutable market-day snapshot
+        id: persist
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -60,9 +77,50 @@ jobs:
           git pull --rebase --autostash origin "${{ github.ref_name }}"
           git push
 
-      - name: Notify Slack on failure only
-        if: failure() && steps.scan.outputs.retry_exhausted == 'true' && env.SLACK_WEBHOOK_URL != ''
-        run: |
-          curl -sS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"JP Inflection Shadow Scan FAILED\nexpected=${{ steps.scan.outputs.expected_date }}\nuniverse=${{ steps.scan.outputs.universe }}\nmissing=${{ steps.scan.outputs.missing }}\nprice_data=${{ steps.scan.outputs.price_data }}\nprice_coverage=${{ steps.scan.outputs.price_coverage }}\nlatest_coverage=${{ steps.scan.outputs.latest_coverage }}\nlatest_dates=${{ steps.scan.outputs.latest_dates }}\ndropped_future_bars=${{ steps.scan.outputs.dropped_future_bars }}\nfailed_gate=${{ steps.scan.outputs.failed_gate }}\nattempts=${{ steps.scan.outputs.attempts }}\nref=${{ github.ref_name }}\nrun=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            "${SLACK_WEBHOOK_URL}"
+
+  notify-failure:
+    needs: scan
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.scan.result == 'failure' || needs.scan.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: workflow-reliability-notifications
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted notifier
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Restore notification state
+        id: restore-alert-state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: |
+            workflow-reliability-main-
+
+      - name: Notify classified workflow failure
+        id: notify
+        env:
+          FAILURE_STAGE: ${{ needs.scan.outputs.failure_stage || 'data_acquisition' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RETRY_DETAILS_JSON: ${{ toJSON(needs.scan.outputs) }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: inflection_shadow.yml
+        run: python scripts/check_workflow_health.py --notify-failure
+
+      - name: Save notification state
+        if: steps.notify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

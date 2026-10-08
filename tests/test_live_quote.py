@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
@@ -9,6 +10,7 @@ import pytest
 
 from src.data.live_quote import (
     build_today_quote,
+    fetch_session_bars,
     fetch_split_adjusted_history,
     fetch_today_bars,
     fetch_today_quote,
@@ -169,3 +171,71 @@ def test_today_bars_converts_provider_failure_to_none() -> None:
     ticker.history.side_effect = RuntimeError("provider unavailable")
     with patch("src.data.live_quote.yf.Ticker", return_value=ticker):
         assert fetch_today_bars("1111.T") is None
+
+
+def test_recovery_requests_a_whole_day_including_the_close_and_returns_its_request_date() -> None:
+    index = pd.DatetimeIndex(["2026-09-08 15:25", "2026-09-08 15:30", "2026-09-09 09:00"], tz=JST)
+    frame = pd.DataFrame({"Open": [100.0]*3, "High": [100.0]*3, "Low": [80.0,100.0,100.0],
+                          "Close": [100.0]*3, "Volume": [10.0]*3}, index=index)
+    ticker = Mock()
+    ticker.history.return_value = frame
+    with patch("src.data.live_quote.yf.Ticker", return_value=ticker):
+        result = fetch_session_bars("1111.T", "2026-09-08")
+    ticker.history.assert_called_once_with(
+        start="2026-09-08", end="2026-09-09", interval="1m", auto_adjust=False,
+        actions=False, prepost=False, timeout=15,
+    )
+    assert result is not None and len(result) == 2
+    assert result.attrs["requested_date"] == "2026-09-08"
+
+
+def test_confirmed_no_trade_day_is_not_a_missing_daily_session() -> None:
+    frame = _daily_history(["2026-09-07", "2026-09-08", "2026-09-09"])
+    frame["Open"], frame["Low"], frame["Volume"] = 110.0, 100.0, 10.0
+    frame.loc[pd.Timestamp("2026-09-08", tz=JST), ["Open", "High", "Low", "Close"]] = float("nan")
+    frame.loc[pd.Timestamp("2026-09-08", tz=JST), "Volume"] = 0.0
+    ticker = Mock()
+    # Match yfinance's real default cleanup: wholly unquoted zero-volume rows are dropped unless keepna=True.
+    ticker.history.side_effect = lambda **kwargs: frame if kwargs.get("keepna") else frame.drop(
+        pd.Timestamp("2026-09-08", tz=JST)
+    )
+    with (patch("src.data.live_quote.yf.Ticker", return_value=ticker),
+          patch("src.data.live_quote._now_jst", return_value=datetime(2026, 9, 9, 9, 20, tzinfo=JST))):
+        result = fetch_split_adjusted_history("1111.T", "2026-09-07", 100.0)
+    assert result.daily_highs.empty and result.daily_closes.empty
+    assert pd.Timestamp("2026-09-08", tz=JST) in result.daily_bars.index
+
+
+def test_live_history_provider_cannot_publish_holdings_through_print_logger_or_exception(
+    capsys: pytest.CaptureFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    hidden = "9999.T purchase=2026-08-04 private-token"
+    def fail(**kwargs):
+        print(hidden)
+        logging.getLogger("fake.credentials").error(hidden)
+        raise RuntimeError(hidden)
+    ticker = Mock()
+    ticker.history.side_effect = fail
+    with patch("src.data.live_quote.yf.Ticker", return_value=ticker), pytest.raises(RuntimeError) as error:
+        fetch_split_adjusted_history("9999.T", "2026-08-04", 100.0)
+    public = capsys.readouterr().out + caplog.text + str(error.value)
+    for value in ("9999.T", "2026-08-04", "private-token"):
+        assert value not in public
+    assert "RuntimeError" in str(error.value)
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_private_output_boundary_restores_logging_after_success_and_failure(fails: bool, caplog) -> None:
+    from src.data.provider_output import suppress_provider_output
+
+    previous = logging.root.manager.disable
+    try:
+        with suppress_provider_output():
+            logging.getLogger("fake.credentials").error("private-token")
+            if fails:
+                raise RuntimeError("private-token")
+    except RuntimeError:
+        pass
+    assert logging.root.manager.disable == previous
+    logging.getLogger("safe.diagnostics").error("safe provider stage completed")
+    assert "private-token" not in caplog.text and "safe provider stage completed" in caplog.text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -281,6 +282,40 @@ def test_main_preserves_retry_error_without_github_output(
         main()
 
     assert raised.value is error
+
+
+@pytest.mark.parametrize("stage", ["authentication", "data_validation", "snapshot_save"])
+def test_non_retry_failures_publish_their_safe_processing_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stage: str
+) -> None:
+    output = tmp_path / "outputs"
+    output.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    error = RuntimeError("DATA_HEALTH: invalid data" if stage == "data_validation" else "unavailable")
+    with (
+        patch("scripts.run_inflection_shadow.snapshot_encryption_secret", return_value=SECRET) as secret,
+        patch("scripts.run_inflection_shadow.scan_japan_inflection", return_value=_healthy_report()) as scan,
+        patch("scripts.run_inflection_shadow.persist_report") as persist,
+    ):
+        if stage == "authentication":
+            secret.side_effect = error
+        elif stage == "data_validation":
+            scan.side_effect = error
+        else:
+            persist.side_effect = error
+        with pytest.raises(RuntimeError):
+            main()
+    assert f"failure_stage={stage}" in output.read_text().splitlines()
+
+
+def test_scanner_public_entry_does_not_dump_private_provider_exception_details(capsys) -> None:
+    from scripts.run_inflection_shadow import cli
+
+    with patch("scripts.run_inflection_shadow.main", side_effect=RuntimeError("9999.T private-token")):
+        assert cli() == 1
+    public = capsys.readouterr().out
+    assert "9999.T" not in public and "private-token" not in public
+    assert "RuntimeError" in public
 
 
 def _v5_row(ticker: str, **overrides: object) -> dict:

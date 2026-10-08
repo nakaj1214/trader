@@ -22,6 +22,16 @@ from src.data.forward_prices import (
 )
 from src.data.jquants_history import tse_sessions
 
+
+def test_foreign_provider_logger_is_also_private(capsys, caplog) -> None:
+    def fail(*args, **kwargs):
+        logging.getLogger("fake.credentials").error("9999.T purchase=2026-08-04 private-token")
+        raise RuntimeError("9999.T private-token")
+    with patch("src.data.forward_prices.yf.download", side_effect=fail), pytest.raises(RuntimeError):
+        fetch_price_histories(["9999.T"], START, END, max_retries=0, sleep=lambda _: None)
+    public = capsys.readouterr().out + caplog.text
+    assert "9999.T" not in public and "2026-08-04" not in public and "private-token" not in public
+
 START, END = date(2026, 1, 1), date(2026, 2, 1)
 # The success fixture covers the requested window, excluding weekends and Japanese holidays.
 INDEX = pd.DatetimeIndex(tse_sessions(START, END - timedelta(days=1)))

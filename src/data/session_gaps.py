@@ -13,7 +13,7 @@ from typing import Any
 import exchange_calendars as xcals
 
 from src.data.forward_prices import snapshot_dates
-from src.data.market_calendar import TSE_CALENDAR, expected_tse_session_date
+from src.data.market_calendar import JST, TSE_CALENDAR, expected_tse_session_date
 
 
 def _sessions(start: date, end: date) -> list[date]:
@@ -29,6 +29,14 @@ def latest_settled_session(now: datetime) -> date:
     Handles weekends, holidays and a session that has not closed yet (its data is not final).
     """
     return date.fromisoformat(expected_tse_session_date(now))
+
+
+def expected_snapshot_missing(snapshot_dir: Path, now: datetime) -> str | None:
+    """Watch an expected session even before the first snapshot, without inventing historic gaps."""
+    through = latest_settled_session(now)  # also rejects naive timestamps
+    if through != now.astimezone(JST).date():
+        return None
+    return through.isoformat() if through not in snapshot_dates([snapshot_dir]) else None
 
 
 def missing_sessions(snapshot_dir: Path, through: date) -> list[str]:

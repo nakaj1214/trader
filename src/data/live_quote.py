@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.data.market_calendar import TSE_CALENDAR
+from src.data.provider_output import ProviderFailure, suppress_provider_output
 
 JST = ZoneInfo("Asia/Tokyo")
 # yfinance TSE 1m bars lag ~15 min (measured 2026-10-01); 20 leaves one bar of slack.
@@ -35,6 +36,7 @@ class SplitAdjustedHistory:
     entry_price: float
     daily_highs: pd.Series
     daily_closes: pd.Series
+    daily_bars: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _now_jst() -> datetime:
@@ -91,12 +93,13 @@ def fetch_split_adjusted_history(
     purchase_date = date.fromisoformat(entry_date)
     current_date = _now_jst().date()
     adjusted_entry = _positive(entry_price)
-    history = yf.Ticker(ticker).history(
-        start=entry_date,
-        auto_adjust=False,
-        actions=True,
-        timeout=15,
-    )
+    try:
+        with suppress_provider_output():
+            history = yf.Ticker(ticker).history(
+                start=entry_date, auto_adjust=False, actions=True, keepna=True, timeout=15,
+            )
+    except Exception as exc:  # noqa: BLE001 - retain causal type/status without exposing the provider body
+        raise ProviderFailure("daily_history", exc) from None
     if history.empty:
         if purchase_date < current_date:
             raise ValueError("daily history is missing for an existing position")
@@ -112,6 +115,8 @@ def fetch_split_adjusted_history(
     # only the user's raw entry price needs the later split ratios.
     frame = history.copy()
     frame.index = _jst_index(frame.index)
+    if pd.Index(frame.index.date).has_duplicates:
+        raise ValueError("daily history contains duplicate dates")
     row_dates = pd.Series(frame.index.date, index=frame.index)
     adjusted_entry /= _later_split_factor(_split_ratios(frame), purchase_date, current_date)
     prior_mask = (row_dates > purchase_date) & (row_dates < current_date)
@@ -125,25 +130,26 @@ def fetch_split_adjusted_history(
     actual_dates = set(prior.index.date)
     if actual_dates != expected_dates:
         raise ValueError("prior confirmed daily history is missing")
+    if {"Open", "High", "Low", "Close", "Volume"}.issubset(prior.columns):
+        # A confirmed zero-trade day is not a missing trading session.
+        unquoted = prior[["Open", "High", "Low", "Close"]].isna().all(axis=1) & (prior["Volume"] == 0)
+        prior = prior.loc[~unquoted]
 
     return SplitAdjustedHistory(
         entry_price=adjusted_entry,
         daily_highs=pd.Series([_positive(value) for value in prior["High"]], index=prior.index),
         daily_closes=pd.Series([_positive(value) for value in prior["Close"]], index=prior.index),
+        daily_bars=frame,
     )
 
 
 def fetch_today_bars(ticker: str) -> pd.DataFrame | None:
     """Return today's timestamped one-minute bars in JST."""
     try:
-        frame = yf.Ticker(ticker).history(
-            period="1d",
-            interval="1m",
-            auto_adjust=False,
-            actions=False,
-            prepost=False,
-            timeout=15,
-        )
+        with suppress_provider_output():
+            frame = yf.Ticker(ticker).history(
+                period="1d", interval="1m", auto_adjust=False, actions=False, prepost=False, timeout=15,
+            )
         if frame.empty or not {"Open", "High", "Low", "Close"}.issubset(frame.columns):
             return None
         if pd.DatetimeIndex(frame.index).tz is None:
@@ -155,8 +161,31 @@ def fetch_today_bars(ticker: str) -> pd.DataFrame | None:
         today = frame.loc[[timestamp.date() == now.date() for timestamp in frame.index]]
         if today.empty or today.index[-1] > now:
             return None
+        today.attrs["requested_date"] = now.date().isoformat()
         return today
     except Exception:  # noqa: BLE001 - provider and malformed response failures are equivalent here
+        return None
+
+
+def fetch_session_bars(ticker: str, session_date: str) -> pd.DataFrame | None:
+    """Retrieve a pending session, including its closing auction, without caching failures."""
+    session = date.fromisoformat(session_date)
+    try:
+        with suppress_provider_output():
+            frame = yf.Ticker(ticker).history(
+                start=session.isoformat(), end=(session + timedelta(days=1)).isoformat(),
+                interval="1m", auto_adjust=False, actions=False, prepost=False, timeout=15,
+            )
+        if frame.empty or not {"Open", "High", "Low", "Close"}.issubset(frame.columns):
+            return None
+        if pd.DatetimeIndex(frame.index).tz is None:
+            return None
+        frame = frame.copy()
+        frame.index = _jst_index(frame.index)
+        result = frame.loc[frame.index.date == session].sort_index()
+        result.attrs["requested_date"] = session.isoformat()
+        return result
+    except Exception:  # noqa: BLE001 - unavailable recovery data must leave the checkpoint pending
         return None
 
 

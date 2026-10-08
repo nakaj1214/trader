@@ -5,20 +5,30 @@ from __future__ import annotations
 import argparse
 import math
 import os
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, ParamSpec, TypeVar
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 import requests
 
-from src.data.live_quote import build_today_quote, fetch_split_adjusted_history, fetch_today_bars
+from src.data.live_quote import (
+    SplitAdjustedHistory,
+    build_today_quote,
+    fetch_session_bars,
+    fetch_split_adjusted_history,
+    fetch_today_bars,
+)
 from src.data.market_calendar import TSE_CALENDAR
-from src.data.sheets_client import read_holdings, read_status, write_status
+from src.data.provider_output import safe_error_details, suppress_provider_output
+from src.data.sheets_client import assert_production_writer, read_holdings, read_status, write_status
 from src.data.validation import is_finite_number
 from src.monitoring.position_exit import (
     DEFAULT_TRAILING_STOP_PCT,
+    IncompleteQuoteError,
     StaleQuoteError,
     evaluate_position,
 )
@@ -28,6 +38,13 @@ SLACK_TIMEOUT_SECONDS = 10
 CLOSE_GRACE_MINUTES = 30
 WARNING_DISTANCE_PCT = 3.0  # warn when the price is within this % above the stop (stop not yet hit)
 OVEREXTENDED_RETURN_20D_PCT = 50.0  # matches inflection_live._classify's r20 >= 50%; no scan dependency
+P = ParamSpec("P")
+T = TypeVar("T")
+
+
+def _private_call(function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    with suppress_provider_output():
+        return function(*args, **kwargs)
 
 
 def _number(value: Any, name: str) -> float:
@@ -60,8 +77,12 @@ def _failure_row(
 
 
 def _post_slack(webhook: str, text: str) -> None:
-    response = requests.post(webhook, json={"text": text}, timeout=SLACK_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    try:
+        response = requests.post(webhook, json={"text": text}, timeout=SLACK_TIMEOUT_SECONDS)
+        response.raise_for_status()
+    except Exception as exc:  # preserve the provider error class and annotate only a safe stage
+        exc.monitor_stage = "notification"  # type: ignore[attr-defined]
+        raise
 
 
 def _position_key(row: dict[str, Any]) -> tuple[str, str] | None:
@@ -75,13 +96,15 @@ def _position_key(row: dict[str, Any]) -> tuple[str, str] | None:
 
 def _unique_rows(rows: list[dict[str, Any]], source: str) -> dict[tuple[str, str], dict[str, Any]]:
     indexed: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in rows:
+    source_rows: dict[tuple[str, str], int] = {}
+    for row_number, row in enumerate(rows, start=2):
         key = _position_key(row)
         if key is None:
             continue
         if key in indexed:
-            raise ValueError(f"duplicate position key in {source}: {key[0]} {key[1]}")
+            raise ValueError(f"duplicate position key in {source}: rows {source_rows[key]} and {row_number}")
         indexed[key] = row
+        source_rows[key] = row_number
     return indexed
 
 
@@ -99,6 +122,67 @@ def _preserve_previous_state(row: dict[str, Any], previous: dict[str, Any] | Non
     row["exit_reason"] = previous.get("exit_reason", "") if previous and triggered else ""
     row["triggered_at"] = previous.get("triggered_at", "") if previous and triggered else ""
     row["last_notified_at"] = previous.get("last_notified_at", "") if previous and triggered else ""
+    row["as_of_at"] = previous.get("as_of_at", "") if previous else ""
+
+
+def _recover_pending(
+    ticker: str, purchase_date: date, history: SplitAdjustedHistory, stop_pct: float,
+    previous: dict[str, Any] | None, calendar: Any, current: datetime,
+) -> dict[str, Any] | None:
+    """Replay whole pending days so a partial checkpoint never loses intraday ordering."""
+    if previous and _stored_triggered(previous) and str(previous.get("exit_reason", "")).startswith("recovered_"):
+        return dict(previous)
+    checkpoint = None
+    if previous and previous.get("as_of_at"):
+        checkpoint = datetime.fromisoformat(str(previous["as_of_at"]))
+        if checkpoint.tzinfo is None:
+            raise IncompleteQuoteError("stored evaluation checkpoint lacks timezone")
+        checkpoint = checkpoint.astimezone(JST)
+    sessions = history.daily_bars.index if not history.daily_bars.empty else history.daily_highs.index
+    for timestamp in sessions:
+        session = timestamp.date()
+        if not purchase_date < session < current.date():
+            continue
+        close = calendar.session_close(session.isoformat()).to_pydatetime().astimezone(JST)
+        # Recheck the checkpoint day itself: older monitor versions did not prove its path completeness.
+        if checkpoint is not None and session < checkpoint.date():
+            continue
+        daily = _daily_reference(history, session)
+        if daily is not None and daily.get("Volume") == 0 and all(
+            not is_finite_number(daily.get(column)) for column in ("Open", "High", "Low", "Close")
+        ):
+            continue
+        bars = fetch_session_bars(ticker, session.isoformat())
+        if bars is not None and daily is not None:
+            bars.attrs["daily_bar"] = daily
+        quote = None if bars is None else build_today_quote(bars)
+        if quote is None or bars is None:
+            raise IncompleteQuoteError("pending historical session data is unavailable")
+        status = evaluate_position(
+            history.entry_price, purchase_date.isoformat(),
+            history.daily_highs.loc[history.daily_highs.index.date < session],
+            history.daily_closes.loc[history.daily_closes.index.date < session],
+            quote, bars, stop_pct, datetime.fromisoformat(quote.as_of_at) + timedelta(minutes=1),
+            ticker, in_session=False,
+        )
+        if status.triggered:
+            if previous and _stored_triggered(previous) and previous.get("last_notified_at"):
+                return dict(previous)
+            return {**asdict(status), "status": "recovered", "error": "",
+                    "exit_reason": f"recovered_{status.exit_reason}", "triggered_at": status.touch_at,
+                    "last_notified_at": ""}
+        if daily is None and datetime.fromisoformat(quote.as_of_at) < close:
+            raise IncompleteQuoteError("pending historical session end is not yet confirmed")
+    return None
+
+
+def _daily_reference(history: SplitAdjustedHistory, session: date) -> dict[str, Any] | None:
+    if history.daily_bars.empty:
+        return None
+    rows = history.daily_bars.loc[history.daily_bars.index.date == session]
+    if len(rows) != 1:
+        raise IncompleteQuoteError("daily reference for the requested session is missing or duplicated")
+    return dict(rows.iloc[0])
 
 
 def _warned_today(previous_rows: list[dict[str, Any]], today: date) -> dict[str, datetime]:
@@ -195,6 +279,7 @@ def is_in_session(calendar: Any, when: datetime) -> bool:
 
 
 def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
+    assert_production_writer()
     webhook = os.getenv("SLACK_WEBHOOK_URL", "")
     if not dry_run and not webhook:
         raise RuntimeError("SLACK_WEBHOOK_URL is required unless --dry-run is used")
@@ -203,13 +288,13 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
         raise ValueError("evaluated_at must include a timezone")
     current = current.astimezone(JST)
 
-    previous_rows = read_status()
+    previous_rows = _private_call(read_status)
     previous_by_key = _unique_rows(previous_rows, "status")
     warned_today = _warned_today(previous_rows, current.date())
-    holdings = read_holdings()
+    holdings = _private_call(read_holdings)
     _unique_rows(holdings, "holdings")
     if not holdings:
-        write_status([])
+        _private_call(write_status, [])
         print("position monitor complete: holdings=0")
         return 0
     calendar = xcals.get_calendar(TSE_CALENDAR)
@@ -241,9 +326,18 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             if stop_pct >= 100:
                 raise ValueError("trailing_stop_pct must be between 0 and 100")
 
-            history = fetch_split_adjusted_history(ticker, purchase_date.isoformat(), entry_price)
-            bars = fetch_today_bars(ticker)
-            quote = None if bars is None else build_today_quote(bars)
+            history = _private_call(fetch_split_adjusted_history, ticker, purchase_date.isoformat(), entry_price)
+            recovered = _private_call(_recover_pending, ticker, purchase_date, history, stop_pct, previous, calendar, current)
+            if recovered is not None:
+                rows.append(recovered)
+                if not recovered.get("last_notified_at"):
+                    notifications.append(recovered)
+                continue
+            bars = _private_call(fetch_today_bars, ticker)
+            daily = _daily_reference(history, current.date())
+            if bars is not None and daily is not None:
+                bars.attrs["daily_bar"] = daily
+            quote = None if bars is None else _private_call(build_today_quote, bars)
             if bars is None or quote is None:
                 failed = _failure_row(
                     ticker=ticker,
@@ -269,8 +363,14 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 in_session=in_market_window,
             )
             result = {**asdict(status), "status": "ok", "error": ""}
+            close = calendar.session_close(current.date().isoformat()).to_pydatetime().astimezone(JST)
+            if not status.triggered and current >= close and datetime.fromisoformat(status.as_of_at) < close:
+                result.update(status="incomplete", error="session end is not yet confirmed")
             was_triggered = _stored_triggered(previous)
-            if status.triggered:
+            if previous and was_triggered:
+                result["triggered"] = True
+                result["exit_reason"] = previous.get("exit_reason", status.exit_reason)
+            if result["triggered"]:
                 result["triggered_at"] = (
                     previous.get("triggered_at") if previous and was_triggered else current.isoformat()
                 ) or current.isoformat()
@@ -281,6 +381,13 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 result["triggered_at"] = ""
                 result["last_notified_at"] = ""
             rows.append(result)
+        except IncompleteQuoteError as exc:
+            failed = _failure_row(
+                ticker=ticker, entry_date=raw_date, entry_price=raw_price, trailing_stop_pct=stop_value,
+                status="incomplete", error=str(exc),
+            )
+            _preserve_previous_state(failed, previous)
+            rows.append(failed)
         except StaleQuoteError as exc:
             failed = _failure_row(
                 ticker=ticker,
@@ -293,6 +400,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             _preserve_previous_state(failed, previous)
             rows.append(failed)
         except Exception as exc:  # noqa: BLE001 - one bad holding must not hide the others
+            print(f"position monitor failure: stage=holding row={row_number} {safe_error_details(exc)}")
             failed = _failure_row(
                 ticker=ticker,
                 entry_date=raw_date,
@@ -304,23 +412,25 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             _preserve_previous_state(failed, previous)
             rows.append(failed)
 
-    ok_rows = [row for row in rows if row["status"] == "ok"]
-    stale_rows = [row for row in rows if row["status"] == "stale"]
+    ok_rows = [row for row in rows if row["status"] in ("ok", "recovered")]
+    stale_rows = [row for row in rows if row["status"] in ("stale", "incomplete")]
     error_rows = [row for row in rows if row["status"] == "error"]
     triggered = [row for row in ok_rows if row.get("triggered") is True]
     if not ok_rows:
         _carry_warning_state(rows, previous_by_key, warned_today, {})
-        write_status(rows)
+        _private_call(write_status, rows)
         raise RuntimeError("position monitor failed: no holdings had a usable current quote")
 
     slack_error: Exception | None = None
     if not dry_run and notifications:
         details = "\n".join(
-            f"• {row['ticker']}: {row['exit_reason']} current={row['current_price']} stop={row['stop_price']}"
+            f"• {row['ticker']}: "
+            + ("過去の未評価区間の接触回収 " if row["status"] == "recovered" else "現在の接触 ")
+            + f"{row['exit_reason']} at={row['triggered_at']} current={row['current_price']} stop={row['stop_price']}"
             for row in notifications
         )
         try:
-            _post_slack(
+            _private_call(_post_slack,
                 webhook,
                 "[検証用アラート] Trailing Stop条件を検知しました。確定した売買判断ではありません。"
                 " GitHub Actionsの実行時刻はbest-effortです。\n" + details,
@@ -332,7 +442,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
     if not dry_run and (stale_rows or error_rows):
         details = "\n".join(f"• {row['ticker']}: {row['status']} {row['error']}" for row in stale_rows + error_rows)
         try:
-            _post_slack(webhook, "[Position Monitor警告] 一部銘柄を評価できませんでした。\n" + details)
+            _private_call(_post_slack, webhook, "[Position Monitor警告] 一部銘柄を評価できませんでした。\n" + details)
         except Exception as exc:  # noqa: BLE001 - persist status before failing the workflow
             slack_error = slack_error or exc
 
@@ -344,7 +454,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             for row in warnings
         )
         try:
-            _post_slack(
+            _private_call(_post_slack,
                 webhook,
                 f"[検証用アラート] stop まで残り{WARNING_DISTANCE_PCT:g}%以内・過熱の注意喚起。"
                 "確定した売買判断ではありません。\n" + details,
@@ -354,7 +464,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             slack_error = slack_error or exc
 
     _carry_warning_state(rows, previous_by_key, warned_today, warned_now)
-    write_status(rows)
+    _private_call(write_status, rows)
     if slack_error is not None:
         raise slack_error
 
@@ -370,7 +480,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Monitor manual positions for provisional trailing-stop alerts.")
     parser.add_argument("--dry-run", action="store_true", help="write status without sending Slack notifications")
     args = parser.parse_args(argv)
-    return run(dry_run=args.dry_run)
+    try:
+        return run(dry_run=args.dry_run)
+    except Exception as exc:  # noqa: BLE001 - publish only a safe stage for the separate failure job
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        stage = str(getattr(exc, "monitor_stage", "monitor"))
+        if status in (401, 403) or type(exc).__name__ == "RefreshError" or str(exc).startswith("GOOGLE_"):
+            stage = "authentication"
+        if output_path := os.getenv("GITHUB_OUTPUT"):
+            with Path(output_path).open("a", encoding="utf-8") as output:
+                output.write(f"failure_stage={stage}\n")
+        print(f"position monitor failed: stage={stage} {safe_error_details(exc)}")
+        return 1
 
 
 if __name__ == "__main__":

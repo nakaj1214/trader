@@ -8,6 +8,8 @@ from src.data.sheets_client import STATUS_COLUMNS, read_holdings, read_status, w
 
 
 def _environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
     monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON", '{"type":"service_account"}')
     monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet-id")
 

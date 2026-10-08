@@ -12,9 +12,6 @@ already fetched. The cache is an optimisation only: an unreadable file is ignore
 
 from __future__ import annotations
 
-import contextlib
-import io
-import logging
 import pickle
 import re
 import time
@@ -29,6 +26,7 @@ import yfinance as yf
 from yfinance.utils import auto_adjust
 
 from src.data.jquants_history import tse_sessions
+from src.data.provider_output import suppress_provider_output
 from src.data.validation import validate_ohlcv
 from src.data.yfinance_prices import _drop_unquoted_bars, _extract_ticker_frame
 
@@ -144,11 +142,8 @@ def _save_cache(path: Path | None, entries: dict[str, dict[str, Any]]) -> None:
 
 
 def _download_batch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
-    provider_logger = logging.getLogger("yfinance")
-    was_disabled = provider_logger.disabled
-    provider_logger.disabled = True
     try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with suppress_provider_output():
             return yf.download(
                 " ".join(tickers),
                 start=start.isoformat(),
@@ -162,8 +157,6 @@ def _download_batch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
             )
     except Exception:  # noqa: BLE001 - provider failures share the retry path and never expose tickers
         return pd.DataFrame()
-    finally:
-        provider_logger.disabled = was_disabled
 
 
 def fetch_price_histories(

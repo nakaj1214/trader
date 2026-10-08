@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
 import pandas as pd
 
 from src.data.live_quote import (
@@ -15,6 +16,7 @@ from src.data.live_quote import (
     STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION,
     TodayQuote,
 )
+from src.data.market_calendar import TSE_CALENDAR
 
 # Keep the dashboard metric identical to the existing forward-validation metric.
 from src.evaluation.inflection_backtest import _true_max_drawdown_pct
@@ -25,6 +27,10 @@ DEFAULT_TRAILING_STOP_PCT = 15.0
 
 class StaleQuoteError(ValueError):
     """Raised when a quote cannot safely represent the evaluation time."""
+
+
+class IncompleteQuoteError(ValueError):
+    """Raised when an unevaluated price interval cannot be confirmed."""
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,7 @@ class PositionStatus:
     triggered: bool
     exit_reason: str | None
     return_20d_pct: float | None = None
+    touch_at: str | None = None
 
 
 def _positive(value: Any, name: str) -> float:
@@ -96,7 +103,45 @@ def _minute_bars(values: pd.DataFrame, quote_at: datetime, evaluated_at: datetim
         raise ValueError("today_bars must contain only finite positive prices")
     if any(row.Low > min(row.Open, row.Close) or max(row.Open, row.Close) > row.High for row in frame.itertuples()):
         raise ValueError("today_bars OHLC values are inconsistent")
-    return frame.sort_index()
+    frame = frame.sort_index()
+    reference = values.attrs.get("daily_bar")
+    if values.attrs.get("requested_date") != quote_at.date().isoformat() or not isinstance(reference, dict):
+        raise IncompleteQuoteError("price path lacks full-session request or daily reference evidence")
+    required_daily = required | {"Volume"}
+    if not required_daily.issubset(reference) or "Volume" not in values:
+        raise IncompleteQuoteError("price path lacks daily OHLC and volume evidence")
+    try:
+        daily = {key: float(reference[key]) for key in required_daily}
+        volume = pd.to_numeric(values["Volume"], errors="coerce")
+        if any(not math.isfinite(value) or value <= 0 for key, value in daily.items() if key != "Volume"):
+            raise ValueError
+        if daily["Volume"] < 0 or not math.isfinite(daily["Volume"]):
+            raise ValueError
+        if any(not math.isfinite(float(value)) or value < 0 for value in volume):
+            raise ValueError
+        actual = {"Open": float(frame["Open"].iloc[0]), "High": float(frame["High"].max()),
+                  "Low": float(frame["Low"].min()), "Close": float(frame["Close"].iloc[-1]),
+                  "Volume": float(volume.sum())}
+        if any(not math.isclose(actual[key], daily[key], rel_tol=1e-9, abs_tol=1e-9) for key in required_daily):
+            raise IncompleteQuoteError("minute path does not reconcile with daily OHLC and volume")
+        calendar = xcals.get_calendar(TSE_CALENDAR)
+        session = quote_at.date().isoformat()
+        opening, closing = calendar.session_open(session), calendar.session_close(session)
+        morning_end, afternoon_start = calendar.session_break_start(session), calendar.session_break_end(session)
+        for timestamp in frame.index:
+            if not (opening <= timestamp <= morning_end or afternoon_start <= timestamp <= closing):
+                raise IncompleteQuoteError("minute path contains rows outside TSE trading hours")
+        for position, bar in enumerate(frame.itertuples()):
+            if float(volume.loc[bar.Index]) == 0 and not bar.Open == bar.High == bar.Low == bar.Close:
+                raise IncompleteQuoteError("zero-volume minute has a changing price")
+            if float(volume.loc[bar.Index]) == 0 and position and bar.Open != frame["Close"].iloc[position - 1]:
+                raise IncompleteQuoteError("zero-volume minute changes the preceding price")
+        frame["Volume"] = volume.astype(float)
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, IncompleteQuoteError):
+            raise
+        raise IncompleteQuoteError("price path reference or volume is invalid") from None
+    return frame
 
 
 def evaluate_position(
@@ -137,7 +182,8 @@ def evaluate_position(
     stale_minutes = (
         STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION if in_session else STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION
     )
-    if age > timedelta(minutes=stale_minutes):
+    closing = xcals.get_calendar(TSE_CALENDAR).session_close(quote_at.date().isoformat())
+    if age > timedelta(minutes=stale_minutes) and pd.Timestamp(quote_at) < closing:
         raise StaleQuoteError("quote is stale")
 
     opening = _positive(today_quote.open, "quote open")
@@ -157,14 +203,19 @@ def evaluate_position(
     high_water = adjusted_entry if highs.empty else max(adjusted_entry, float(highs.max()))
     stop_price = high_water * (1.0 - stop_pct / 100.0)
     triggered, exit_reason = False, None
+    touch_at = None
     if purchase_date < evaluated_at.date():
         for bar in bars.itertuples():
+            if bar.Volume == 0:
+                continue
             stop_price = high_water * (1.0 - stop_pct / 100.0)
             if bar.Open <= stop_price:
                 triggered, exit_reason = True, "trailing_gap"
+                touch_at = pd.Timestamp(bar.Index).isoformat()
                 break
             if bar.Low <= stop_price:
                 triggered, exit_reason = True, "trailing_stop"
+                touch_at = pd.Timestamp(bar.Index).isoformat()
                 break
             high_water = max(high_water, float(bar.High))
         if not triggered:
@@ -188,4 +239,5 @@ def evaluate_position(
         triggered=triggered,
         exit_reason=exit_reason,
         return_20d_pct=_return_20d_pct(closes, last),
+        touch_at=touch_at,
     )

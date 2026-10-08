@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.data.market_calendar import expected_tse_session_date
+from src.data.provider_output import safe_error_details
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
 from src.data.validation import is_finite_number
 from src.notify.inflection_digest import send_daily_digest
@@ -230,7 +231,11 @@ def _deliver_digest(report: dict[str, Any], *, snapshot_created: bool) -> str:
 
 
 def main() -> None:
-    encryption_secret = snapshot_encryption_secret()
+    try:
+        encryption_secret = snapshot_encryption_secret()
+    except Exception as exc:
+        _publish_failure_stage("authentication", exc)
+        raise
     try:
         report = scan_japan_inflection()
     except PriceDataRetryExhausted as exc:
@@ -238,7 +243,14 @@ def main() -> None:
             with Path(output_path).open("a", encoding="utf-8") as output:
                 output.writelines(f"{key}={value}\n" for key, value in exc.details.items())
         raise
-    snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
+    except Exception as exc:
+        _publish_failure_stage("data_acquisition", exc)
+        raise
+    try:
+        snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
+    except Exception as exc:
+        _publish_failure_stage("snapshot_save", exc)
+        raise
     digest_status = _deliver_digest(report, snapshot_created=snapshot_created)
 
     counts = report.get("classification_counts", {})
@@ -265,5 +277,25 @@ def main() -> None:
     )
 
 
+def _publish_failure_stage(stage: str, error: Exception) -> None:
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status in (401, 403) or str(error).startswith("JQUANTS_API_KEY"):
+        stage = "authentication"
+    elif str(error).startswith("DATA_HEALTH:"):
+        stage = "data_validation"
+    if output_path := os.getenv("GITHUB_OUTPUT"):
+        with Path(output_path).open("a", encoding="utf-8") as output:
+            output.write(f"failure_stage={stage}\n")
+
+
+def cli() -> int:
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001 - keep ticker samples and provider credentials out of public tracebacks
+        print(f"inflection shadow scan failed: {safe_error_details(exc)}")
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli())

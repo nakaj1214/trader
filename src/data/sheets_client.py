@@ -57,6 +57,12 @@ def read_status(worksheet_name: str = "状況") -> list[dict[str, Any]]:
     return list(_worksheet(worksheet_name).get_all_records())
 
 
+def assert_production_writer() -> None:
+    """Actions owns the shared-state lock; local and other-branch writers are denied."""
+    if os.getenv("GITHUB_ACTIONS") != "true" or os.getenv("GITHUB_REF") != "refs/heads/main":
+        raise RuntimeError("production writer requires the serialized main-branch GitHub Actions job")
+
+
 def _cell_data(value: Any) -> dict[str, Any]:
     if value in (None, ""):
         return {}
@@ -68,6 +74,7 @@ def _cell_data(value: Any) -> dict[str, Any]:
 
 
 def write_status(rows: list[dict[str, Any]], worksheet_name: str = "状況") -> None:
+    assert_production_writer()
     worksheet = _worksheet(worksheet_name)
     values = [list(STATUS_COLUMNS)]
     values.extend(

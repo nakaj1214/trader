@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -7,6 +9,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
 import pandas as pd
 import pytest
 import requests
@@ -44,6 +47,12 @@ TRIGGERED_STATUS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _production_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+
+
 @contextmanager
 def _dependencies(
     holdings: list[dict[str, Any]],
@@ -54,10 +63,16 @@ def _dependencies(
     session: bool = True,
     market_window: bool = True,
 ) -> Iterator[dict[str, Mock]]:
-    calendar = Mock()
+    if bars is not None and not bars.attrs:
+        bars = bars.copy()
+        bars["Volume"] = 1.0
+        bars.attrs = {"requested_date": bars.index[-1].date().isoformat(), "daily_bar": {
+            "Open": float(bars["Open"].iloc[0]), "High": float(bars["High"].max()),
+            "Low": float(bars["Low"].min()), "Close": float(bars["Close"].iloc[-1]), "Volume": float(len(bars)),
+        }}
+    calendar = Mock(wraps=xcals.get_calendar("XTKS"))
     calendar.is_session.return_value = session
     calendar.is_open_on_minute.return_value = market_window
-    calendar.session_close.return_value = pd.Timestamp("2026-09-08 15:30", tz=JST)
     response = Mock()
     with (
         patch("scripts.run_position_monitor.read_status", return_value=previous or []) as read_status,
@@ -113,7 +128,7 @@ def test_dry_run_writes_triggered_status_without_slack(monkeypatch: pytest.Monke
     assert row["last_notified_at"] == ""
     deps["post"].assert_not_called()
     deps["fetch_bars"].assert_called_once_with("1111.T")
-    assert deps["build_quote"].call_args.args[0] is BARS
+    pd.testing.assert_frame_equal(deps["build_quote"].call_args.args[0].drop(columns="Volume"), BARS)
 
 
 def test_trigger_and_partial_error_send_slack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,7 +156,7 @@ def test_continuing_notified_trigger_is_not_sent_again(monkeypatch: pytest.Monke
     deps["post"].assert_not_called()
 
 
-def test_cleared_trigger_resets_notification_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recovered_price_preserves_the_record_of_a_notified_touch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
     index = pd.DatetimeIndex([NOW - timedelta(minutes=1)])
     bars = pd.DataFrame(
@@ -153,9 +168,9 @@ def test_cleared_trigger_resets_notification_state(monkeypatch: pytest.MonkeyPat
         assert run(dry_run=False, evaluated_at=NOW) == 0
 
     row = deps["write"].call_args.args[0][0]
-    assert row["triggered"] is False
-    assert row["triggered_at"] == ""
-    assert row["last_notified_at"] == ""
+    assert row["triggered"] is True
+    assert row["triggered_at"] == TRIGGERED_STATUS["triggered_at"]
+    assert row["last_notified_at"] == TRIGGERED_STATUS["last_notified_at"]
     deps["post"].assert_not_called()
 
 
@@ -502,3 +517,220 @@ def test_exactly_fifty_percent_is_an_overheating_candidate() -> None:
     assert _warning_candidates([{**row, "return_20d_pct": 49.999}], {}) == []
     assert _warning_candidates([row], {"1111.T": NOW}) == []
     assert _warning_candidates([{**row, "triggered": True}], {}) == []
+
+
+def _close_bars(day: str, *, touched: bool) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {"Open": [100.0, 100.0, 100.0], "High": [100.0, 100.0, 100.0],
+         "Low": [100.0, 85.0 if touched else 100.0, 100.0], "Close": [100.0, 100.0, 100.0],
+         "Volume": [10.0, 10.0, 10.0]},
+        index=pd.DatetimeIndex([f"{day} 09:00", f"{day} 15:25", f"{day} 15:30"], tz=JST),
+    )
+    frame.attrs = {"requested_date": day, "daily_bar": {
+        "Open": 100.0, "High": 100.0, "Low": 85.0 if touched else 100.0,
+        "Close": 100.0, "Volume": 30.0,
+    }}
+    return frame
+
+
+def test_unpublished_close_remains_pending_with_an_evaluation_checkpoint() -> None:
+    at = datetime(2026, 9, 8, 15, 35, tzinfo=JST)
+    bars = _close_bars("2026-09-08", touched=False).iloc[:1].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 15:20"], tz=JST)
+    bars.attrs["daily_bar"]["Volume"] = 10.0
+    quote = TodayQuote(100.0, 100.0, 100.0, 100.0, bars.index[-1].isoformat())
+    with _dependencies([HOLDING], bars=bars, quote=quote) as deps:
+        try:
+            run(dry_run=True, evaluated_at=at)
+        except RuntimeError:
+            pass
+    row = _written(deps)[0]
+    assert row["status"] == "incomplete"
+    assert row["as_of_at"] == quote.as_of_at
+    assert "session end" in row["error"]
+
+
+@pytest.mark.parametrize("final_failed", [False, True])
+@pytest.mark.parametrize("checkpoint_time", ["15:20", "15:30"])
+def test_next_day_recovers_1525_touch_and_does_not_repeat_the_notification(
+    monkeypatch: pytest.MonkeyPatch, final_failed: bool, checkpoint_time: str
+) -> None:
+    from src.data.live_quote import build_today_quote
+
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    yesterday = "2026-09-08"
+    today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
+    historical = _close_bars(yesterday, touched=True)
+    current_bars = _close_bars("2026-09-09", touched=False).iloc[:1]
+    history = SplitAdjustedHistory(
+        100.0, pd.Series([100.0], index=pd.DatetimeIndex([yesterday], tz=JST)),
+        pd.Series([100.0], index=pd.DatetimeIndex([yesterday], tz=JST)),
+    )
+    previous = [{**HOLDING, "triggered": False, "as_of_at": f"{yesterday}T{checkpoint_time}:00+09:00",
+                 "status": "stale" if final_failed else "ok"}]
+    with (
+        _dependencies([HOLDING], previous=previous, bars=current_bars) as deps,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=historical, create=True) as recovery,
+    ):
+        deps["fetch_history"].return_value = history
+        deps["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=today) == 0
+        saved = _written(deps)
+    assert saved[0]["triggered"] is True
+    assert saved[0]["exit_reason"] == "recovered_trailing_stop"
+    assert saved[0]["triggered_at"] == "2026-09-08T15:25:00+09:00"
+    recovery.assert_called_once_with("1111.T", yesterday)
+    texts = [call.kwargs["json"]["text"] for call in deps["post"].call_args_list]
+    assert len(texts) == 1 and "過去の未評価区間" in texts[0]
+    with (
+        _dependencies([HOLDING], previous=saved, bars=current_bars) as retry,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=historical, create=True),
+    ):
+        retry["fetch_history"].return_value = history
+        retry["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=today) == 0
+    assert _written(retry)[0]["triggered"] is True
+    retry["post"].assert_not_called()
+
+
+def test_failed_final_monitor_keeps_the_last_evaluated_timestamp() -> None:
+    previous = [{**HOLDING, "triggered": False, "as_of_at": "2026-09-08T12:35:00+09:00"}]
+    with _dependencies([HOLDING], previous=previous, bars=None) as deps, pytest.raises(RuntimeError, match="no holdings"):
+        run(dry_run=True, evaluated_at=NOW)
+    assert _written(deps)[0]["as_of_at"] == previous[0]["as_of_at"]
+
+
+def test_recovery_does_not_advance_past_a_missing_historical_session() -> None:
+    today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
+    previous = [{**HOLDING, "triggered": False, "as_of_at": "2026-09-08T15:20:00+09:00"}]
+    index = pd.DatetimeIndex(["2026-09-08"], tz=JST)
+    with (
+        _dependencies([HOLDING], previous=previous) as deps,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=None, create=True),
+        pytest.raises(RuntimeError, match="no holdings"),
+    ):
+        deps["fetch_history"].return_value = SplitAdjustedHistory(
+            100.0, pd.Series([100.0], index=index), pd.Series([100.0], index=index)
+        )
+        run(dry_run=True, evaluated_at=today)
+    row = _written(deps)[0]
+    assert row["status"] == "incomplete"
+    assert row["as_of_at"] == previous[0]["as_of_at"]
+
+
+def test_incomplete_current_path_keeps_the_checkpoint_for_next_run() -> None:
+    previous = [{**HOLDING, "triggered": False, "as_of_at": "2026-09-08T09:00:00+09:00"}]
+    bars = _close_bars("2026-09-08", touched=True).iloc[[0, 2]].copy()
+    at = datetime(2026, 9, 8, 15, 45, tzinfo=JST)
+    quote = TodayQuote(100.0, 100.0, 100.0, 100.0, bars.index[-1].isoformat())
+    with (_dependencies([HOLDING], previous=previous, bars=bars, quote=quote) as deps,
+          pytest.raises(RuntimeError, match="no holdings")):
+        run(dry_run=True, evaluated_at=at)
+    row = _written(deps)[0]
+    assert row["status"] == "incomplete"
+    assert row["as_of_at"] == previous[0]["as_of_at"]
+    assert row["last_notified_at"] == ""
+
+
+def test_missed_whole_day_is_replayed_when_the_final_monitor_never_started(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.data.live_quote import build_today_quote
+
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
+    index = pd.DatetimeIndex(["2026-09-08"], tz=JST)
+    historical = _close_bars("2026-09-08", touched=True)
+    with (
+        _dependencies([HOLDING], previous=[{**HOLDING, "triggered": False}]) as deps,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=historical) as fetch,
+    ):
+        deps["fetch_history"].return_value = SplitAdjustedHistory(
+            100.0, pd.Series([100.0], index=index), pd.Series([100.0], index=index)
+        )
+        deps["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=today) == 0
+    fetch.assert_called_once_with("1111.T", "2026-09-08")
+    assert _written(deps)[0]["exit_reason"] == "recovered_trailing_stop"
+
+
+@pytest.mark.parametrize("branch", ["refs/heads/feature", "refs/tags/release", ""])
+def test_nonproduction_branch_cannot_read_notify_or_write_shared_state(
+    monkeypatch: pytest.MonkeyPatch, branch: str
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REF", branch)
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING]) as deps, pytest.raises(RuntimeError, match="production writer"):
+        run(dry_run=False, evaluated_at=NOW)
+    deps["read_status"].assert_not_called()
+    deps["post"].assert_not_called()
+    deps["write"].assert_not_called()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_local_execution_cannot_bypass_the_production_state_lock(
+    monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING]) as deps, pytest.raises(RuntimeError, match="production writer"):
+        run(dry_run=dry_run, evaluated_at=NOW)
+    deps["read_status"].assert_not_called()
+    deps["post"].assert_not_called()
+    deps["write"].assert_not_called()
+
+
+def test_notified_stop_cannot_roll_back_when_the_current_price_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    with _dependencies([HOLDING], previous=[TRIGGERED_STATUS], bars=FAR_BARS, quote=FAR_QUOTE) as deps:
+        assert run(dry_run=False, evaluated_at=NOW) == 0
+    row = _written(deps)[0]
+    assert row["triggered"] is True
+    assert row["triggered_at"] == TRIGGERED_STATUS["triggered_at"]
+    assert row["last_notified_at"] == TRIGGERED_STATUS["last_notified_at"]
+    deps["post"].assert_not_called()
+
+
+@pytest.mark.parametrize("provider", ["read_status", "read_holdings", "fetch_split_adjusted_history",
+                                     "fetch_today_bars", "write_status", "requests.post"])
+def test_monitor_public_boundary_does_not_leak_a_fake_providers_holdings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, caplog: pytest.LogCaptureFixture, provider: str
+) -> None:
+    from scripts.run_position_monitor import main
+
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/private-webhook")
+    hidden = "9999.T entry_date=2026-08-04 holdings=[secret] private-token"
+    reached = []
+    def fail(*args, **kwargs):
+        reached.append(provider)
+        print(hidden)
+        logging.getLogger("fake.sheets.provider").exception(hidden)
+        raise RuntimeError(hidden)
+    public_traceback = ""
+    with (
+        _dependencies([HOLDING]),
+        patch("scripts.run_position_monitor.run", side_effect=lambda **kwargs: run(evaluated_at=NOW, **kwargs)),
+        patch(f"scripts.run_position_monitor.{provider}", side_effect=fail),
+    ):
+        try:
+            result = main([])
+        except Exception as error:  # noqa: BLE001 - include the old public traceback in the red-phase leak assertion
+            result = 1
+            public_traceback = "".join(traceback.format_exception(error))
+    assert result == 1
+    assert reached
+    captured = capsys.readouterr()
+    public = captured.out + captured.err + caplog.text + public_traceback
+    for value in ("9999.T", "2026-08-04", "holdings=[secret]", "private-token", "private-webhook"):
+        assert value not in public
+    assert "RuntimeError" in public
+
+
+def test_duplicate_position_failure_contains_row_numbers_without_the_private_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    holding = {**HOLDING, "ticker": "9999.T", "entry_date": "2026-08-04"}
+    with _dependencies([holding, holding]), pytest.raises(ValueError) as error:
+        run(dry_run=False, evaluated_at=NOW)
+    message = str(error.value)
+    assert "9999.T" not in message and "2026-08-04" not in message
+    assert "rows 2 and 3" in message

@@ -1,0 +1,113 @@
+name: Workflow Reliability Watchdog
+
+on:
+  schedule:
+    # 20:10 JST daily. Actions scheduling is best-effort; an independent external cron can run the same command.
+    - cron: '10 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  watchdog:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.setup.outcome == 'failure' && 'setup' || steps.install.outcome == 'failure' && 'install' || 'watchdog' }}
+    concurrency:
+      group: workflow-reliability-notifications
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted watchdog
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Restore notification state
+        id: restore-alert-state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: |
+            workflow-reliability-main-
+
+      - name: Set up Python
+        id: setup
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime dependencies
+        id: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Check expected workflow runs
+        id: watch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/check_workflow_health.py
+
+      - name: Save notification state
+        if: steps.watch.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+  notify-failure:
+    needs: watchdog
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.watchdog.result == 'failure' || needs.watchdog.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: workflow-reliability-notifications
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted notifier
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Restore notification state
+        id: restore-alert-state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: |
+            workflow-reliability-main-
+
+      - name: Notify watchdog failure
+        id: notify
+        env:
+          FAILURE_STAGE: ${{ needs.watchdog.outputs.failure_stage || 'watchdog' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: reliability_watchdog.yml
+        run: python scripts/check_workflow_health.py --notify-failure
+
+      - name: Save notification state
+        if: steps.notify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

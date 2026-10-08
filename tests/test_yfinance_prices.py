@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
 from src.data.yfinance_prices import fetch_price_data
+
+
+def test_scanner_provider_print_and_foreign_logger_are_private(capsys, caplog) -> None:
+    hidden = "9999.T 2026-08-04 private-token"
+    def fail(*args, **kwargs):
+        print(hidden)
+        logging.getLogger("fake.provider").error(hidden)
+        raise RuntimeError(hidden)
+    with patch("src.data.yfinance_prices.yf.download", side_effect=fail):
+        assert fetch_price_data(["9999.T"], 30, max_retries=0, sleep=lambda _: None) == {}
+    public = capsys.readouterr().out + caplog.text
+    assert "9999.T" not in public and "2026-08-04" not in public and "private-token" not in public
 
 
 def _single_frame(value: float = 100.0) -> pd.DataFrame:

@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pandas as pd
 import yfinance as yf
 
+from src.data.provider_output import suppress_provider_output
 from src.data.validation import validate_ohlcv
 
 BATCH_SIZE = 50
@@ -98,15 +99,16 @@ def fetch_price_data(
             if not pending:
                 break
             try:
-                raw = yf.download(
-                    " ".join(pending),
-                    period=period,
-                    group_by="ticker",
-                    progress=False,
-                    auto_adjust=False,
-                    actions=False,
-                    threads=True,
-                )
+                with suppress_provider_output():
+                    raw = yf.download(
+                        " ".join(pending),
+                        period=period,
+                        group_by="ticker",
+                        progress=False,
+                        auto_adjust=False,
+                        actions=False,
+                        threads=True,
+                    )
             except Exception:  # noqa: BLE001 - third-party provider failures are retried uniformly
                 raw = pd.DataFrame()
 

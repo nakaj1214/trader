@@ -49,24 +49,29 @@ jobs:
     permissions:
       contents: read
     outputs:
+      failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.install.outcome == 'failure' && 'install' || 'forward' }}
       price_hashes_created: ${{ steps.forward_validation.outputs.price_hashes_created }}
 
     steps:
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - id: setup
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
+        id: install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Test forward-validation core
+        id: test
         run: |
           python -m pytest \
             tests/test_exit_rules.py \
@@ -109,6 +114,7 @@ jobs:
           fi
 
       - name: Pass encrypted price hashes to persistence job
+        id: upload-price-hashes
         if: steps.forward_validation.outputs.price_hashes_created == 'true'
         uses: actions/upload-artifact@v7
         with:
@@ -117,6 +123,7 @@ jobs:
           retention-days: 90
 
       - name: Preserve aggregate validation summary
+        id: upload-validation-summary
         uses: actions/upload-artifact@v7
         with:
           name: inflection-forward-summary
@@ -125,12 +132,14 @@ jobs:
           retention-days: 90
 
       - name: Build inflection learning report
+        id: learning
         if: github.event_name == 'schedule'
         env:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: python scripts/rebuild_inflection_learning.py --promotion-strategy-version jp-inflection-shadow-v3
 
       - name: Preserve aggregate learning summary
+        id: upload-learning-summary
         if: github.event_name == 'schedule'
         uses: actions/upload-artifact@v7
         with:
@@ -148,19 +157,24 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.git_push.outcome == 'failure' && 'git_push' || 'forward' }}
 
     steps:
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v7
+      - id: download-price-hashes
+        uses: actions/download-artifact@v7
         with:
           name: inflection-forward-price-hashes
           path: dashboard/data
 
       # Intentional direct push: this job writes one encrypted generated-data file only.
       - name: Commit encrypted forward-price hashes
+        id: git_push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -168,3 +182,49 @@ jobs:
           git diff --staged --quiet || git commit -m "data: update encrypted forward-price hashes [skip ci]"
           git pull --rebase --autostash origin "${{ github.ref_name }}"
           git push
+
+  notify-failure:
+    needs: [validate, persist-price-hashes]
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.validate.result == 'failure' || needs.validate.result == 'cancelled' || needs.persist-price-hashes.result == 'failure' || needs.persist-price-hashes.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: workflow-reliability-notifications
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted notifier
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Restore notification state
+        id: restore-alert-state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: |
+            workflow-reliability-main-
+
+      - name: Notify classified workflow failure
+        id: notify
+        env:
+          FAILURE_STAGE: ${{ (needs.validate.result == 'failure' || needs.validate.result == 'cancelled') && needs.validate.outputs.failure_stage || needs.persist-price-hashes.outputs.failure_stage || 'forward' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: forward_validation.yml
+        run: python scripts/check_workflow_health.py --notify-failure
+
+      - name: Save notification state
+        if: steps.notify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

@@ -2,47 +2,94 @@ name: Position Exit Monitor
 
 on:
   schedule:
-    # 09:20, 12:50 and 15:35 JST (after yfinance's ~15 min 1m-bar delay), Monday-Friday. Scheduled runs are best-effort.
+    # 09:20, 12:50, 15:35 and a 15:50 closing check (after ~15 min provider delay), best-effort.
     - cron: '20 0 * * 1-5'
     - cron: '50 3 * * 1-5'
     - cron: '35 6 * * 1-5'
+    - cron: '50 6 * * 1-5'
   workflow_dispatch:
-
-concurrency:
-  group: position-monitor-${{ github.ref_name }}
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   monitor:
+    if: github.ref == 'refs/heads/main'
+    # All production Sheets writers share this lock; local production writes are prohibited.
+    concurrency:
+      group: position-monitor-production
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.setup.outcome == 'failure' && 'setup' || steps.install.outcome == 'failure' && 'install' || steps.monitor.outputs.failure_stage || 'monitor' }}
     env:
       GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
       GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
     steps:
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+      - id: setup
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
+        id: install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
 
       - name: Monitor manual positions
+        id: monitor
         run: python scripts/run_position_monitor.py
 
-      - name: Notify failure
-        if: failure() && env.SLACK_WEBHOOK_URL != ''
-        run: |
-          curl --fail-with-body --max-time 10 -X POST -H 'Content-type: application/json' \
-            --data '{"text":"Position Exit Monitor workflow failed. Check GitHub Actions logs."}' \
-            "${SLACK_WEBHOOK_URL}"
+  notify-failure:
+    needs: monitor
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.monitor.result == 'failure' || needs.monitor.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: workflow-reliability-notifications
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted notifier
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Restore notification state
+        id: restore-alert-state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: |
+            workflow-reliability-main-
+
+      - name: Notify classified workflow failure
+        id: notify
+        env:
+          FAILURE_STAGE: ${{ needs.monitor.outputs.failure_stage || 'monitor' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: position_monitor.yml
+        run: python scripts/check_workflow_health.py --notify-failure
+
+      - name: Save notification state
+        if: steps.notify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .harness/state/workflow-alerts.json
+          key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

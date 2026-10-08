@@ -144,13 +144,13 @@ def main(argv: list[str] | None = None) -> int:
     summary_output = repo_root / args.summary_output
     summary_output.parent.mkdir(parents=True, exist_ok=True)
     summary_output.write_text(
-        json.dumps(summary_report(report), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(summary_report(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8"
     )
     output: Path | None = None
     if args.include_trades:
         output = repo_root / args.output
         with output.open("w", encoding="utf-8") as handle:
-            json.dump(report, handle, ensure_ascii=False)  # streamed in pieces: no giant in-memory string
+            json.dump(report, handle, ensure_ascii=False, allow_nan=False)  # streamed without a giant string
             handle.write("\n")
     print(
         json.dumps(

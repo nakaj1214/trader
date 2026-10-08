@@ -101,7 +101,7 @@ class JQuantsV2Client:
             payload = response.json()
             if not isinstance(payload, dict):
                 raise TypeError(f"Invalid J-Quants response for {path}: expected an object")
-            data = payload.get("data", [])
+            data = payload.get("data")
             if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
                 raise TypeError(f"Invalid J-Quants response for {path}: data must be a list of objects")
             rows.extend(data)

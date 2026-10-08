@@ -58,6 +58,9 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
         result = result.iloc[:, 0]
     result = pd.to_numeric(result, errors="coerce").dropna()
     result.index = pd.to_datetime(result.index).tz_localize(None)
+    if (result.index.normalize().has_duplicates or result.index.hasnans
+            or result.isin([float("inf"), float("-inf")]).any() or (result <= 0).any()):
+        raise ValueError("Invalid price history: prices must be finite, positive and unique by date")
     return result.sort_index()
 
 

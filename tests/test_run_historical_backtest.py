@@ -20,8 +20,8 @@ from tests.test_jquants_history import FakeClient, _http_error
 def _write_cache(root: Path) -> Path:
     cache = root / ".data" / "jquants"
     for day, rows in _bars().items():
-        _write_day(cache, "bars", day, rows)
-    _write_day(cache, "master", DATES[0], _master())
+        _write_day(cache, "bars", day, [{"Date": day} | row for row in rows])
+    _write_day(cache, "master", DATES[0], [{"Date": DATES[0]} | row for row in _master()])
     fins = _fins()
     for code in CODES:
         _write_day(cache, "fins", "2026-02-01", [row for row in fins if row["Code"] == code and row["DiscDate"] == "2026-02-01"])
@@ -173,7 +173,7 @@ def test_verify_adjustment_exit_codes(monkeypatch: pytest.MonkeyPatch, tmp_path:
         days[1]: [_bar("11110", 50.0, 1000.0, 0.5)],
         days[2]: [_bar("11110", 50.0, 1000.0)],
     }.items():
-        _write_day(cache, "bars", day, rows)
+        _write_day(cache, "bars", day, [{"Date": day} | row for row in rows])
     monkeypatch.setattr(cli, "_client", lambda: ByCodeClient(dict.fromkeys(days, 50.0)))
     assert main(["--repo-root", str(tmp_path), "--verify-adjustment", "3"]) == 0
     capsys.readouterr()
@@ -187,7 +187,7 @@ def test_verify_adjustment_stops_on_4xx(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     cache = tmp_path / ".data" / "jquants"
     for day, rows in {"2026-01-05": [_bar("11110", 100.0, 1000.0, 1.0)], "2026-01-06": [_bar("11110", 50.0, 1000.0, 0.5)]}.items():
-        _write_day(cache, "bars", day, rows)
+        _write_day(cache, "bars", day, [{"Date": day} | row for row in rows])
 
     class Rejecting:
         def daily_bars_by_code(self, code: str) -> list[dict[str, Any]]:

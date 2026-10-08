@@ -146,7 +146,7 @@ def test_transport_error_raises_after_retry_budget() -> None:
         client._get("/equities/master")
 
 
-@pytest.mark.parametrize("payload", [[], {"data": {}}, {"data": ["not-an-object"]}])
+@pytest.mark.parametrize("payload", [[], {}, {"message": "unexpected"}, {"data": {}}, {"data": ["not-an-object"]}])
 def test_get_rejects_malformed_success_payload(payload: object) -> None:
     client = JQuantsV2Client(api_key="secret", min_interval=0)
     with (
@@ -154,6 +154,12 @@ def test_get_rejects_malformed_success_payload(payload: object) -> None:
         pytest.raises(TypeError, match="Invalid J-Quants response"),
     ):
         client._get("/equities/master")
+
+
+def test_get_accepts_an_explicit_empty_data_list() -> None:
+    client = JQuantsV2Client(api_key="test-key", min_interval=0)
+    with patch("src.data.jquants_v2_client.requests.get", return_value=_response(200, {"data": []})):
+        assert client._get("/fins/summary") == []
 
 
 def test_get_rejects_repeated_pagination_cursor() -> None:

@@ -105,6 +105,18 @@ def test_technical_features_use_raw_turnover_separately_from_adjusted_close() ->
     assert result["avg_turnover_20d_jpy"] == 123_000_000.0
 
 
+@pytest.mark.parametrize(("column", "value"), [
+    ("Close", float("nan")), ("Close", float("inf")), ("Close", float("-inf")), ("Close", 0.0),
+    ("Volume", float("nan")), ("Volume", float("inf")), ("Volume", -1.0), ("Turnover", float("inf")),
+])
+def test_technical_features_reject_invalid_used_values(column: str, value: float) -> None:
+    frame = _price_frame()
+    if column == "Turnover":
+        frame[column] = frame["Close"] * frame["Volume"]
+    frame.loc[frame.index[-1], column] = value
+    assert _technical_features(frame) is None
+
+
 @pytest.mark.parametrize("periods", [19, 20])
 def test_technical_features_require_21_closes(periods: int) -> None:
     assert _technical_features(_price_frame(periods)) is None
@@ -528,6 +540,52 @@ def test_candidate_persists_raw_features_score_details_and_sector() -> None:
     assert (candidate["sector33_code"], candidate["sector33_name"]) == ("3650", "電気機器")
 
 
+def test_stale_prices_are_excluded_from_both_pools_and_sector_at_coverage_threshold() -> None:
+    client = MultiCodeFakeClient(count=5)
+    current = _price_frame()
+    expected_date = str(current.index[-1].date())
+    prices = {f"{code[:4]}.T": current.copy() for code in client.codes}
+    prices["5555.T"] = current.iloc[:-1].copy()
+    with (
+        patch("src.screening.inflection_live.fetch_price_data", return_value=prices) as fetch,
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=10,
+                                       control_sample_size=10, min_turnover_jpy=0)
+
+    assert fetch.call_count == 1  # 4/5 fresh prices already satisfies the global coverage gate.
+    assert report["price_data_count"] == 5
+    assert report["latest_price_date_count"] == 4
+    assert report["stale_tickers_sample"] == ["5555.T"]
+    assert report["technical_usable_count"] == report["liquid_candidate_count"] == 4
+    expected_tickers = {"1111.T", "2222.T", "3333.T", "4444.T"}
+    for pool in (report["candidates"], report["control_sample"]):
+        assert {row["ticker"] for row in pool} == expected_tickers
+        # Only four fresh sector members remain; the five-member median threshold is unmet.
+        assert all(row["features"]["sector33_return_20d_pct"] is None for row in pool)
+
+
+def test_retry_recovered_prices_rejoin_both_pools_and_sector() -> None:
+    client = MultiCodeFakeClient(count=5)
+    current = _price_frame()
+    prices = {f"{code[:4]}.T": current.copy() for code in client.codes}
+    for ticker in ("4444.T", "5555.T"):
+        prices[ticker] = current.iloc[:-1].copy()
+    with (
+        patch("src.screening.inflection_live.fetch_price_data",
+              side_effect=[prices, {"4444.T": current, "5555.T": current}]) as fetch,
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=str(current.index[-1].date())),
+        patch.dict("os.environ", {"INFLECTION_PRICE_RETRY_COUNT": "1", "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"}),
+    ):
+        report = scan_japan_inflection(client=client, deep_candidates=10,
+                                       control_sample_size=10, min_turnover_jpy=0)
+
+    assert fetch.call_args_list[1].args == (["4444.T", "5555.T", "7777.T"], 252)
+    for pool in (report["candidates"], report["control_sample"]):
+        assert len(pool) == 5
+        assert all(row["features"]["sector33_return_20d_pct"] is not None for row in pool)
+
+
 def test_candidate_features_keep_every_key_without_financials() -> None:
     client = MultiCodeFakeClient(no_financials=frozenset(f"{n}{n}{n}{n}0" for n in range(1, 7)))
     report = _scan_multi(client, deep_candidates=1, control_sample_size=0)
@@ -762,13 +820,13 @@ def test_price_diagnostics_need_enough_history_and_never_raise() -> None:
         assert tech["distance_from_period_high_pct"] == pytest.approx(0.0)  # at its high
 
 
-def test_price_diagnostics_ignore_a_zero_price_instead_of_failing() -> None:
+def test_price_diagnostics_reject_a_zero_price_even_outside_the_recent_window() -> None:
     frame = _frame_from_returns([0.01] * 40)
     frame.iloc[10, frame.columns.get_loc("Close")] = 0.0  # a bad print makes one return infinite
 
     tech = _technical_features(frame)
 
-    assert tech is not None and tech["max_daily_return_20d_pct"] == pytest.approx(1.0)  # last 20 days are clean
+    assert tech is None  # C06: a recent clean window does not make an invalid older price usable.
 
 
 def test_disclosure_ages_are_counted_from_the_scan_market_date() -> None:
@@ -981,7 +1039,8 @@ def test_sector_median_includes_illiquid_names_and_both_candidate_pools() -> Non
     meta["B.T"] = {"Code": "11110", "S33": "9999"}
     prices["C.T"] = _frame_from_returns([0.0] * 60)
     meta["C.T"] = {"Code": "11110"}
-    selected = select_and_evaluate(prices, meta, FakeJQuantsClient(), seed_date="2026-04-01", deep_candidates=2,
+    selected = select_and_evaluate(prices, meta, FakeJQuantsClient(),
+                                   seed_date=str(prices["0.T"].index[-1].date()), deep_candidates=2,
                                    min_turnover_jpy=1, control_sample_size=20, fundamental_limitation="test")
     median_return = ((1 + 0.2 / 20) ** 20 - 1) * 100
     for candidate in [*selected.candidates, *selected.control_sample]:

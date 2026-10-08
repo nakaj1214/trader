@@ -369,10 +369,10 @@ def main() -> int:
 
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     summary_output = output.with_name(f"{output.stem}_summary.json")
     summary_output.write_text(
-        json.dumps(_summary_only(report), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(_summary_only(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
     print(

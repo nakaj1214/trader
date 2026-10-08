@@ -140,6 +140,12 @@ def _pct_change(close: pd.Series, days: int) -> float | None:
 
 
 def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
+    if not {"Close", "Volume"}.issubset(df.columns) or df.index.has_duplicates:
+        return None
+    used = df[[col for col in ("Close", "Volume", "Turnover") if col in df]].apply(pd.to_numeric, errors="coerce")
+    if (used.isna().any().any() or used.isin([float("inf"), float("-inf")]).any().any()
+            or (used["Close"] <= 0).any() or (used.drop(columns="Close") < 0).any().any()):
+        return None
     close = pd.to_numeric(df.get("Close"), errors="coerce").dropna()
     if len(close) < 21:
         return None
@@ -580,6 +586,8 @@ def select_and_evaluate(
     technical_usable: set[str] = set()
     sector_samples: dict[str, dict[int, list[float]]] = {}
     for ticker, df in prices.items():
+        if _latest_close_date(df) != seed_date:
+            continue
         tech = _technical_features(df)
         if not tech:
             continue

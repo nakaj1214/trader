@@ -20,9 +20,11 @@ from src.data.forward_prices import (
     shared_price_window,
     snapshot_dates,
 )
+from src.data.jquants_history import tse_sessions
 
-INDEX = pd.bdate_range("2026-01-05", periods=12)
 START, END = date(2026, 1, 1), date(2026, 2, 1)
+# The success fixture covers the requested window, excluding weekends and Japanese holidays.
+INDEX = pd.DatetimeIndex(tse_sessions(START, END - timedelta(days=1)))
 
 
 def _raw(base: float = 100.0, adj: float = 0.9) -> pd.DataFrame:
@@ -137,6 +139,101 @@ def test_cache_lets_the_second_consumer_skip_fetched_tickers(tmp_path: Path) -> 
     assert third.calls == [["9999.T"]] and set(wider.raw) == {*frames, "9999.T"}
 
 
+@pytest.mark.parametrize("gap", ["prefix", "tail", "interior"])
+def test_partial_history_cache_is_refetched_for_actual_missing_sessions(tmp_path: Path, gap: str) -> None:
+    complete = _raw()
+    partial = {"prefix": complete.iloc[5:], "tail": complete.iloc[:-2],
+               "interior": complete.drop(INDEX[8])}[gap]
+    cache = tmp_path / "cache.pkl"
+    first, _ = _fetch({"1111.T": partial}, cache_path=cache)
+    assert first.unavailable == 0  # Short/gapped ordinary histories are usable, not a retrieval failure.
+
+    second, download = _fetch({"1111.T": complete}, cache_path=cache)
+    assert download.calls == [["1111.T"]]
+    pd.testing.assert_frame_equal(second.raw["1111.T"], complete)
+    _, reused = _fetch({"1111.T": complete}, cache_path=cache)
+    assert reused.calls == []
+
+
+@pytest.mark.parametrize("reason", ["new_listing", "suspension"])
+def test_legitimate_short_history_remains_available_without_claiming_full_cache(tmp_path: Path, reason: str) -> None:
+    frame = _raw().iloc[8:] if reason == "new_listing" else _raw().drop(INDEX[8:11])
+    cache = tmp_path / "cache.pkl"
+    for _ in range(2):
+        result, download = _fetch({"1111.T": frame}, cache_path=cache)
+        assert download.calls == [["1111.T"]]
+        assert result.unavailable == 0
+        pd.testing.assert_frame_equal(result.raw["1111.T"], frame)
+    if reason == "new_listing":
+        # No rows are required before listing when the requested window starts on its first bar.
+        fake = FakeDownload({})
+        with patch("yfinance.download", fake):
+            narrower = fetch_price_histories(["1111.T"], frame.index[0].date(), END, cache_path=cache,
+                                            max_retries=0, sleep=lambda _: None)
+        assert fake.calls == [] and narrower.unavailable == 0
+
+
+@pytest.mark.parametrize("gap", ["prefix", "tail", "interior"])
+def test_incomplete_required_benchmark_retries_and_is_never_saved_as_complete(tmp_path: Path, gap: str) -> None:
+    complete = _raw()
+    partial = {"prefix": complete.iloc[1:], "tail": complete.iloc[:-1],
+               "interior": complete.drop(INDEX[8])}[gap]
+    fake = FakeDownload({"1306.T": partial})
+    cache = tmp_path / "cache.pkl"
+    with patch("yfinance.download", fake), pytest.raises(RuntimeError, match="Required price history"):
+        fetch_price_histories(["1306.T"], START, END, required={"1306.T"}, cache_path=cache,
+                              max_retries=1, sleep=lambda _: None)
+    assert fake.calls == [["1306.T"], ["1306.T"]]
+    assert not cache.exists()
+
+
+def test_partial_required_benchmark_recovers_during_retry() -> None:
+    complete = _raw()
+    with patch("yfinance.download", side_effect=[complete.drop(INDEX[8]), complete]) as download:
+        result = fetch_price_histories(["1306.T"], START, END, required={"1306.T"},
+                                      max_retries=1, sleep=lambda _: None)
+    assert download.call_count == 2 and result.unavailable == 0
+    pd.testing.assert_frame_equal(result.raw["1306.T"], complete)
+
+
+def test_partial_legacy_cache_cannot_satisfy_required_benchmark(tmp_path: Path) -> None:
+    cache = tmp_path / "cache.pkl"
+    _fetch({"1306.T": _raw().iloc[:1]}, cache_path=cache)
+    result, fake = _fetch({"1306.T": _raw()}, cache_path=cache, required={"1306.T"})
+    assert fake.calls == [["1306.T"]]
+    assert len(result.raw["1306.T"]) == len(INDEX)
+
+
+def test_required_benchmark_needs_only_sessions_before_exclusive_end() -> None:
+    # 01/01, 01/02 and 01/12 are holidays; 01/13 is the exclusive end, not a missing bar.
+    end = date(2026, 1, 13)
+    frame = _raw().loc[_raw().index < pd.Timestamp(end)]
+    with patch("yfinance.download", return_value=frame):
+        result = fetch_price_histories(["1306.T"], START, end, required={"1306.T"}, max_retries=0)
+    assert len(result.raw["1306.T"]) == 5
+
+
+def test_wider_cache_returns_only_the_requested_price_window(tmp_path: Path) -> None:
+    cache = tmp_path / "cache.pkl"
+    _fetch({"1111.T": _raw()}, cache_path=cache)
+    fake = FakeDownload({})
+    with patch("yfinance.download", fake):
+        result = fetch_price_histories(["1111.T"], INDEX[5].date(), INDEX[9].date(), cache_path=cache,
+                                      max_retries=0, sleep=lambda _: None)
+    assert fake.calls == []
+    pd.testing.assert_frame_equal(result.raw["1111.T"], _raw().iloc[5:9])
+
+
+def test_no_quote_suspension_row_is_a_gap_not_an_invalid_quoted_price(tmp_path: Path) -> None:
+    frame = _raw()
+    frame.loc[INDEX[8], ["Open", "High", "Low", "Close", "Adj Close"]] = float("nan")
+    frame.loc[INDEX[8], "Volume"] = 0.0
+    for _ in range(2):
+        result, fake = _fetch({"1111.T": frame}, cache_path=tmp_path / "cache.pkl", max_retries=0)
+        assert fake.calls == [["1111.T"]] and result.unavailable == 0
+        pd.testing.assert_frame_equal(result.raw["1111.T"], _raw().drop(INDEX[8]))
+
+
 def test_cache_is_not_reused_when_it_covers_a_shorter_window(tmp_path: Path) -> None:
     cache = tmp_path / "price_cache.pkl"
     frames = {"1111.T": _raw()}
@@ -235,6 +332,34 @@ def test_frames_without_adj_close_count_as_missing() -> None:
     result, _ = _fetch(frames, max_retries=0)
 
     assert "0003.T" not in result.raw and result.unavailable == 1
+
+
+@pytest.mark.parametrize(("column", "value"), [
+    ("Adj Close", float("nan")), ("Adj Close", float("inf")), ("Adj Close", float("-inf")),
+    ("Adj Close", 0.0), ("Adj Close", -1.0), ("High", float("inf")), ("High", 1.0),
+    ("Volume", float("nan")), ("Volume", float("inf")), ("Volume", -1.0), ("Close", 0.0),
+])
+def test_invalid_forward_prices_are_not_returned_or_cached(tmp_path: Path, column: str, value: float) -> None:
+    frame = _raw()
+    frame.loc[frame.index[0], column] = value
+    cache = tmp_path / "cache.pkl"
+    with pytest.raises(RuntimeError, match="Price retrieval failed"):
+        _fetch({"1111.T": frame}, max_retries=0, cache_path=cache)
+    assert not cache.exists()
+
+
+def test_duplicate_forward_dates_are_rejected() -> None:
+    frame = pd.concat([_raw().iloc[:1], _raw()])
+    with pytest.raises(RuntimeError, match="Price retrieval failed"):
+        _fetch({"1111.T": frame}, max_retries=0)
+
+
+def test_total_return_revalidates_the_values_used_after_adjustment() -> None:
+    frame = _raw()
+    frame["Close"] = frame["Low"] = 1e-300
+    frame["Adj Close"] = 1e300
+    with pytest.raises(ValueError, match="Invalid adjusted price history"):
+        PriceHistories({"1111.T": frame}, START, END).total_return()
 
 
 @pytest.mark.parametrize("kwargs", [{"batch_size": 0}, {"max_retries": -1}, {"retry_backoff_seconds": -1.0}])

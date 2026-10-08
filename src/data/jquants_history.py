@@ -6,8 +6,8 @@ One gzip-JSON file per day and kind under ``cache_dir``::
     master/YYYY-MM-DD.json.gz  listed-issue master as of that day
     fins/YYYY-MM-DD.json.gz    every financial summary disclosed that calendar day
 
-Files are written atomically and an existing file is never fetched again, so an
-interrupted run resumes where it stopped. The cache holds third-party data and must
+Files are written atomically and valid existing files are reused; malformed days
+are refetched so an interrupted run can recover. The cache holds third-party data and must
 stay out of git (``.data/`` is gitignored).
 """
 
@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import exchange_calendars as xcals
 import pandas as pd
@@ -63,17 +63,41 @@ def _path(cache_dir: Path, kind: str, day: str) -> Path:
 def read_day(cache_dir: Path, kind: str, day: str) -> list[dict[str, Any]]:
     with gzip.open(_path(cache_dir, kind, day), "rt", encoding="utf-8") as handle:
         rows = json.load(handle)
-    if not isinstance(rows, list):
-        raise TypeError(f"cached {kind}/{day} must contain a list")
-    return rows
+    _validate_day(kind, day, rows)
+    return cast(list[dict[str, Any]], rows)
+
+
+def _validate_day(kind: str, day: str, rows: Any) -> None:
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise TypeError(f"Invalid {kind} data for {day}: expected a list of objects")
+    if kind in ("bars", "master") and not rows:
+        raise ValueError(f"Invalid {kind} data for {day}: empty trading-day response")
+    seen: set[str] = set()
+    for row in rows:
+        code = row.get("Code")
+        date_key = "DiscDate" if kind == "fins" else "Date"
+        if not isinstance(code, str) or not code.strip() or row.get(date_key) != day:
+            raise ValueError(f"Invalid {kind} data for {day}: missing key or mismatched date")
+        if kind in ("bars", "master") and code in seen:
+            raise ValueError(f"Invalid {kind} data for {day}: duplicate code/date")
+        seen.add(code)
+
+
+def _cached_day_is_valid(cache_dir: Path, kind: str, day: str) -> bool:
+    try:
+        read_day(cache_dir, kind, day)
+        return True
+    except (OSError, EOFError, UnicodeError, ValueError, TypeError):
+        return False
 
 
 def _write_day(cache_dir: Path, kind: str, day: str, rows: list[dict[str, Any]]) -> None:
+    _validate_day(kind, day, rows)
     path = _path(cache_dir, kind, day)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     with gzip.open(tmp, "wt", encoding="utf-8") as handle:
-        json.dump(rows, handle, ensure_ascii=False, separators=(",", ":"))
+        json.dump(rows, handle, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     os.replace(tmp, path)
 
 
@@ -167,7 +191,7 @@ def fetch_range(
     kinds: tuple[str, ...] = KINDS,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
-    """Fetch and cache bars, master and fins for ``[start, end]``; skip cached days."""
+    """Fetch and cache bars, master and fins for ``[start, end]``; reuse validated days."""
     unknown = set(kinds) - set(KINDS)
     if unknown:
         raise ValueError(f"unknown kinds: {sorted(unknown)}")
@@ -178,14 +202,15 @@ def fetch_range(
 
     if "bars" in kinds:
         for day in sessions:
-            if not _path(cache_dir, "bars", day).exists():
+            if not _cached_day_is_valid(cache_dir, "bars", day):
                 _write_day(cache_dir, "bars", day, _call(client.daily_bars, "bars", day))
                 fetched["bars"] += 1
                 log(f"bars {day} fetched")
 
     if "master" in kinds:
-        for day in monthly_master_days(sessions):
-            if not _path(cache_dir, "master", day).exists():
+        master_days = set(monthly_master_days(sessions)) | (set(load_cache(cache_dir).days("master")) & set(sessions))
+        for day in sorted(master_days):
+            if not _cached_day_is_valid(cache_dir, "master", day):
                 _write_day(cache_dir, "master", day, _call(client.listed_issues, "master", day))
                 fetched["master"] += 1
                 log(f"master {day} fetched")
@@ -196,7 +221,7 @@ def fetch_range(
         day_cursor = start
         while day_cursor <= end:
             day = day_cursor.isoformat()
-            if not _path(cache_dir, "fins", day).exists():
+            if not _cached_day_is_valid(cache_dir, "fins", day):
                 _write_day(cache_dir, "fins", day, _call(client.financial_summary_by_date, "fins", day))
                 fetched["fins"] += 1
                 log(f"fins {day} fetched")
@@ -239,7 +264,7 @@ def _fetch_extra_masters(
         if not missing:
             continue
         if day not in codes_by_master:
-            if not _path(cache_dir, "master", day).exists():
+            if not _cached_day_is_valid(cache_dir, "master", day):
                 _write_day(cache_dir, "master", day, _call(client.listed_issues, "master", day))
             codes_by_master[day] = _codes(read_day(cache_dir, "master", day))
             extra += 1

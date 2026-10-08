@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.data.jquants_history import HistoryCache
-from src.data.validation import is_finite_number
+from src.data.validation import is_finite_number, validate_ohlcv
 from src.evaluation.inflection_backtest import (
     BOOTSTRAP_SEED,
     cluster_bootstrap_ci,
@@ -97,6 +97,14 @@ def _build_ticker_bars(day_rows: Iterable[tuple[str, list[dict[str, Any]]]]) -> 
     everything = pd.concat(pieces, ignore_index=True).sort_values(["Code", "Date"], kind="stable")
     result: dict[str, TickerBars] = {}
     for code, group in everything.groupby("Code", sort=False):
+        raw = group.set_index("Date").rename(columns={"O": "Open", "H": "High", "L": "Low", "C": "Close",
+                                                     "Vo": "Volume", "Va": "Turnover"})
+        # A no-trade bar may carry a split factor even though all OHLC are missing.
+        quoted = raw.dropna(how="all", subset=["Open", "High", "Low", "Close"])
+        factor = group["AdjFactor"]
+        if (not factor.map(lambda value: is_finite_number(value) and value > 0).all()
+                or (not quoted.empty and validate_ohlcv(quoted)) or raw.index.has_duplicates):
+            raise ValueError("Invalid historical price or adjustment factor")
         factor = group["AdjFactor"].fillna(1.0)
         # cum[i] = product of factor[j] for j > i
         cum = factor.iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy(dtype=float)
@@ -153,7 +161,7 @@ class BarPanel:
             window = slice(max(0, end - HISTORY_WINDOW), end)
             sliced = bars.frame.iloc[window]
             factor = bars.cum[window] / bars.cum[end - 1]
-            frames[ticker] = pd.DataFrame(
+            frame = pd.DataFrame(
                 {
                     "Close": sliced["C"].to_numpy(dtype=float) * factor,
                     "Volume": sliced["Vo"].to_numpy(dtype=float),
@@ -161,6 +169,10 @@ class BarPanel:
                 },
                 index=sliced.index,
             )
+            if (not frame.map(is_finite_number).all().all() or (frame["Close"] <= 0).any()
+                    or (frame[["Volume", "Turnover"]] < 0).any().any()):
+                raise ValueError("Invalid historical price after adjustment")
+            frames[ticker] = frame
         self._asof_cache = (as_of, frames)
         return frames
 
@@ -178,7 +190,10 @@ class BarPanel:
                 index=bars.frame.index,
             )
             # Trailing-stop simulation needs complete OHLC, so drop the rare rows missing any of it.
-            result[ticker] = frame.dropna()
+            frame = frame.dropna()
+            if validate_ohlcv(frame, require_volume=False):
+                raise ValueError("Invalid historical price after adjustment")
+            result[ticker] = frame
         return result
 
 

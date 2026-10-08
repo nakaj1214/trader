@@ -29,6 +29,12 @@ def test_snapshot_crypto_rejects_wrong_key() -> None:
         decrypt_json(encrypted, "wrong-key")
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_snapshot_serialization_rejects_nonfinite_values(value: float) -> None:
+    with pytest.raises(ValueError, match="Out of range float values"):
+        encrypt_json({"candidates": [{"features": {"current_price": value}}]}, "test-key")
+
+
 def test_snapshot_key_id_is_stable_and_non_secret() -> None:
     assert key_id("secret-key") == key_id("secret-key")
     assert key_id("secret-key") != key_id("other-key")

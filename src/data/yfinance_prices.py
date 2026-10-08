@@ -42,25 +42,35 @@ def _normalize_for_scanner(frame: pd.DataFrame) -> pd.DataFrame:
     raw_close = pd.to_numeric(frame["Close"], errors="coerce")
     adjusted_close = pd.to_numeric(frame["Adj Close"], errors="coerce")
     raw_volume = pd.to_numeric(frame["Volume"], errors="coerce")
-    valid = (raw_close > 0) & (adjusted_close > 0)
-    if not bool(valid.any()):
-        return frame
     normalized = frame.copy()
     normalized["Turnover"] = raw_close * raw_volume
+    for column in ("Open", "High", "Low"):
+        normalized[column] = pd.to_numeric(frame[column], errors="coerce") * (adjusted_close / raw_close)
     normalized["Close"] = adjusted_close
     return normalized
+
+
+def _drop_unquoted_bars(frame: pd.DataFrame) -> pd.DataFrame:
+    """Omit outer-join padding or no-trade rows, preserving every partially quoted row for validation."""
+    if "Volume" not in frame:
+        return frame
+    prices = [column for column in ("Open", "High", "Low", "Close", "Adj Close") if column in frame]
+    unquoted = frame[prices].isna().all(axis=1) & frame["Volume"].fillna(0).eq(0)
+    return frame.loc[~unquoted]
 
 
 def _extract_batch(raw: pd.DataFrame, batch: list[str]) -> dict[str, pd.DataFrame]:
     result: dict[str, pd.DataFrame] = {}
     for ticker in batch:
         frame = _extract_ticker_frame(raw, ticker, len(batch))
-        if frame.empty or "Close" not in frame.columns or frame["Close"].dropna().empty:
+        if frame.empty or "Adj Close" not in frame.columns:
             continue
-        frame = frame.dropna(subset=["Close"])
+        frame = _drop_unquoted_bars(frame)
         if validate_ohlcv(frame):
             continue
-        result[ticker] = _normalize_for_scanner(frame)
+        normalized = _normalize_for_scanner(frame)
+        if not validate_ohlcv(normalized):
+            result[ticker] = normalized
     return result
 
 

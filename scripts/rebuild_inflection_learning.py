@@ -85,12 +85,12 @@ def main() -> int:
     report["price_unavailable_ticker_count"] = len({str(row["ticker"]) for row in observations} - set(histories))
     output = repo_root / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
     summary_output = repo_root / args.summary_output
     summary_output.parent.mkdir(parents=True, exist_ok=True)
     summary_output.write_text(
-        json.dumps(public_learning_summary(report), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(public_learning_summary(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 

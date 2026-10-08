@@ -46,6 +46,16 @@ def _bars() -> dict[str, list[dict[str, Any]]]:
     return rows
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("H", float("inf")), ("C", float("nan")), ("C", 0.0), ("H", 50.0), ("Vo", float("inf")),
+    ("AdjFactor", float("nan")), ("AdjFactor", float("inf")), ("AdjFactor", 0.0),
+])
+def test_historical_rejects_invalid_raw_and_adjustment_values(field: str, value: float) -> None:
+    rows = {"2026-01-05": [_bar("11110", 100.0, 1000.0, **{field: value})]}
+    with pytest.raises(ValueError, match="Invalid historical price"):
+        BarPanel.from_rows(rows)
+
+
 def _master(extra: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     rows = [
         {"Code": code, "CoName": f"Co {code}", "Mkt": "0111", "MktNm": "Prime", "S33": "3650", "S33Nm": "電気機器"}

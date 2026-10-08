@@ -37,7 +37,7 @@ def key_id(secret: str) -> str:
 
 def encrypt_json(payload: dict[str, Any], secret: str) -> str:
     """Serialize and encrypt a JSON object into an ASCII-safe text envelope."""
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     token = _fernet(secret).encrypt(raw).decode("ascii")
     return f"{FORMAT_HEADER}\n{token}\n"
 

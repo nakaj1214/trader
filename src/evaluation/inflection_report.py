@@ -32,8 +32,6 @@ from src.evaluation.inflection_backtest import (
 )
 from src.evaluation.inflection_forward import (
     MARKET_BENCHMARK_TICKERS,
-    benchmark_returns_by_signal_date,
-    enrich_trades_with_benchmark,
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
@@ -317,13 +315,7 @@ def _build_group_report(
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
         )
-        benchmark_returns = benchmark_returns_by_signal_date(
-            signal_dates,
-            benchmark_history,
-            holding_days=holding_days,
-            round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
-        )
-        trade_rows = enrich_trades_with_benchmark(trades, benchmark_returns)
+        trade_rows = _paired_trade_rows(trades, benchmark_history)
         stress_trades = simulate_signals(
             signals,
             histories,
@@ -332,7 +324,7 @@ def _build_group_report(
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
         )
-        stress_trade_rows = enrich_trades_with_benchmark(stress_trades, benchmark_returns)
+        stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
         stress_report: dict[str, Any] = {
             "summary": summarize_trades(stress_trades),
             "position_summary": summarize_trades(select_non_overlapping_trades(stress_trades)),

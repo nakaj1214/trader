@@ -37,6 +37,20 @@ def test_signal_enters_next_trading_day_open() -> None:
     assert round(trade.gross_return_pct or 0, 6) == round((160 / 110 - 1) * 100, 6)
 
 
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), 0.0, -1.0])
+def test_evaluation_rejects_invalid_prices_before_computing_json_metrics(value: float) -> None:
+    history = _history([100.0] * 3, [100.0, value, 120.0])
+    with pytest.raises(ValueError, match="Invalid price history"):
+        simulate_signal({"ticker": "A.T", "signal_date": "2026-01-01", "score": 80}, history, holding_days=2)
+
+
+def test_evaluation_rejects_duplicate_daily_prices() -> None:
+    history = _history([100.0] * 3, [100.0, 110.0, 120.0])
+    history.index = pd.DatetimeIndex([history.index[0], history.index[1], history.index[1]])
+    with pytest.raises(ValueError, match="Invalid price history"):
+        simulate_signal({"ticker": "A.T", "signal_date": "2026-01-01", "score": 80}, history, holding_days=2)
+
+
 def test_tax_applies_only_to_positive_net_profit() -> None:
     history = _history([100, 100, 100], [100, 110, 120])
     untaxed = simulate_signal(

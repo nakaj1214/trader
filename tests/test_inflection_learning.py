@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from scripts.rebuild_inflection_learning import main as rebuild_main
-from src.data.snapshot_crypto import encrypt_json
+from src.data.snapshot_crypto import FORMAT_HEADER, _fernet
 from src.evaluation.inflection_forward import SnapshotLoadError
 from src.evaluation.inflection_learning import (
     _bucket,
@@ -100,9 +100,11 @@ def legacy_payload(
 
 
 def _write_snapshot(directory: Path, payload: dict[str, Any]) -> None:
+    # Loader tests include legacy nonfinite JSON that the current writer must no longer emit.
     market_date = str(payload["latest_price_date"])
+    token = _fernet(SECRET).encrypt(json.dumps(payload).encode()).decode()
     (directory / f"{market_date}.enc").write_text(
-        encrypt_json(payload, SECRET),
+        f"{FORMAT_HEADER}\n{token}\n",
         encoding="utf-8",
     )
 

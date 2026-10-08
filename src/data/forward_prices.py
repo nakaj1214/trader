@@ -28,7 +28,9 @@ import pandas as pd
 import yfinance as yf
 from yfinance.utils import auto_adjust
 
-from src.data.yfinance_prices import _extract_ticker_frame
+from src.data.jquants_history import tse_sessions
+from src.data.validation import validate_ohlcv
+from src.data.yfinance_prices import _drop_unquoted_bars, _extract_ticker_frame
 
 BATCH_SIZE = 50
 DEFAULT_MAX_RETRIES = 2
@@ -39,7 +41,7 @@ DEFAULT_CACHE_RELATIVE_PATH = "artifacts/price_cache.pkl"  # gitignored; shared 
 # The regime needs 273 prior benchmark closes (252 + 20 + 1). 420 calendar days left only 3 sessions of slack in
 # the worst week of 2025-26, so 460 (worst case 303 sessions) is used; it also covers 60 sessions for volatility.
 PRIOR_HISTORY_DAYS = 460
-REQUIRED_COLUMNS = {"Open", "High", "Low", "Close", "Adj Close"}
+REQUIRED_COLUMNS = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
 _SNAPSHOT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})\.enc$")
 
 
@@ -97,7 +99,30 @@ class PriceHistories:
 
     def total_return(self) -> dict[str, pd.DataFrame]:
         """OHLC scaled by Adj Close / Close, using yfinance's own implementation."""
-        return {ticker: auto_adjust(frame) for ticker, frame in self.raw.items()}
+        result = {}
+        for ticker, frame in self.raw.items():
+            if validate_ohlcv(frame, require_volume=False):
+                raise ValueError("Invalid adjusted price history")
+            adjusted = auto_adjust(frame)
+            if validate_ohlcv(adjusted, require_volume=False):
+                raise ValueError("Invalid adjusted price history")
+            result[ticker] = adjusted
+        return result
+
+
+def _valid_history_frame(frame: Any) -> bool:
+    return (isinstance(frame, pd.DataFrame) and REQUIRED_COLUMNS.issubset(frame.columns)
+            and not validate_ohlcv(frame) and not validate_ohlcv(auto_adjust(frame)))
+
+
+def _price_window(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
+    dates = pd.DatetimeIndex(frame.index).tz_localize(None).normalize()
+    return frame.loc[(dates >= pd.Timestamp(start)) & (dates < pd.Timestamp(end))].copy()
+
+
+def _covers_sessions(frame: pd.DataFrame, sessions: pd.DatetimeIndex) -> bool:
+    dates = pd.DatetimeIndex(frame.index).tz_localize(None).normalize()
+    return bool(sessions.isin(dates).all())
 
 
 def _load_cache(path: Path | None) -> dict[str, dict[str, Any]]:
@@ -155,21 +180,26 @@ def fetch_price_histories(
     max_failure_ratio: float = MAX_FAILURE_RATIO,
     sleep: Callable[[float], None] = time.sleep,
 ) -> PriceHistories:
-    """Fetch raw OHLC + actions for ``tickers`` over ``[start, end]`` in bounded batches.
+    """Fetch raw OHLC + actions for ``tickers`` over ``[start, end)`` in bounded batches.
 
-    Tickers already cached with a window covering ``[start, end]`` are not fetched again. A failure
-    of any ``required`` ticker, or of more than ``max_failure_ratio`` of all tickers, raises
-    ``RuntimeError`` (without naming tickers).
+    Reuse a cache only when its actual valid sessions cover the requested window. Ordinary
+    IPO/halting histories remain available, but incomplete windows are refetched next time.
+    Required benchmarks must cover every TSE session; failed retrievals raise without naming tickers.
     """
     if batch_size < 1 or max_retries < 0 or retry_backoff_seconds < 0 or batch_interval_seconds < 0:
         raise ValueError("batch/retry timing parameters are invalid")
+    if start >= end:
+        raise ValueError("price window must have start before exclusive end")
+    sessions = pd.DatetimeIndex(tse_sessions(start, end - timedelta(days=1)))
     wanted = sorted(set(tickers))
     entries = _load_cache(cache_path)
     raw: dict[str, pd.DataFrame] = {}
     for ticker in wanted:
         entry = entries.get(ticker)
-        if entry and entry["start"] <= start and entry["end"] >= end:
-            raw[ticker] = entry["frame"]
+        if (isinstance(entry, dict) and isinstance(entry.get("start"), date) and isinstance(entry.get("end"), date)
+                and entry["start"] <= start and entry["end"] >= end and _valid_history_frame(entry.get("frame"))
+                and _covers_sessions(entry["frame"], sessions)):
+            raw[ticker] = _price_window(entry["frame"], start, end)
 
     to_fetch = [ticker for ticker in wanted if ticker not in raw]
     for offset in range(0, len(to_fetch), batch_size):
@@ -181,9 +211,13 @@ def fetch_price_histories(
             found: dict[str, pd.DataFrame] = {}
             for ticker in pending:
                 frame = _extract_ticker_frame(downloaded, ticker, len(pending))
-                if frame.empty or not REQUIRED_COLUMNS.issubset(frame.columns) or frame["Close"].dropna().empty:
+                if not REQUIRED_COLUMNS.issubset(frame.columns):
                     continue
-                found[ticker] = frame.dropna(subset=["Close"])
+                frame = _drop_unquoted_bars(frame)
+                if _valid_history_frame(frame):
+                    frame = _price_window(frame, start, end)
+                    if not frame.empty and (ticker not in required or _covers_sessions(frame, sessions)):
+                        found[ticker] = frame
             raw.update(found)
             pending = [ticker for ticker in pending if ticker not in found]
             if pending and attempt < max_retries:

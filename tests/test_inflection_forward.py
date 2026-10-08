@@ -22,7 +22,7 @@ from scripts.rebuild_inflection_forward_validation import (
     main as rebuild_main,
 )
 from src.data.forward_prices import PRIOR_HISTORY_DAYS, PriceHistories
-from src.data.snapshot_crypto import decrypt_json, encrypt_json
+from src.data.snapshot_crypto import FORMAT_HEADER, _fernet, decrypt_json, encrypt_json
 from src.evaluation.inflection_backtest import simulate_signal
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
@@ -162,7 +162,9 @@ def test_load_inflection_signals_rejects_invalid_score(tmp_path, score: float) -
     snapshot_dir.mkdir()
     payload = _payload()
     payload["candidates"][0]["score"] = score
-    (snapshot_dir / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET), encoding="utf-8")
+    # A legacy envelope can contain nonfinite JSON; the current writer correctly refuses it.
+    token = _fernet(SECRET).encrypt(json.dumps(payload).encode()).decode()
+    (snapshot_dir / "2026-09-08.enc").write_text(f"{FORMAT_HEADER}\n{token}\n", encoding="utf-8")
 
     with pytest.raises(SnapshotLoadError, match="Invalid candidate score"):
         load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
@@ -457,8 +459,8 @@ def test_paired_benchmark_rejects_dates_that_invert_after_fill() -> None:
 def test_paired_benchmark_accepts_an_explicit_ticker_without_changing_default_results() -> None:
     trade = _dsr_trades(1)[0]
     history = pd.DataFrame(
-        {"Open": [100.0, 100.0], "Close": [100.0, 120.0]},
-        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+        {"Open": [100.0], "Close": [120.0]},
+        index=pd.to_datetime([trade.entry_date]),  # One daily bar: this trade enters/exits on the same day.
     )
     default = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05)[0]
     explicit = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05, benchmark_ticker="growth")[0]
@@ -477,9 +479,9 @@ def test_market_excess_uses_the_market_on_the_signal_date_and_preserves_existing
     second = replace(first, signal_date="2026-01-06")
     other = replace(first, ticker="other.T")
     censored = replace(first, ticker="censored.T", horizon_matured=False)
-    index = pd.to_datetime([first.entry_date, first.exit_date])
-    topix = pd.DataFrame({"Open": [100.0, 100.0], "Close": [100.0, 110.0]}, index=index)
-    growth = pd.DataFrame({"Open": [100.0, 100.0], "Close": [100.0, 120.0]}, index=index)
+    index = pd.to_datetime([first.entry_date])
+    topix = pd.DataFrame({"Open": [100.0], "Close": [110.0]}, index=index)
+    growth = pd.DataFrame({"Open": [100.0], "Close": [120.0]}, index=index)
     trades = [first, second, other, censored]
     kwargs = {"rule": "synthetic", "max_holding_days": 1, "benchmark_history": topix}
     old = _exit_strategy_report(trades, trades, **kwargs)
@@ -502,8 +504,8 @@ def test_market_excess_uses_the_market_on_the_signal_date_and_preserves_existing
 def test_missing_market_benchmark_has_a_reason_and_leaves_topix_intact(history) -> None:
     trade = _dsr_trades(1)[0]
     topix = pd.DataFrame(
-        {"Open": [100.0, 100.0], "Close": [100.0, 110.0]},
-        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+        {"Open": [100.0], "Close": [110.0]},
+        index=pd.to_datetime([trade.entry_date]),
     )
     report = _exit_strategy_report(
         [trade], [trade], rule="synthetic", max_holding_days=1, benchmark_history=topix,
@@ -525,8 +527,8 @@ def test_market_calculation_failure_is_confined_to_the_added_summary(monkeypatch
     monkeypatch.setattr(module, "_market_benchmark_excess", fail)
     trade = _dsr_trades(1)[0]
     topix = pd.DataFrame(
-        {"Open": [100.0, 100.0], "Close": [100.0, 110.0]},
-        index=pd.to_datetime([trade.entry_date, trade.exit_date]),
+        {"Open": [100.0], "Close": [110.0]},
+        index=pd.to_datetime([trade.entry_date]),
     )
     report = _exit_strategy_report(
         [trade], [trade], rule="synthetic", max_holding_days=1, benchmark_history=topix,
@@ -610,6 +612,41 @@ def test_return_moments_and_dsr_match_a_hand_calculated_reference() -> None:
     values = [_deflated_sharpe(0.5, 0.0, 3.0, 30, 0.25, count) for count in (2, 5, 10)]
     assert all(value is not None for value in values)
     assert values[0] > values[1] > values[2]
+
+
+def test_fixed_horizon_benchmark_uses_delayed_entry_and_exit_dates() -> None:
+    index = pd.bdate_range("2026-01-05", periods=10)
+    benchmark = pd.DataFrame({"Open": 100.0, "High": 125.0, "Low": 95.0, "Close": 100.0}, index=index)
+    benchmark.loc[index[7], "Close"] = 120.0
+    history = benchmark.drop(index[[1, 4]])  # Entry is delayed; the fifth stock close is also later.
+    signal = {"ticker": "1111.T", "signal_date": str(index[0].date()), "score": 80.0}
+
+    report = _build_group_report([signal], {"1111.T": history}, {"1111.T": history},
+                                 benchmark, [signal["signal_date"]])
+
+    h5 = report["horizons"]["h5"]
+    for row in (h5["trades"][0], h5["stress"]["trades"][0]):
+        assert row["benchmark_net_return_pct"] == pytest.approx(19.95)
+        assert row["benchmark_entry_date"] == row["entry_date"] == str(index[2].date())
+        assert row["benchmark_exit_date"] == row["exit_date"] == str(index[7].date())
+    assert h5["trades"][0]["excess_return_pct"] == pytest.approx(-0.15)
+    assert h5["stress"]["trades"][0]["excess_return_pct"] == pytest.approx(-1.15)
+    assert h5["benchmark_excess"]["evaluated"] == 1
+    assert h5["benchmark_excess"]["beat_benchmark_rate_pct"] == 0.0
+
+
+def test_fixed_horizon_complete_dates_preserve_existing_benchmark_results() -> None:
+    index = pd.bdate_range("2026-01-05", periods=10)
+    history = pd.DataFrame({"Open": 100.0, "High": 125.0, "Low": 95.0, "Close": 120.0}, index=index)
+    signal = {"ticker": "1111.T", "signal_date": str(index[0].date()), "score": 80.0}
+    report = _build_group_report([signal], {"1111.T": history}, {"1111.T": history},
+                                 history, [signal["signal_date"]])
+    h5 = report["horizons"]["h5"]
+    assert h5["summary"]["sample_count"] == h5["benchmark_excess"]["evaluated"] == 1
+    assert h5["trades"][0]["net_return_pct"] == pytest.approx(19.8)
+    assert h5["trades"][0]["benchmark_net_return_pct"] == pytest.approx(19.95)
+    assert h5["trades"][0]["excess_return_pct"] == pytest.approx(-0.15)
+    assert h5["stress"]["trades"][0]["excess_return_pct"] == pytest.approx(-1.15)
 
 
 def _dsr_trades(count: int = 30, offset: float = 0.0):
@@ -826,7 +863,7 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
 
     import scripts.rebuild_inflection_forward_validation as script
     from src.data.forward_prices import fetch_price_histories
-    from tests.test_forward_prices import FakeDownload, _raw
+    from tests.test_forward_prices import END, START, FakeDownload, _raw
 
     monkeypatch.setitem(script.MARKET_BENCHMARK_TICKERS, "グロース", "growth")
     snapshots = tmp_path / "fixtures"
@@ -841,6 +878,7 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
     fake = FakeDownload(frames, missing={missing} if missing else set())
     monkeypatch.setattr("yfinance.download", fake)
     monkeypatch.setattr(script, "snapshot_encryption_secret", lambda: SECRET)
+    monkeypatch.setattr(script, "shared_price_window", lambda *_a: (START, END))
     monkeypatch.setattr(script, "load_inflection_signals", lambda *_a, **_k: [observation])
     monkeypatch.setattr(script, "fetch_price_histories", partial(
         fetch_price_histories, max_retries=0, batch_interval_seconds=0.0, sleep=lambda _: None,
@@ -926,6 +964,13 @@ def test_existing_exit_strategies_and_horizons_are_unchanged_and_new_rules_are_a
     trailing = {key: value for key, value in report["exit_strategies"].items() if key.startswith("trailing_")}
     assert len(trailing) == 9
     assert fingerprint(trailing) == "2659d559fbf760696282ed8fe4337a0faaba459d189cfa4520b4f26ef2cb45f1"
+    # C05 adds comparison dates; retain the original fingerprint for every existing numeric/key value.
+    for horizon in report["horizons"].values():
+        for section in (horizon, horizon["stress"]):
+            for row in section["trades"]:
+                completed = row["benchmark_net_return_pct"] is not None
+                assert row.pop("benchmark_entry_date") == (row["entry_date"] if completed else None)
+                assert row.pop("benchmark_exit_date") == (row["exit_date"] if completed else None)
     assert fingerprint(report["horizons"]) == "084cbaafb4178137c5ae3a2d69b45c68d3dc228ab3c8f433e33f2e8feb7a1523"
     for key in (
         "chandelier_3atr22_h126",

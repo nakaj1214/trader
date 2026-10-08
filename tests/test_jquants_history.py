@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import json
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -40,12 +42,12 @@ class FakeClient:
 
     def daily_bars(self, date: str) -> list[dict[str, Any]]:
         self.calls.append(("bars", date))
-        return self.bars.get(date, [{"Code": "11110", "C": 100.0}])
+        return [{"Date": date} | row for row in self.bars.get(date, [{"Code": "11110", "C": 100.0}])]
 
     def listed_issues(self, date: str | None = None) -> list[dict[str, Any]]:
         assert date is not None
         self.calls.append(("master", date))
-        return self.masters.get(date, self.default_master)
+        return [{"Date": date} | row for row in self.masters.get(date, self.default_master)]
 
     def financial_summary_by_date(self, date: str) -> list[dict[str, Any]]:
         self.calls.append(("fins", date))
@@ -71,8 +73,8 @@ def _response(payload: dict[str, Any]) -> Mock:
 def test_paged_bars_are_joined_and_saved(tmp_path: Path) -> None:
     client = JQuantsV2Client(api_key="k", min_interval=0)
     pages = [
-        _response({"data": [{"Code": "11110", "C": 1}], "pagination_key": "p2"}),
-        _response({"data": [{"Code": "22220", "C": 2}]}),
+        _response({"data": [{"Date": "2026-01-05", "Code": "11110", "C": 1}], "pagination_key": "p2"}),
+        _response({"data": [{"Date": "2026-01-05", "Code": "22220", "C": 2}]}),
     ]
     sent: list[dict[str, str]] = []
 
@@ -107,6 +109,71 @@ def test_fins_cover_every_calendar_day_and_empty_days_are_cached(tmp_path: Path)
     assert [day for kind, day in client.calls if kind == "fins"] == ["2026-01-03", "2026-01-04", "2026-01-05"]
     assert load_cache(tmp_path).days("fins") == ["2026-01-03", "2026-01-04", "2026-01-05"]
     assert read_day(tmp_path, "fins", "2026-01-03") == []
+
+
+@pytest.mark.parametrize("rows", [
+    [], [{"Date": "2026-01-06", "Code": "11110"}], [{"Code": "11110"}],
+    [{"Date": "2026-01-05"}],
+    [{"Date": "2026-01-05", "Code": "11110"}] * 2,
+])
+def test_abnormal_trading_day_bars_are_not_cached(tmp_path: Path, rows: list[dict[str, Any]]) -> None:
+    client = FakeClient()
+    with patch.object(client, "daily_bars", return_value=rows), pytest.raises(ValueError, match="Invalid bars data"):
+        fetch_range(client, date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("bars",), **SILENT)
+    assert load_cache(tmp_path).days("bars") == []
+
+
+@pytest.mark.parametrize("bad_cache", ["empty", "wrong_date", "duplicate", "malformed_rows", "corrupt_gzip"])
+def test_abnormal_price_cache_is_refetched_and_recovers(tmp_path: Path, bad_cache: str) -> None:
+    path = tmp_path / "bars/2026-01-05.json.gz"
+    path.parent.mkdir()
+    if bad_cache == "corrupt_gzip":
+        path.write_bytes(b"invalid gzip")
+    else:
+        payload = {"empty": [], "wrong_date": [{"Date": "2026-01-06", "Code": "11110"}],
+                   "duplicate": [{"Date": "2026-01-05", "Code": "11110"}] * 2,
+                   "malformed_rows": ["invalid"]}[bad_cache]
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    client = FakeClient()
+    result = fetch_range(client, date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("bars",), **SILENT)
+    assert result["fetched"]["bars"] == 1
+    assert client.calls == [("bars", "2026-01-05")]
+    assert read_day(tmp_path, "bars", "2026-01-05") == [{"Date": "2026-01-05", "Code": "11110", "C": 100.0}]
+    client.calls.clear()
+    fetch_range(client, date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("bars",), **SILENT)
+    assert client.calls == []
+
+
+def test_failed_cache_recovery_preserves_existing_file_and_the_failure(tmp_path: Path) -> None:
+    path = tmp_path / "bars/2026-01-05.json.gz"
+    path.parent.mkdir()
+    path.write_bytes(b"corrupt")
+    with patch.object(FakeClient, "daily_bars", side_effect=requests.Timeout("temporary")), pytest.raises(requests.Timeout):
+        fetch_range(FakeClient(), date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("bars",), **SILENT)
+    assert path.read_bytes() == b"corrupt"
+
+
+def test_empty_master_is_abnormal_but_empty_financials_are_cacheable(tmp_path: Path) -> None:
+    with patch.object(FakeClient, "listed_issues", return_value=[]), pytest.raises(ValueError, match="Invalid master data"):
+        fetch_range(FakeClient(), date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("master",), **SILENT)
+    client = FakeClient()
+    for _ in range(2):
+        fetch_range(client, date(2026, 1, 5), date(2026, 1, 5), tmp_path, kinds=("fins",), **SILENT)
+    assert client.calls == [("fins", "2026-01-05")]
+
+
+def test_corrupt_extra_master_within_requested_range_is_recovered(tmp_path: Path) -> None:
+    client = FakeClient(bars={"2026-01-06": [{"Code": "22220"}]},
+                        masters={"2026-01-06": [{"Code": "11110"}, {"Code": "22220"}]})
+    fetch_range(client, date(2026, 1, 5), date(2026, 1, 6), tmp_path, kinds=("bars", "master"), **SILENT)
+    path = tmp_path / "master/2026-01-06.json.gz"
+    client.calls.clear()
+    path.write_bytes(b"corrupt")
+    result = fetch_range(client, date(2026, 1, 5), date(2026, 1, 6), tmp_path, kinds=("bars", "master"), **SILENT)
+    assert result["fetched"]["master"] == 1
+    assert client.calls == [("master", "2026-01-06")]
+    assert {row["Code"] for row in read_day(tmp_path, "master", "2026-01-06")} == {"11110", "22220"}
 
 
 def test_interrupted_run_resumes_with_only_the_missing_days(tmp_path: Path) -> None:

@@ -7,12 +7,42 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import date, datetime, timedelta
+from datetime import time as wall_time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
 BASE_URL = "https://api.jquants.com/v2"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def financial_disclosure_at(row: dict[str, Any]) -> datetime | None:
+    """TDnet disclosure time; missing timestamps never imply provider availability."""
+    try:
+        day = date.fromisoformat(str(row.get("DiscDate") or ""))
+        clock = wall_time.fromisoformat(str(row.get("DiscTime") or ""))
+        if clock.tzinfo is not None:
+            return None
+        return datetime.combine(day, clock, tzinfo=ZoneInfo("Asia/Tokyo"))
+    except ValueError:
+        return None
+
+
+def financial_rows_as_of(
+    rows: list[dict[str, Any]], as_of: str, delay_days: int = 0,
+) -> list[dict[str, Any]]:
+    """Conservative eligibility, not proof of an exact historical API delivery time.
+
+    DiscTime is not the API availability time. Exclude the rollover day because
+    daily publication and Free-plan rollover times are not guaranteed.
+    """
+    if delay_days < 0:
+        raise ValueError("financial delay must not be negative")
+    cutoff = datetime.combine(date.fromisoformat(as_of), wall_time(16, 40), tzinfo=ZoneInfo("Asia/Tokyo"))
+    return [row for row in rows if (disclosed := financial_disclosure_at(row)) is not None
+            and disclosed <= cutoff and disclosed.date() + timedelta(days=delay_days) < cutoff.date()]
 
 
 class JQuantsV2Client:

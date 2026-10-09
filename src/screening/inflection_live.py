@@ -23,7 +23,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from src.data.edinet import EdinetError, fetch_live_holder_filings, holder_filing_features
-from src.data.jquants_v2_client import JQuantsV2Client
+from src.data.jquants_v2_client import JQuantsV2Client, financial_disclosure_at, financial_rows_as_of
 from src.data.market_calendar import expected_tse_session_date
 from src.data.yfinance_prices import fetch_price_data
 from src.strategy.inflection import InflectionFeatures, score_inflection
@@ -173,7 +173,10 @@ def _technical_features(df: pd.DataFrame) -> dict[str, Any] | None:
         "return_60d_pct": _pct_change(close, 60),
         "volume_ratio_20d": volume_ratio,
         "near_52w_high": len(close) >= 252 and current >= available_high * 0.99,
-        "near_listing_high": len(close) < 252 and current >= available_high * 0.99,
+        # Current inputs have no verified listing start; a short response is not a listing history.
+        "near_listing_high": False,
+        "price_limitations": (["listing_history: unavailable listing start; high covers fetched period only"]
+                              if len(close) < 252 else []),
         "avg_turnover_20d_jpy": turnover,
         "max_daily_return_20d_pct": float(last20.max()) * 100.0 if len(last20) == 20 else None,
         "up_day_ratio_20d": float((last20 > 0).mean()) if len(last20) == 20 else None,
@@ -209,23 +212,63 @@ def _pre_score(t: dict[str, Any]) -> float:
 
 def _to_float(value: Any) -> float | None:
     try:
-        if value in (None, "", "-"):
+        if value in (None, "", "-") or isinstance(value, bool):
             return None
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
 
-def _row_sort_key(row: dict[str, Any]) -> tuple[str, str, str]:
+def _row_sort_key(row: dict[str, Any]) -> tuple[str, str]:
+    disclosed = financial_disclosure_at(row)
     return (
         str(row.get("DiscDate") or ""),
-        str(row.get("DiscTime") or ""),
-        str(row.get("DiscNo") or ""),
+        disclosed.time().isoformat() if disclosed is not None else "",
     )
 
 
 def _has_actual_financials(row: dict[str, Any]) -> bool:
-    return _to_float(row.get("Sales")) is not None or _to_float(row.get("OP")) is not None
+    return ("FinancialStatements_" in str(row.get("DocType") or "")
+            or _to_float(row.get("Sales")) is not None or _to_float(row.get("OP")) is not None)
+
+
+def _latest_unambiguous(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    latest = rows[-1]
+    values = {key: value for key, value in latest.items() if key != "DiscNo"}
+    for row in rows:
+        if (_row_sort_key(row) == _row_sort_key(latest)
+                and {key: value for key, value in row.items() if key != "DiscNo"} != values):
+            return None
+    return latest
+
+
+_FINANCIAL_QUARTERS = {"1Q": 1, "Q1": 1, "2Q": 2, "Q2": 2, "3Q": 3, "Q3": 3, "FY": 4, "4Q": 4, "Q4": 4}
+
+
+def _financial_period(row: dict[str, Any]) -> tuple[str, int, date, date, date] | None:
+    """The reporting basis and a confirmed regular cumulative period."""
+    quarter = _FINANCIAL_QUARTERS.get(str(row.get("CurPerType") or ""))
+    doc_period, marker, basis = str(row.get("DocType") or "").partition("FinancialStatements_")
+    if (quarter is None or not marker or _FINANCIAL_QUARTERS.get(doc_period) != quarter
+            or basis not in {f"{scope}_{standard}" for scope in ("Consolidated", "NonConsolidated")
+                             for standard in ("JP", "IFRS", "US", "USGAAP")}):
+        return None
+    try:
+        start = date.fromisoformat(str(row.get("CurPerSt") or ""))
+        end = date.fromisoformat(str(row.get("CurPerEn") or ""))
+        fiscal_end = date.fromisoformat(str(row.get("CurFYEn") or ""))
+        if row.get("CurFYSt") and date.fromisoformat(str(row["CurFYSt"])) != start:
+            return None
+        if (pd.Timestamp(start) + pd.DateOffset(months=3 * quarter) - pd.Timedelta(days=1)).date() != end:
+            return None
+        if (pd.Timestamp(start) + pd.DateOffset(years=1) - pd.Timedelta(days=1)).date() != fiscal_end:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return basis, quarter, start, end, fiscal_end
 
 
 def _previous_comparable_actual(
@@ -233,37 +276,50 @@ def _previous_comparable_actual(
     latest: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Return a prior-fiscal-year actual for the same period, never a same-year correction."""
-    period_type = str(latest.get("CurPerType") or "")
-    latest_fiscal_end = str(latest.get("CurFYEn") or "")
-    if not period_type or not latest_fiscal_end:
+    current = _financial_period(latest)
+    if current is None:
         return None
-    try:
-        prior_fiscal_end = str((pd.Timestamp(latest_fiscal_end) - pd.DateOffset(years=1)).date())
-    except (TypeError, ValueError):
-        return None
+    basis, quarter, start, end, fiscal_end = current
+    previous_period = (basis, quarter, *((pd.Timestamp(day) - pd.DateOffset(years=1)).date()
+                                       for day in (start, end, fiscal_end)))
     candidates = [
         row
         for row in actual_rows
         if row is not latest
-        and str(row.get("CurPerType") or "") == period_type
-        and str(row.get("CurFYEn") or "") == prior_fiscal_end
+        and str(row.get("CurFYEn") or "") == str(previous_period[-1])
+        and _FINANCIAL_QUARTERS.get(str(row.get("CurPerType") or "")) == quarter
     ]
-    return candidates[-1] if candidates else None
+    previous = _latest_unambiguous(candidates)
+    return previous if previous is not None and _financial_period(previous) == previous_period else None
 
 
-def _fundamental_features(rows: list[dict[str, Any]], *, as_of: str | None = None) -> dict[str, Any]:
+def _fundamental_features(
+    rows: list[dict[str, Any]], *, as_of: str | None = None, delay_days: int = 0,
+) -> dict[str, Any]:
+    limitations = []
+    if as_of is not None:
+        eligible = financial_rows_as_of(rows, as_of, delay_days)
+        if len(eligible) != len(rows):
+            limitations.append("financial_asof: unavailable disclosure time or provider eligibility boundary")
+        rows = eligible
     rows = sorted(rows, key=_row_sort_key)
     actual_rows = [row for row in rows if _has_actual_financials(row)]
     if not actual_rows:
-        return {}
+        return {"financial_limitations": limitations} if limitations else {}
 
-    latest = actual_rows[-1]
+    latest = _latest_unambiguous(actual_rows)
+    if latest is None:
+        return {"financial_limitations": [*limitations, "financial_actual: ambiguous simultaneous disclosures"]}
     previous = _previous_comparable_actual(actual_rows, latest)
+    if previous is None:
+        limitations.append("financial_yoy: not_comparable reporting basis, actual period, or prior disclosure")
 
     sales = _to_float(latest.get("Sales"))
     prev_sales = _to_float(previous.get("Sales")) if previous else None
     op = _to_float(latest.get("OP"))
     prev_op = _to_float(previous.get("OP")) if previous else None
+    if previous and any(value is None for value in (sales, prev_sales, op, prev_op)):
+        limitations.append("financial_yoy: unavailable actual values")
 
     revenue_growth = None
     if sales is not None and prev_sales not in (None, 0):
@@ -281,27 +337,33 @@ def _fundamental_features(rows: list[dict[str, Any]], *, as_of: str | None = Non
     forecast_rows = [
         row
         for row in rows
-        if str(row.get("CurFYEn") or "") == fiscal_end and _to_float(row.get("FOP")) is not None
+        if str(row.get("CurFYEn") or "") == fiscal_end
+        and (row.get("DocType") == "EarnForecastRevision"
+             or ("FOP" in row and "Forecast" not in str(row.get("DocType") or "")))
     ]
     upward_revision = None
-    if len(forecast_rows) >= 2:
+    if len(forecast_rows) >= 2 and _row_sort_key(forecast_rows[-1]) == _row_sort_key(forecast_rows[-2]):
+        limitations.append("financial_forecast: ambiguous simultaneous disclosures")
+    elif len(forecast_rows) >= 2:
         old = _to_float(forecast_rows[-2].get("FOP"))
         new = _to_float(forecast_rows[-1].get("FOP"))
         if old not in (None, 0) and new is not None:
             upward_revision = (new - old) / abs(old) * 100.0
+        else:
+            limitations.append("financial_forecast: unavailable revision values")
+    elif forecast_rows and _to_float(forecast_rows[-1].get("FOP")) is None:
+        limitations.append("financial_forecast: unavailable revision values")
 
-    cashflow_rows = [
-        row
-        for row in actual_rows
-        if str(row.get("CurFYEn") or "") == fiscal_end and _to_float(row.get("CFO")) is not None
-    ]
-    latest_cfo = _to_float(cashflow_rows[-1].get("CFO")) if cashflow_rows else None
+    latest_cfo = _to_float(latest.get("CFO"))
+    if latest_cfo is None:
+        limitations.append("financial_cashflow: unavailable latest actual value")
 
+    quarterly = _quarterly_features(actual_rows)
+    if any(quarterly.get(key) is None for key in ("quarterly_sales_growth_yoy_pct", "quarterly_op_growth_yoy_pct")):
+        limitations.append("financial_quarterly: not_comparable or unavailable cumulative statements")
     return {
-        # The live client returns full history; bound only the new diagnostics so legacy scores stay unchanged.
-        **_quarterly_features(
-            [row for row in actual_rows if as_of is None or str(row.get("DiscDate") or "") <= as_of]
-        ),
+        **quarterly,
+        "financial_limitations": limitations,
         "revenue_growth_yoy_pct": revenue_growth,
         "operating_profit_growth_yoy_pct": op_growth,
         "operating_margin_change_pctpt": margin_change,
@@ -335,29 +397,24 @@ def _quarterly_features(actual_rows: list[dict[str, Any]]) -> dict[str, float | 
     except ValueError:
         return result
 
-    cumulative: dict[tuple[str, int], dict[str, Any]] = {}
+    cumulative: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for row in actual_rows:
         period = str(row.get("CurPerType") or "")
-        doc_period, _, row_basis = str(row.get("DocType") or "").partition("FinancialStatements_")
-        if period not in periods or periods.get(doc_period) != periods[period] or row_basis != basis:
+        if period not in periods:
             continue
-        # Live rows include period dates; reject irregular fiscal periods when available.
-        if row.get("CurPerSt") and row.get("CurPerEn"):
-            try:
-                start = pd.Timestamp(row["CurPerSt"])
-                end = pd.Timestamp(row["CurPerEn"])
-                if start + pd.DateOffset(months=3 * periods[period]) - pd.Timedelta(days=1) != end:
-                    continue
-            except (TypeError, ValueError):
-                continue
-        cumulative[(str(row.get("CurFYEn")), periods[period])] = row
+        cumulative.setdefault((str(row.get("CurFYEn")), periods[period]), []).append(row)
 
     def prior_year(end: str) -> str:
         return str((pd.Timestamp(end) - pd.DateOffset(years=1)).date())
 
     def standalone(end: str, q: int, column: str) -> float | None:
-        value = _to_float(cumulative.get((end, q), {}).get(column))
-        previous = 0.0 if q == 1 else _to_float(cumulative.get((end, q - 1), {}).get(column))
+        row = _latest_unambiguous(cumulative.get((end, q), [])) or {}
+        previous_row = _latest_unambiguous(cumulative.get((end, q - 1), [])) or {}
+        required = [row] if q == 1 else [row, previous_row]
+        if any((evidence := _financial_period(item)) is None or evidence[0] != basis for item in required):
+            return None
+        value = _to_float(row.get(column))
+        previous = 0.0 if q == 1 else _to_float(previous_row.get(column))
         if value is None or previous is None or not math.isfinite(value) or not math.isfinite(previous):
             return None
         return value - previous
@@ -409,7 +466,7 @@ def _data_policy() -> dict[str, Any]:
         delay_weeks = default_delay
     return {
         "jquants_plan": plan,
-        "jquants_data_delay_weeks": max(0, delay_weeks),
+        "jquants_data_delay_weeks": max(default_delay, delay_weeks),
         "price_source": "yfinance",
         "fundamental_source": "J-Quants V2 financial summary",
     }
@@ -463,12 +520,13 @@ def _evaluate_candidate(
     ticker_meta: dict[str, dict[str, Any]],
     fundamental_limitation: str,
     as_of: str,
+    financial_delay_days: int = 0,
     sector_returns: dict[str, dict[int, float]] | None = None,
     holder_filings: list[dict[str, Any]] | None = None,
 ) -> LiveCandidate:
     code = str(ticker_meta[ticker].get("Code") or "")
     fins = client.financial_summary(code)
-    fundamental = _fundamental_features(fins, as_of=as_of)
+    fundamental = _fundamental_features(fins, as_of=as_of, delay_days=financial_delay_days)
     features = InflectionFeatures(
         revenue_growth_yoy_pct=fundamental.get("revenue_growth_yoy_pct"),
         operating_profit_growth_yoy_pct=fundamental.get("operating_profit_growth_yoy_pct"),
@@ -501,6 +559,9 @@ def _evaluate_candidate(
         reasons.append("52週高値圏")
     if tech.get("near_listing_high"):
         reasons.append("上場来高値圏")
+    elif (not tech.get("near_52w_high") and (distance := tech.get("distance_from_period_high_pct")) is not None
+          and distance >= -1.0):
+        reasons.append("取得期間内高値圏")
     source: dict[str, Any] = {
         **fundamental,
         **{key: tech.get(key) for key in TECH_DIAGNOSTIC_KEYS},
@@ -533,7 +594,8 @@ def _evaluate_candidate(
         near_listing_high=bool(tech.get("near_listing_high")),
         avg_turnover_20d_jpy=tech.get("avg_turnover_20d_jpy"),
         reasons=reasons,
-        limitations=[fundamental_limitation],
+        limitations=[fundamental_limitation, *fundamental.get("financial_limitations", []),
+                     *tech.get("price_limitations", [])],
         features={
             key: (bool(source.get(key)) if isinstance(default, bool) else source.get(key, default))
             for key, default in FEATURE_DEFAULTS.items()
@@ -577,6 +639,7 @@ def select_and_evaluate(
     control_sample_size: int,
     fundamental_limitation: str,
     holder_filings: list[dict[str, Any]] | None = None,
+    financial_delay_days: int = 0,
 ) -> Selection:
     """Pick the deep candidates and the control sample from already-fetched prices.
 
@@ -622,6 +685,7 @@ def select_and_evaluate(
                 ticker_meta=ticker_meta,
                 fundamental_limitation=fundamental_limitation,
                 as_of=seed_date,
+                financial_delay_days=financial_delay_days,
                 sector_returns=sector_returns,
                 holder_filings=holder_filings,
             )
@@ -645,6 +709,7 @@ def select_and_evaluate(
                     ticker_meta=ticker_meta,
                     fundamental_limitation=fundamental_limitation,
                     as_of=seed_date,
+                    financial_delay_days=financial_delay_days,
                     sector_returns=sector_returns,
                     holder_filings=holder_filings,
                 )
@@ -800,6 +865,7 @@ def scan_japan_inflection(
         if delay_weeks > 0
         else "財務データの公開時点と取得可能時点を一次情報で確認する必要がある"
     )
+    fundamental_limitation += "。API取得可能時刻は未記録のため、遅延境界日・時刻不明の開示は使用しない"
     holder_filings = None
     if os.getenv("EDINET_API_KEY", "").strip():
         try:
@@ -820,6 +886,7 @@ def scan_japan_inflection(
         control_sample_size=control_sample_size,
         fundamental_limitation=fundamental_limitation,
         holder_filings=holder_filings,
+        financial_delay_days=delay_weeks * 7,
     )
     candidates = selection.candidates
     control_sample = selection.control_sample

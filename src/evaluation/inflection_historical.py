@@ -5,8 +5,9 @@ before ``as_of``:
 
 * prices: split-adjusted with the factors up to ``as_of`` (never later splits),
 * universe attributes: the latest master dated on or before ``as_of``,
-* fundamentals: only disclosures that were available at the 16:40 JST scan time,
-  either immediately (``disclosure``) or 12 weeks later (``free_12w``, today's Free plan).
+* fundamentals: known disclosure timestamps before the conservative provider day
+  boundary (``disclosure``), or strictly older than 12 weeks (``free_12w``).
+  Exact historical API delivery times are not recorded in the cache.
 
 The scoring itself is the live code (``select_and_evaluate``), not a copy.
 """
@@ -17,7 +18,7 @@ import random
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from statistics import mean
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -25,6 +26,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.data.jquants_history import HistoryCache
+from src.data.jquants_v2_client import financial_disclosure_at, financial_rows_as_of
 from src.data.validation import is_finite_number, validate_ohlcv
 from src.evaluation.inflection_backtest import (
     BOOTSTRAP_SEED,
@@ -54,14 +56,14 @@ from src.screening.inflection_live import (
 )
 
 JST = ZoneInfo("Asia/Tokyo")
-SCAN_TIME = time(16, 40)
 FREE_PLAN_LAG_DAYS = 84
 LAGS = ("disclosure", "free_12w")
-RAW_BAR_COLUMNS = ("O", "H", "L", "C", "Vo", "Va", "AdjFactor")
+RAW_BAR_COLUMNS = ("O", "H", "L", "C", "Vo", "Va", "AdjFactor", "ExRT")
 HISTORY_WINDOW = 252
 MASTER_FIELDS = ("Code", "CoName", "Mkt", "MktNm", "S33", "S33Nm")
 FINS_FIELDS = (
-    "Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "CurPerType", "CurFYEn", "Sales", "OP", "FOP", "CFO",
+    "Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "CurPerType", "CurFYEn", "CurFYSt", "CurPerSt", "CurPerEn",
+    "Sales", "OP", "FOP", "CFO",
 )
 
 
@@ -80,6 +82,7 @@ def _is_ordinary_code(code: object) -> bool:
 class TickerBars:
     frame: pd.DataFrame  # raw O/H/L/C/Vo/Va/AdjFactor, DatetimeIndex, rows with a close only
     cum: Any  # float array: product of AdjFactor over strictly later days, aligned with ``frame``
+    volume_cum: Any  # same basis, excluding rights issues whose factor does not change share units
 
 
 def _build_ticker_bars(day_rows: Iterable[tuple[str, list[dict[str, Any]]]]) -> dict[str, TickerBars]:
@@ -106,13 +109,17 @@ def _build_ticker_bars(day_rows: Iterable[tuple[str, list[dict[str, Any]]]]) -> 
                 or (not quoted.empty and validate_ohlcv(quoted)) or raw.index.has_duplicates):
             raise ValueError("Invalid historical price or adjustment factor")
         factor = group["AdjFactor"].fillna(1.0)
+        if (factor.ne(1.0) & ~group["ExRT"].isin([1, 2, 3])).any():
+            raise ValueError("Unknown historical volume adjustment event")
         # cum[i] = product of factor[j] for j > i
         cum = factor.iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy(dtype=float)
+        volume_factor = factor.where(group["ExRT"].ne(3), 1.0)
+        volume_cum = volume_factor.iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy(dtype=float)
         has_close = group["C"].notna().to_numpy() & (group["C"].to_numpy(dtype=float) > 0)
         frame = group.loc[has_close, list(RAW_BAR_COLUMNS)].set_index(pd.DatetimeIndex(group.loc[has_close, "Date"]))
         if frame.empty:
             continue
-        result[_ticker_from_code(str(code))] = TickerBars(frame=frame, cum=cum[has_close])
+        result[_ticker_from_code(str(code))] = TickerBars(frame=frame, cum=cum[has_close], volume_cum=volume_cum[has_close])
     return result
 
 
@@ -147,8 +154,8 @@ class BarPanel:
     def frames_as_of(self, as_of: str) -> dict[str, pd.DataFrame]:
         """Live-shaped price frames (Close/Volume/Turnover) for tickers with a bar on ``as_of``.
 
-        Close is split-adjusted with only the factors up to ``as_of``, so a split after
-        ``as_of`` cannot change anything computed for ``as_of``. Memoized for the last day.
+        Close and Volume use the price and share units at ``as_of``. Rights issues
+        adjust prices only, and later events cannot change an earlier scan. Memoized for the last day.
         """
         if self._asof_cache is not None and self._asof_cache[0] == as_of:
             return self._asof_cache[1]
@@ -161,10 +168,11 @@ class BarPanel:
             window = slice(max(0, end - HISTORY_WINDOW), end)
             sliced = bars.frame.iloc[window]
             factor = bars.cum[window] / bars.cum[end - 1]
+            volume_factor = bars.volume_cum[window] / bars.volume_cum[end - 1]
             frame = pd.DataFrame(
                 {
                     "Close": sliced["C"].to_numpy(dtype=float) * factor,
-                    "Volume": sliced["Vo"].to_numpy(dtype=float),
+                    "Volume": sliced["Vo"].to_numpy(dtype=float) / volume_factor,
                     "Turnover": sliced["Va"].to_numpy(dtype=float),
                 },
                 index=sliced.index,
@@ -246,45 +254,25 @@ class MasterHistory:
 
 @dataclass(frozen=True)
 class _FinRow:
-    available_disclosure: datetime
-    available_free: datetime
+    disclosed_at: datetime
     row: dict[str, Any]
 
 
-def _parse_disclosure(row: dict[str, Any]) -> tuple[datetime, datetime] | None:
-    disc_date = str(row.get("DiscDate") or "").strip()
-    try:
-        day = date.fromisoformat(disc_date)
-    except ValueError:
-        return None
-    raw_time = str(row.get("DiscTime") or "").strip()
-    try:
-        at = datetime.combine(day, time.fromisoformat(raw_time), tzinfo=JST) if raw_time else None
-    except ValueError:
-        at = None
-    if at is None:  # unknown time: assume the end of the day so it never leaks into that day's scan
-        at = datetime.combine(day, time(23, 59), tzinfo=JST)
-    free = datetime.combine(day + timedelta(days=FREE_PLAN_LAG_DAYS), time(0, 0), tzinfo=JST)
-    return at, free
-
-
 class PointInTimeFinancials:
-    """``financial_summary(code)`` restricted to rows available at the ``as_of`` 16:40 JST scan."""
+    """Apply the live eligibility boundary without guessing a historical API delivery time."""
 
     def __init__(self, rows_by_code: dict[str, list[_FinRow]], as_of: str, lag: str) -> None:
         if lag not in LAGS:
             raise ValueError(f"lag must be one of {LAGS}")
         self._rows = rows_by_code
-        self._cutoff = datetime.combine(date.fromisoformat(as_of), SCAN_TIME, tzinfo=JST)
+        self._as_of = as_of
         self._lag = lag
 
     def financial_summary(self, code: str) -> list[dict[str, Any]]:
-        selected = []
-        for item in self._rows.get(code, []):
-            available = item.available_disclosure if self._lag == "disclosure" else item.available_free
-            if available <= self._cutoff:
-                selected.append(item.row)
-        return selected
+        return financial_rows_as_of(
+            [item.row for item in self._rows.get(code, [])], self._as_of,
+            FREE_PLAN_LAG_DAYS if self._lag == "free_12w" else 0,
+        )
 
 
 class FinancialsStore:
@@ -292,13 +280,13 @@ class FinancialsStore:
         self._rows_by_code: dict[str, list[_FinRow]] = {}
         self.skipped_rows = 0
         for raw in rows:
-            parsed = _parse_disclosure(raw)
+            parsed = financial_disclosure_at(raw)
             code = str(raw.get("Code") or "")
             if parsed is None or not code:
                 self.skipped_rows += 1
                 continue
             row = {key: raw.get(key) for key in FINS_FIELDS}
-            self._rows_by_code.setdefault(code, []).append(_FinRow(parsed[0], parsed[1], row))
+            self._rows_by_code.setdefault(code, []).append(_FinRow(parsed, row))
 
     @classmethod
     def from_cache(cls, cache: HistoryCache) -> FinancialsStore:
@@ -309,7 +297,7 @@ class FinancialsStore:
         return cls(rows())
 
     def first_disclosure_date(self) -> str | None:
-        dates = [item.available_disclosure.date() for items in self._rows_by_code.values() for item in items]
+        dates = [item.disclosed_at.date() for items in self._rows_by_code.values() for item in items]
         return str(min(dates)) if dates else None
 
     def view(self, as_of: str, lag: str) -> PointInTimeFinancials:
@@ -348,8 +336,8 @@ def reconstruct_scan(
     master_day, ticker_meta = data.masters.as_of(as_of)
     prices = {ticker: frame for ticker, frame in data.panel.frames_as_of(as_of).items() if ticker in ticker_meta}
     limitation = fundamental_limitation or (
-        "Historical reconstruction: fundamentals limited to disclosures available at the scan time "
-        f"(lag={lag})"
+        "Historical reconstruction: conservative disclosure/plan eligibility boundary; "
+        f"exact provider availability is unknown (lag={lag})"
     )
     selection = select_and_evaluate(
         prices,
@@ -399,7 +387,7 @@ REPORT_NOTES = (
     ),
     (
         "Delisted names stay in the universe while they trade (no survivorship filter); "
-        "their final return is whatever the cached prices show."
+        "unconfirmed price endings remain unevaluated; last Close is not a settlement price."
     ),
     "Many groups, horizons, stops and two lags are reported; do not over-interpret the best cell.",
     (
@@ -486,7 +474,8 @@ def h60_excess_pairs(
 ) -> list[dict[str, Any]]:
     """Independent (one open position per ticker), completed h60 trades with their TOPIX-ETF excess return."""
     trades = simulate_signals(
-        signals, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False
+        signals, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
+        market_calendar=pd.DatetimeIndex(benchmark_history.index),
     )
     independent = select_non_overlapping_trades(trades)
     paired = paired_benchmark_returns(
@@ -629,7 +618,8 @@ def _lag_report(
     early = [signal for signal in signals if signal["classification"] == "EARLY_CANDIDATE"]
     pairs = h60_excess_pairs(early, histories, benchmark_history)
     early_trades = simulate_signals(
-        early, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False
+        early, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
+        market_calendar=pd.DatetimeIndex(benchmark_history.index),
     )
     report = {
         "signal_count": len(signals),

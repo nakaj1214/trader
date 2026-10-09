@@ -175,6 +175,55 @@ def test_empty_and_invalid_inputs() -> None:
         _simulate([{}], [], pd.DatetimeIndex([]))
 
 
+@pytest.mark.parametrize("resume", [False, True])
+def test_stale_prices_leave_nav_unknown_and_can_resume_without_liquidation(resume: bool) -> None:
+    dates = pd.bdate_range("2026-01-19", periods=4)
+    observed = dates[[0, 3]] if resume else dates[:1]
+    history = _history(observed, [100, 110] if resume else [50])
+    trade = _trade("A.T", str(dates[0].date()), None)
+    result = _simulate([{}], [trade], dates, {"A.T": history})
+    values = [point["equity_jpy"] for point in result["equity_curve"]]
+    assert values[1:3] == [None, None]
+    assert result["final_equity_jpy"] == (1050 if resume else None)
+    assert result["max_drawdown_pct"] is None
+    assert result["turnover_ratio_period_total"] is None
+    assert result["mean_cash_utilization_pct"] is None
+    assert result["open_positions_at_cutoff_count"] == 1
+    assert result["completed_trade_count"] == 0
+    assert result["valuation_unavailable_session_count"] == (2 if resume else 3)
+    if not resume:
+        position = result["unvalued_positions_at_cutoff"][0]
+        assert position["last_price_date"] == str(dates[0].date())
+        assert position["price_age_sessions"] == 3
+
+
+def test_unknown_nav_never_releases_cash_or_a_slot() -> None:
+    dates = pd.bdate_range("2026-01-19", periods=4)
+    trades = [_trade("A.T", str(dates[0].date()), None),
+              _trade("B.T", str(dates[2].date()), str(dates[3].date()))]
+    histories = {"A.T": _history(dates[:1]), "B.T": _history(dates)}
+    result = _simulate([{}, {}], trades, dates, histories, max_positions=1, position_size_pct=1)
+    assert result["entered_position_count"] == 1
+    assert result["skipped_slot_full_count"] == 1
+    assert result["final_equity_jpy"] is None
+    with_cash = _simulate([{}, {}], trades, dates, histories)
+    assert with_cash["entered_position_count"] == 2
+    assert with_cash["completed_trade_count"] == 1
+    assert with_cash["final_equity_jpy"] is None
+
+
+def test_holidays_are_not_price_gaps_and_unknown_values_are_json_null() -> None:
+    import json
+
+    dates = pd.to_datetime(["2026-10-09", "2026-10-13"])
+    trade = _trade("A.T", str(dates[0].date()), None)
+    complete = _simulate([{}], [trade], dates)
+    assert complete["valuation_unavailable_session_count"] == 0
+    missing = _simulate([{}], [trade], dates, {"A.T": _history(dates[:1])})
+    assert missing["unvalued_positions_at_cutoff"][0]["price_age_sessions"] == 1
+    assert '"equity_jpy": null' in json.dumps(missing, allow_nan=False)
+
+
 def test_unmatured_high_score_trade_wins_slot_without_lookahead() -> None:
     dates = pd.to_datetime(["2026-01-02", "2026-01-05"])
     trades = [

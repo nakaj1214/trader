@@ -283,7 +283,7 @@ def main() -> int:
             "evaluations. Same-day close proceeds are not reused for open entries. Sector limits are "
             "not modeled; market exposure is diagnostic only. CAGR and drawdown are not meaningful "
             "until sufficient snapshots accumulate. Open positions are valued with hypothetical "
-            "liquidation cost, and missing closes are forward-filled without a day limit. Initial "
+            "liquidation cost; missing closes leave valuation unknown without forced liquidation. Initial "
             "capital, maximum positions, and allocation are unconfirmed defaults; see config."
         ),
         "entry_rule": "next_trading_day_open",
@@ -353,6 +353,7 @@ def main() -> int:
         portfolio_signals,
         histories,
         holding_days=60,
+        market_calendar=pd.DatetimeIndex(benchmark_history.index),
         round_trip_cost_pct=ROUND_TRIP_COST_PCT,
         apply_tax=False,
     )

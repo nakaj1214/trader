@@ -23,6 +23,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.data.snapshot_crypto import decrypt_json, snapshot_encryption_secret
+from src.data.validation import is_finite_number
 
 LATEST = "dashboard/data/inflection_candidates.enc"
 SNAPSHOT_DIR = "dashboard/data/inflection/v3"
@@ -46,7 +47,12 @@ def _number(value: Any, spec: str, suffix: str = "") -> str:
 
 
 def candidate_row(candidate: dict[str, Any]) -> list[str]:
-    high = "52週" if candidate.get("near_52w_high") else "上場来" if candidate.get("near_listing_high") else "-"
+    features = candidate.get("features") or {}
+    distance = features.get("distance_from_period_high_pct") if isinstance(features, dict) else None
+    period_high = candidate.get("near_listing_high") or (
+        distance is not None and is_finite_number(distance) and distance >= -1.0
+    )
+    high = "52週" if candidate.get("near_52w_high") else "期間内" if period_high else "-"
     return [
         str(candidate.get("ticker") or "-"),
         str(candidate.get("company_name") or "-"),
@@ -57,7 +63,8 @@ def candidate_row(candidate: dict[str, Any]) -> list[str]:
         high,
         str(candidate.get("market") or "-"),
         str(candidate.get("sector33_name") or "-"),  # absent in schema 4 snapshots
-        "・".join(str(reason) for reason in candidate.get("reasons") or []) or "-",
+        "・".join("取得期間内高値圏" if reason == "上場来高値圏" else str(reason)
+                 for reason in candidate.get("reasons") or []) or "-",
     ]
 
 

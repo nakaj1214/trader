@@ -40,6 +40,67 @@ def _history(values: list[float], start: str = "2026-01-02") -> pd.DataFrame:
     )
 
 
+def test_learning_keeps_unknown_price_outcomes_in_its_coverage_denominator() -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=130)
+    benchmark = pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}, index=calendar)
+    ended = benchmark.iloc[:3].copy()
+    observations = [{**_candidate(ticker), "signal_date": "2026-01-19", "strategy_version": "test"}
+                    for ticker in ("A.T", "B.T")]
+    report = build_learning_report(observations, {"A.T": benchmark, "B.T": ended}, benchmark,
+                                   promotion_strategy_version="test")
+    assert report["observation_count"] == 2
+    coverage = report["outcome_coverage"]["h5"]
+    assert coverage["evaluated"] == 1 and coverage["unevaluated"] == 1
+    assert coverage["unevaluated_reasons"] == {"price_unavailable": 1}
+    assert coverage["excluded_from_statistics"] == 1
+    assert coverage["conclusion_status"] == "incomplete"
+    ended_row = report["observations"][1]["horizons"]["h5"]
+    assert ended_row["horizon_matured"] is True
+    assert ended_row["price_diagnostics"]["price_age_sessions"] == 127
+    assert ended_row["net_return_pct"] is None
+    assert public_learning_summary(report)["outcome_coverage"] == report["outcome_coverage"]
+
+
+def test_learning_does_not_count_an_unknown_open_position_as_independent_later_success() -> None:
+    rows = [
+        {"ticker": "A.T", "signal_date": "2026-01-19", "horizons": {"h5": {
+            "entry_date": "2026-01-20", "exit_date": None, "completed": False,
+        }}},
+        {"ticker": "A.T", "signal_date": "2026-01-21", "horizons": {"h5": {
+            "entry_date": "2026-01-22", "exit_date": "2026-01-27", "completed": True,
+        }}},
+    ]
+    assert _independent_rows(rows, 5) == []
+
+
+def test_an_unexecuted_overlapping_unknown_observation_does_not_block_a_later_position() -> None:
+    rows = [{"ticker": "A.T", "signal_date": entry, "horizons": {"h5": {
+        "entry_date": entry, "exit_date": exit_day, "completed": exit_day is not None,
+    }}} for entry, exit_day in [("2026-01-20", "2026-01-27"), ("2026-01-22", None),
+                               ("2026-01-28", "2026-02-03")]]
+    assert _independent_rows(rows, 5) == [rows[0], rows[2]]
+
+
+def test_unresolved_matured_prices_hold_otherwise_promotable_lessons(monkeypatch) -> None:
+    import src.evaluation.inflection_learning as learning
+
+    def proposed_factors(*args, **kwargs):
+        return [{"factor": "test", "independent_observations": 30, "fisher_p_value": 0.000001,
+                 "bh_q_value": None, "promotion_status": "positive_candidate", "mean_excess_return_pct": 10,
+                 "explosion_rate_lift": 2}]
+
+    monkeypatch.setattr(learning, "_factor_statistics", proposed_factors)
+    calendar = pd.bdate_range("2026-01-19", periods=130)
+    frame = pd.DataFrame({"Open": 100.0, "Close": 100.0}, index=calendar)
+    observations = [{**_candidate(ticker), "signal_date": "2026-01-19", "strategy_version": "test"}
+                    for ticker in ("A.T", "B.T")]
+    report = build_learning_report(observations, {"A.T": frame, "B.T": frame.iloc[:3]}, frame,
+                                   promotion_strategy_version="test")
+    assert report["lessons"] == []
+    assert all(stat["promotion_status"] == "hold" for stats in report["promotion_factor_statistics"].values()
+               for stat in stats)
+
+
 def _candidate(ticker: str = "1111.T", classification: str = "EARLY_CANDIDATE") -> dict[str, Any]:
     return {
         "ticker": ticker,

@@ -8,6 +8,7 @@ into historical scoring.
 from __future__ import annotations
 
 import random
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from statistics import mean, median
@@ -45,6 +46,7 @@ class TradeResult:
     early_exit_return_60d_pct: float | None = None
     # Every sale as [date, price, fraction] when the position was sold in more than one piece.
     exit_legs: list[list[Any]] | None = None
+    price_diagnostics: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +64,77 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
             or result.isin([float("inf"), float("-inf")]).any() or (result <= 0).any()):
         raise ValueError("Invalid price history: prices must be finite, positive and unique by date")
     return result.sort_index()
+
+
+def _price_diagnostics(
+    closes: pd.Series, calendar: pd.DatetimeIndex, required: pd.DatetimeIndex,
+    metadata: Any = None,
+) -> dict[str, Any]:
+    """Describe observed prices; absent bars alone never prove a halt or delisting.
+
+    Optional price_status metadata must name a source and effective date. Current
+    providers do not supply it, so their unconfirmed endings remain unknown.
+    """
+    cutoff = calendar[-1] if len(calendar) else None
+    available = closes[closes.index <= cutoff] if cutoff is not None and not closes.empty else closes.iloc[:0]
+    last = available.index[-1] if len(available) else None
+    missing = required.difference(available.index)
+    status = "available" if missing.empty else "unknown"
+    halted = pd.DatetimeIndex([])
+    if isinstance(metadata, dict) and metadata.get("source") and metadata.get("effective_date"):
+        effective = pd.Timestamp(metadata["effective_date"])
+        known = pd.Timestamp(metadata.get("available_at", metadata["effective_date"]))
+        if cutoff is not None and effective <= cutoff and known <= cutoff:
+            if metadata.get("status") == "permanent_termination" and not missing.empty:
+                status = "permanent_termination"
+            elif metadata.get("status") == "trading_halt":
+                resumed = pd.Timestamp(metadata["resumed_date"]) if metadata.get("resumed_date") else None
+                halted = required[required >= effective]
+                if resumed is not None:
+                    halted = halted[halted < resumed]
+                status = "trading_resumed" if resumed is not None and resumed <= cutoff else "trading_halt"
+                missing = missing.difference(halted)
+    return {
+        "price_status": status,
+        "market_as_of": str(cutoff.date()) if cutoff is not None else None,
+        "last_price_date": str(last.date()) if last is not None else None,
+        "price_age_sessions": int((calendar > last).sum()) if last is not None else None,
+        "missing_sessions": [str(day.date()) for day in missing],
+        "confirmed_halt_sessions": [str(day.date()) for day in halted],
+    }
+
+
+def _evaluation_window(
+    history: pd.DataFrame, opens: pd.Series, closes: pd.Series, signal_date: pd.Timestamp,
+    holding_days: int, market_calendar: pd.DatetimeIndex | None,
+) -> tuple[pd.Timestamp | None, pd.Series, bool, dict[str, Any]]:
+    calendar = pd.DatetimeIndex(history.index if market_calendar is None else market_calendar)
+    calendar = calendar.tz_localize(None).normalize().drop_duplicates().sort_values()
+    cutoff = calendar[-1] if len(calendar) else signal_date
+    after_open = opens[(opens.index > signal_date) & (opens.index <= cutoff)] if not opens.empty else opens
+    entry = pd.Timestamp(after_open.index[0]) if len(after_open) else None
+    sessions = calendar[calendar >= entry] if entry is not None else calendar[calendar > signal_date]
+    required = sessions[:holding_days]
+    matured = len(required) == holding_days
+    diagnostics = _price_diagnostics(closes, calendar, required, history.attrs.get("price_status"))
+    diagnostics["calendar_source"] = "market" if market_calendar is not None else "price_history_only"
+    diagnostics["expected_exit_date"] = str(required[-1].date()) if matured else None
+    window = closes.reindex(required).dropna()
+    reason = None
+    if entry is None:
+        reason = "entry_price_unavailable" if matured else "right_censored"
+    elif diagnostics["missing_sessions"]:
+        last = diagnostics["last_price_date"]
+        reason = ("incomplete_price_path" if last and last > diagnostics["missing_sessions"][0]
+                  else "price_unavailable")
+    elif len(required) and required[-1] not in closes.index:
+        reason = "price_unavailable"
+    if reason is not None and diagnostics["price_status"] in {"trading_halt", "permanent_termination"}:
+        reason = diagnostics["price_status"]
+    if reason is None and not matured:
+        reason = "right_censored" if market_calendar is not None else "market_calendar_unavailable"
+    diagnostics["unevaluated_reason"] = reason
+    return entry, window, matured, diagnostics
 
 
 def _true_max_drawdown_pct(entry_price: float, closes: pd.Series) -> float | None:
@@ -93,6 +166,7 @@ def _finalize_trade(
     round_trip_cost_pct: float,
     apply_tax: bool,
     tax_rate_pct: float,
+    price_diagnostics: dict[str, Any] | None = None,
 ) -> TradeResult:
     """Turn a decided exit into a ``TradeResult``.
 
@@ -159,6 +233,7 @@ def _finalize_trade(
             if len(exits) > 1
             else None
         ),
+        price_diagnostics=({**price_diagnostics, "unevaluated_reason": None} if price_diagnostics is not None else None),
     )
 
 
@@ -170,6 +245,7 @@ def simulate_signal(
     tax_rate_pct: float = 20.315,
     apply_tax: bool = False,
     trailing_stop_pct: float | None = None,
+    market_calendar: pd.DatetimeIndex | None = None,
 ) -> TradeResult:
     """Buy at next open and exit at the horizon or an optional trailing stop."""
     if holding_days < 1:
@@ -187,23 +263,16 @@ def simulate_signal(
     closes = _series(history, "Close")
     highs = _series(history, "High")
     lows = _series(history, "Low")
-    if opens.empty or closes.empty:
-        return TradeResult(ticker, str(signal_date.date()), score, None, None, None, None, None, None, None, None, None)
-
-    after_open = opens[opens.index > signal_date]
-    if after_open.empty:
-        return TradeResult(ticker, str(signal_date.date()), score, None, None, None, None, None, None, None, None, None)
-    entry_date = after_open.index[0]
-    entry_price = float(after_open.iloc[0])
-
-    future_closes = closes[closes.index >= entry_date]
-    has_full_horizon = len(future_closes) >= holding_days
-    if entry_price <= 0 or future_closes.empty or (trailing_stop_pct is None and not has_full_horizon):
+    entry_date, window, has_full_horizon, diagnostics = _evaluation_window(
+        history, opens, closes, signal_date, holding_days, market_calendar
+    )
+    entry_price = float(opens.loc[entry_date]) if entry_date is not None else None
+    if entry_date is None or window.empty or (trailing_stop_pct is None and diagnostics["unevaluated_reason"]):
         return TradeResult(
             ticker,
             str(signal_date.date()),
             score,
-            str(entry_date.date()),
+            str(entry_date.date()) if entry_date is not None else None,
             entry_price,
             None,
             None,
@@ -213,9 +282,16 @@ def simulate_signal(
             None,
             None,
             horizon_matured=has_full_horizon,
+            price_diagnostics=diagnostics,
         )
 
-    window = future_closes.iloc[:holding_days]
+    assert entry_price is not None
+    if trailing_stop_pct is not None and diagnostics["missing_sessions"]:
+        window = window[window.index < pd.Timestamp(diagnostics["missing_sessions"][0])]
+        if window.empty:
+            return TradeResult(ticker, str(signal_date.date()), score, str(entry_date.date()), entry_price,
+                               None, None, None, None, None, None, None, horizon_matured=has_full_horizon,
+                               price_diagnostics=diagnostics)
     exit_date = window.index[-1]
     exit_price = float(window.iloc[-1])
     exit_reason = "holding_period_close"
@@ -248,7 +324,7 @@ def simulate_signal(
             metric_highs.append(day_high)
             metric_lows.append(day_low)
             high_water = max(high_water, day_high)
-        if exit_reason == "holding_period_close" and not has_full_horizon:
+        if exit_reason == "holding_period_close" and diagnostics["unevaluated_reason"]:
             return TradeResult(
                 ticker,
                 str(signal_date.date()),
@@ -262,7 +338,8 @@ def simulate_signal(
                 None,
                 None,
                 None,
-                horizon_matured=False,
+                horizon_matured=has_full_horizon,
+                price_diagnostics=diagnostics,
             )
     else:
         window_highs = highs.reindex(window.index).dropna()
@@ -297,6 +374,7 @@ def simulate_signal(
         round_trip_cost_pct=round_trip_cost_pct,
         apply_tax=apply_tax,
         tax_rate_pct=tax_rate_pct,
+        price_diagnostics=diagnostics,
     )
 
 
@@ -418,6 +496,11 @@ def summarize_trades(trades: Iterable[TradeResult]) -> dict[str, Any]:
     return {
         "signals": len(trades),
         "completed": len(completed),
+        "unevaluated": len(trades) - len(completed),
+        "unevaluated_reasons": dict(Counter(
+            (trade.price_diagnostics or {}).get("unevaluated_reason") or trade.exit_reason or "unknown"
+            for trade in trades if trade.net_return_pct is None
+        )),
         "sample_count": len(completed),
         "win_rate_pct": round(len(winners) / len(returns) * 100.0, 3) if returns else None,
         "mean_gross_return_pct": round(mean(gross), 6) if gross else None,

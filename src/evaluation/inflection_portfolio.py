@@ -11,6 +11,7 @@ import pandas as pd
 
 from src.evaluation.inflection_backtest import (
     TradeResult,
+    _price_diagnostics,
     _series,
     _true_max_drawdown_pct,
     summarize_trades,
@@ -30,8 +31,8 @@ def simulate_portfolio(
 ) -> dict[str, Any]:
     """Simulate fixed-size positions and mark them to market on ``calendar``.
 
-    Individual closes are forward-filled onto the benchmark calendar to absorb
-    exchange/data-date mismatches, with no fill limit. Open positions use a
+    Only closes observed on the market session are current valuations; missing
+    prices leave equity unknown without releasing cash or positions. Open positions use a
     hypothetical liquidation value including the fixed round-trip cost. Entries
     occur at the open; positions exiting that date still occupy cash and a slot
     until that day's close. Turnover is the period-total entry allocation divided
@@ -85,6 +86,10 @@ def simulate_portfolio(
         "exposure_by_market_pct": {},
         "avg_turnover_capacity_ratio_median": None,
         "equity_curve": [],
+        "valuation_status": "no_positions",
+        "valuation_unavailable_session_count": 0,
+        "valuation_completed_session_count": 0,
+        "unvalued_positions_at_cutoff": [],
         "trade_summary": summarize_trades([]),
         "caveat": (
             "EARLY_CANDIDATE h60/base-cost only; open positions include hypothetical liquidation "
@@ -112,14 +117,15 @@ def simulate_portfolio(
     entries: dict[pd.Timestamp, list[tuple[dict[str, Any], TradeResult]]] = {}
     for entry_date, signal, trade in candidates:
         entries.setdefault(entry_date.normalize(), []).append((signal, trade))
-    closes = {ticker: _series(history, "Close").reindex(dates).ffill() for ticker, history in histories.items()}
+    closes = {ticker: _series(history, "Close") for ticker, history in histories.items()}
     cash = float(initial_capital_jpy)
     open_positions: dict[str, tuple[dict[str, Any], TradeResult, float]] = {}
     executed: list[tuple[dict[str, Any], TradeResult]] = []
     skipped = Counter[str]()
-    equity_values: list[float] = []
+    equity_values: list[float | None] = []
     open_counts: list[int] = []
-    cash_utilization: list[float] = []
+    cash_utilization: list[float | None] = []
+    unvalued: list[dict[str, Any]] = []
 
     for date in dates:
         # Entries are priced at the open, so same-day close proceeds cannot fund them.
@@ -146,15 +152,20 @@ def simulate_portfolio(
                 del open_positions[ticker]
 
         market_value = 0.0
+        unvalued = []
         for ticker, (_, _, shares) in open_positions.items():
             close = closes.get(ticker, pd.Series(dtype=float)).get(date)
             if close is None or pd.isna(close):
-                raise ValueError(f"missing Close for open position on {date.date()}: {ticker}")
+                unvalued.append(_price_diagnostics(
+                    closes.get(ticker, pd.Series(dtype=float)), dates[dates <= date], pd.DatetimeIndex([date]),
+                    histories.get(ticker, pd.DataFrame()).attrs.get("price_status"),
+                ))
+                continue
             market_value += shares * float(close) - allocation * round_trip_cost_pct / 100.0
-        equity = cash + market_value
+        equity = None if unvalued else cash + market_value
         equity_values.append(equity)
         open_counts.append(len(open_positions))
-        cash_utilization.append(market_value / equity * 100.0 if equity > 0 else 0.0)
+        cash_utilization.append(None if equity is None else market_value / equity * 100.0 if equity > 0 else 0.0)
 
     if not executed:
         return empty | {
@@ -168,7 +179,8 @@ def simulate_portfolio(
     equity_series = pd.Series(equity_values, index=dates, dtype=float)[active_slice]
     open_count_series = pd.Series(open_counts, index=dates)[active_slice]
     cash_utilization_series = pd.Series(cash_utilization, index=dates)[active_slice]
-    final_equity = float(equity_series.iloc[-1])
+    final_equity = float(equity_series.iloc[-1]) if pd.notna(equity_series.iloc[-1]) else None
+    complete_valuation = bool(equity_series.notna().all())
     elapsed_days = int((equity_series.index[-1] - equity_series.index[0]).days)
     completed_trades = [trade for _, trade in executed if trade.exit_date is not None]
     markets = Counter(str(signal.get("market") or "unknown") for signal, _ in executed)
@@ -183,8 +195,7 @@ def simulate_portfolio(
             continue
         if isfinite(value) and value > 0:
             capacities.append(allocation / value)
-    max_drawdown = _true_max_drawdown_pct(initial_capital_jpy, equity_series)
-    assert max_drawdown is not None
+    max_drawdown = _true_max_drawdown_pct(initial_capital_jpy, equity_series) if complete_valuation else None
     return empty | {
         "entered_position_count": len(executed),
         "completed_trade_count": len(completed_trades),
@@ -192,24 +203,33 @@ def simulate_portfolio(
         "skipped_ticker_conflict_count": skipped["ticker_conflict"],
         "skipped_slot_full_count": skipped["slot_full"],
         "skipped_insufficient_cash_count": skipped["insufficient_cash"],
-        "final_equity_jpy": round(final_equity, 6),
+        "final_equity_jpy": round(final_equity, 6) if final_equity is not None else None,
         "cagr_pct": (
             round(((final_equity / initial_capital_jpy) ** (365.25 / elapsed_days) - 1) * 100, 6)
-            if elapsed_days > 0 and final_equity > 0
+            if elapsed_days > 0 and final_equity is not None and final_equity > 0
             else None
         ),
-        "max_drawdown_pct": round(max_drawdown, 6),
+        "max_drawdown_pct": round(max_drawdown, 6) if max_drawdown is not None else None,
         "elapsed_calendar_days": elapsed_days,
         "mean_open_position_count": round(float(open_count_series.mean()), 6),
         "max_open_position_count": int(open_count_series.max()),
-        "mean_cash_utilization_pct": round(float(cash_utilization_series.mean()), 6),
-        "turnover_ratio_period_total": round(len(executed) * allocation / float(equity_series.mean()), 6),
+        "mean_cash_utilization_pct": round(float(cash_utilization_series.mean()), 6) if complete_valuation else None,
+        "turnover_ratio_period_total": (
+            round(len(executed) * allocation / float(equity_series.mean()), 6)
+            if complete_valuation and float(equity_series.mean()) > 0 else None
+        ),
         "exposure_by_market_pct": {
             market: round(count / len(executed) * 100.0, 3) for market, count in sorted(markets.items())
         },
         "avg_turnover_capacity_ratio_median": (round(median(capacities), 6) if capacities else None),
         "equity_curve": [
-            {"date": str(date.date()), "equity_jpy": round(value, 6)} for date, value in equity_series.items()
+            {"date": str(date.date()), "equity_jpy": round(value, 6) if pd.notna(value) else None}
+            for date, value in equity_series.items()
         ],
+        "valuation_status": "complete" if complete_valuation else "incomplete",
+        "valuation_unavailable_session_count": int(equity_series.isna().sum()),
+        "valuation_completed_session_count": int(equity_series.notna().sum()),
+        "unvalued_positions_at_cutoff": unvalued,
+        "cash_at_cutoff_jpy": round(cash, 6),
         "trade_summary": summarize_trades(completed_trades),
     }

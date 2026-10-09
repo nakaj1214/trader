@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from scripts.show_candidates import display_width, main, pad
+from scripts.show_candidates import candidate_row, display_width, main, pad
 from src.data.snapshot_crypto import encrypt_json
 
 SECRET = "viewer-test-secret"
@@ -141,6 +141,18 @@ def test_missing_values_become_dashes(tmp_path: Path, capsys: pytest.CaptureFixt
 
     assert run(tmp_path) == 0
     assert "1111.T" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("legacy_flag", [False, True])
+def test_unverified_high_displays_the_fetched_period_without_rewriting_the_snapshot(legacy_flag: bool) -> None:
+    candidate = row("1111.T", "WATCH", 60.0, near_52w_high=False, near_listing_high=legacy_flag,
+                    features={"distance_from_period_high_pct": 0.0}, reasons=["上場来高値圏"])
+    shown = candidate_row(candidate)
+    assert shown[6] == "期間内"
+    assert shown[9] == "取得期間内高値圏"
+    assert "上場来" not in "".join(shown)
+    assert candidate["near_listing_high"] is legacy_flag
+    assert candidate["reasons"] == ["上場来高値圏"]
 
 
 def test_wide_characters_keep_the_columns_aligned(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

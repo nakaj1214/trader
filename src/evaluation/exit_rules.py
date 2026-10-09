@@ -21,7 +21,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.evaluation.inflection_backtest import TradeResult, _finalize_trade, _series
+from src.evaluation.inflection_backtest import TradeResult, _evaluation_window, _finalize_trade, _series
 
 
 @dataclass(frozen=True)
@@ -116,6 +116,7 @@ def _incomplete(
     *,
     horizon_matured: bool | None,
     reason: str | None = None,
+    price_diagnostics: dict[str, Any] | None = None,
 ) -> TradeResult:
     return TradeResult(
         ticker,
@@ -132,6 +133,7 @@ def _incomplete(
         None,
         exit_reason=reason,
         horizon_matured=horizon_matured,
+        price_diagnostics=price_diagnostics,
     )
 
 
@@ -144,6 +146,7 @@ def simulate_exit_rule(
     round_trip_cost_pct: float = 0.2,
     apply_tax: bool = False,
     tax_rate_pct: float = 20.315,
+    market_calendar: pd.DatetimeIndex | None = None,
 ) -> TradeResult:
     """Simulate one entry under ``rule`` for at most ``holding_days`` sessions."""
     if holding_days < 1:
@@ -155,21 +158,18 @@ def simulate_exit_rule(
     score = float(signal.get("score", 0.0))
     opens, closes = _series(history, "Open"), _series(history, "Close")
     highs, lows = _series(history, "High"), _series(history, "Low")
-    if opens.empty or closes.empty:
-        return _incomplete(ticker, signal_date, score, None, None, horizon_matured=None)
-    after_open = opens[opens.index > signal_date]
-    if after_open.empty:
-        return _incomplete(ticker, signal_date, score, None, None, horizon_matured=None)
-    entry_date = pd.Timestamp(after_open.index[0])
-    entry_price = float(after_open.iloc[0])
-    future_closes = closes[closes.index >= entry_date]
-    has_full_horizon = len(future_closes) >= holding_days
-    if entry_price <= 0 or future_closes.empty:
+    entry_date, window, has_full_horizon, diagnostics = _evaluation_window(
+        history, opens, closes, signal_date, holding_days, market_calendar
+    )
+    entry_price = float(opens.loc[entry_date]) if entry_date is not None else None
+    if diagnostics["missing_sessions"]:
+        window = window[window.index < pd.Timestamp(diagnostics["missing_sessions"][0])]
+    if entry_date is None or window.empty:
         return _incomplete(
-            ticker, signal_date, score, entry_date, entry_price, horizon_matured=has_full_horizon
+            ticker, signal_date, score, entry_date, entry_price, horizon_matured=has_full_horizon,
+            price_diagnostics=diagnostics,
         )
-
-    window = future_closes.iloc[:holding_days]
+    assert entry_price is not None
     window_opens, window_highs, window_lows = (
         opens.reindex(window.index),
         highs.reindex(window.index),
@@ -184,7 +184,8 @@ def simulate_exit_rule(
         atr = _atr_before(ohlc, rule.atr_window).reindex(window.index)
         if atr.isna().any():
             return _incomplete(
-                ticker, signal_date, score, entry_date, entry_price, horizon_matured=False, reason="insufficient_history"
+                ticker, signal_date, score, entry_date, entry_price, horizon_matured=has_full_horizon,
+                reason="insufficient_history", price_diagnostics={**diagnostics, "unevaluated_reason": "insufficient_history"},
             )
     ema = (
         closes.ewm(span=rule.ema_span, adjust=False).mean().reindex(window.index)
@@ -264,8 +265,9 @@ def simulate_exit_rule(
                 state.pending_reason = "time_stop"
 
     if final is None:
-        if not has_full_horizon:
-            return _incomplete(ticker, signal_date, score, entry_date, entry_price, horizon_matured=False)
+        if diagnostics["unevaluated_reason"]:
+            return _incomplete(ticker, signal_date, score, entry_date, entry_price,
+                               horizon_matured=has_full_horizon, price_diagnostics=diagnostics)
         final = (window.index[-1], float(window.iloc[-1]), "holding_period_close", "close")
 
     exit_date, exit_price, reason, convention = final
@@ -294,4 +296,5 @@ def simulate_exit_rule(
         round_trip_cost_pct=round_trip_cost_pct,
         apply_tax=apply_tax,
         tax_rate_pct=tax_rate_pct,
+        price_diagnostics=diagnostics,
     )

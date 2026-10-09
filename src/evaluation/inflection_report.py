@@ -306,11 +306,13 @@ def _build_group_report(
     market_benchmark_error: str | None = None,
 ) -> dict[str, Any]:
     horizons: dict[str, object] = {}
+    calendar = pd.DatetimeIndex(benchmark_history.index)
     for holding_days in (5, 20, 60, 126, 252):
         trades = simulate_signals(
             signals,
             histories,
             holding_days=holding_days,
+            market_calendar=calendar,
             round_trip_cost_pct=ROUND_TRIP_COST_PCT,
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
@@ -320,6 +322,7 @@ def _build_group_report(
             signals,
             histories,
             holding_days=holding_days,
+            market_calendar=calendar,
             round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
@@ -349,6 +352,7 @@ def _build_group_report(
                 signals,
                 split_histories,
                 holding_days=holding_days,
+                market_calendar=calendar,
                 round_trip_cost_pct=ROUND_TRIP_COST_PCT,
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
@@ -357,6 +361,7 @@ def _build_group_report(
                 signals,
                 split_histories,
                 holding_days=holding_days,
+                market_calendar=calendar,
                 round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
@@ -380,6 +385,7 @@ def _build_group_report(
                 split_histories.get(str(signal["ticker"]), pd.DataFrame()),
                 exit_rule,
                 holding_days=NEW_EXIT_HOLDING_DAYS,
+                market_calendar=calendar,
                 round_trip_cost_pct=ROUND_TRIP_COST_PCT,
             )
             for signal in signals
@@ -390,6 +396,7 @@ def _build_group_report(
                 split_histories.get(str(signal["ticker"]), pd.DataFrame()),
                 exit_rule,
                 holding_days=NEW_EXIT_HOLDING_DAYS,
+                market_calendar=calendar,
                 round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
             )
             for signal in signals

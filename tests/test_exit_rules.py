@@ -121,7 +121,9 @@ def test_chandelier_without_enough_prior_history_is_censored_not_guessed() -> No
     trade = run(flat(10), [(100.0, 101.0, 99.0, 100.0)] * 5, ChandelierRule(), holding_days=5)
 
     assert trade.exit_reason == "insufficient_history" and trade.exit_date is None
-    assert trade.horizon_matured is False and trade.net_return_pct is None
+    # Five sessions elapsed; ATR warmup availability is separate from horizon maturity.
+    assert trade.horizon_matured is True and trade.net_return_pct is None
+    assert trade.price_diagnostics["unevaluated_reason"] == "insufficient_history"
 
 
 def test_chandelier_holds_to_the_horizon_when_never_touched() -> None:

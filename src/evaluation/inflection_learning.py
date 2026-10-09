@@ -9,7 +9,7 @@ adjustments as proposals for a future strategy version.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from math import isfinite
@@ -324,6 +324,7 @@ def evaluate_learning_observations(
                 observation,
                 histories.get(str(observation["ticker"]), pd.DataFrame()),
                 holding_days=horizon,
+                market_calendar=pd.DatetimeIndex(benchmark_history.index),
                 round_trip_cost_pct=round_trip_cost_pct,
                 apply_tax=False,
             )
@@ -364,6 +365,8 @@ def evaluate_learning_observations(
                 explosion_horizons.append(horizon)
             outcomes[f"h{horizon}"] = {
                 "completed": completed,
+                "horizon_matured": trade.horizon_matured,
+                "price_diagnostics": trade.price_diagnostics,
                 "entry_date": trade.entry_date,
                 "exit_date": trade.exit_date,
                 "net_return_pct": trade_return,
@@ -401,6 +404,7 @@ def _independent_rows(rows: list[dict[str, Any]], horizon: int) -> list[dict[str
     key = f"h{horizon}"
     selected: list[dict[str, Any]] = []
     occupied_until: dict[str, str] = {}
+    open_tickers: set[str] = set()
 
     def entry_key(item: dict[str, Any]) -> tuple[str, str, str]:
         outcome = item.get("horizons", {}).get(key, {})
@@ -408,11 +412,13 @@ def _independent_rows(rows: list[dict[str, Any]], horizon: int) -> list[dict[str
 
     for row in sorted(rows, key=entry_key):
         outcome = row.get("horizons", {}).get(key, {})
-        if not outcome.get("completed") or not outcome.get("entry_date") or not outcome.get("exit_date"):
-            continue
         ticker = str(row["ticker"])
-        entry_date = str(outcome["entry_date"])
-        if entry_date <= occupied_until.get(ticker, ""):
+        entry_date = str(outcome.get("entry_date") or "")
+        if ticker in open_tickers or not entry_date or entry_date <= occupied_until.get(ticker, ""):
+            continue
+        if outcome.get("entry_date") and not outcome.get("exit_date"):
+            open_tickers.add(ticker)
+        if not outcome.get("completed") or not outcome.get("entry_date") or not outcome.get("exit_date"):
             continue
         selected.append(row)
         occupied_until[ticker] = str(outcome["exit_date"])
@@ -442,6 +448,25 @@ def _horizon_summary(rows: list[dict[str, Any]], horizon: int) -> dict[str, Any]
         "early_candidate_miss_rate_pct": (
             round(len(early_misses) / len(early_rows) * 100.0, 3) if early_rows else None
         ),
+    }
+
+
+def _outcome_coverage(rows: list[dict[str, Any]], horizon: int, independent_count: int) -> dict[str, Any]:
+    outcomes = [row["horizons"][f"h{horizon}"] for row in rows]
+    unevaluated = [outcome for outcome in outcomes if not outcome["completed"]]
+    matured_unknown = sum(outcome.get("horizon_matured") is True for outcome in unevaluated)
+    return {
+        "observations": len(rows),
+        "evaluated": len(rows) - len(unevaluated),
+        "unevaluated": len(unevaluated),
+        "unevaluated_reasons": dict(Counter(
+            (outcome.get("price_diagnostics") or {}).get("unevaluated_reason") or "unknown"
+            for outcome in unevaluated
+        )),
+        "benchmark_comparable": sum(outcome["excess_return_pct"] is not None for outcome in outcomes),
+        "excluded_from_statistics": len(rows) - independent_count,
+        "unresolved_matured": matured_unknown,
+        "conclusion_status": "incomplete" if matured_unknown else "available" if independent_count else "unavailable",
     }
 
 
@@ -651,6 +676,8 @@ def build_learning_report(
     promotion_baselines: dict[str, Any] = {}
     promotion_factors: dict[str, list[dict[str, Any]]] = {}
     promotion_counts: dict[str, int] = {}
+    coverage: dict[str, Any] = {}
+    promotion_coverage: dict[str, Any] = {}
     promotion_rows = [row for row in evaluated if row.get("strategy_version") == promotion_strategy_version]
 
     for horizon in LEARNING_HORIZONS:
@@ -659,12 +686,14 @@ def build_learning_report(
         baseline = _horizon_summary(independent, horizon)
         baselines[horizon_key] = baseline
         independent_counts[horizon_key] = len(independent)
+        coverage[horizon_key] = _outcome_coverage(evaluated, horizon, len(independent))
         factors[horizon_key] = _factor_statistics(independent, horizon=horizon, baseline=baseline)
 
         latest_independent = _independent_rows(promotion_rows, horizon)
         promotion_baseline = _horizon_summary(latest_independent, horizon)
         promotion_baselines[horizon_key] = promotion_baseline
         promotion_counts[horizon_key] = len(latest_independent)
+        promotion_coverage[horizon_key] = _outcome_coverage(promotion_rows, horizon, len(latest_independent))
         promotion_factors[horizon_key] = _factor_statistics(
             latest_independent,
             horizon=horizon,
@@ -672,6 +701,11 @@ def build_learning_report(
         )
     # Promotion is gated by a family-wide BH q-value, so it can only be decided after every horizon.
     tests_in_family = _apply_multiple_testing(promotion_factors)
+    for key, stats in promotion_factors.items():
+        if promotion_coverage[key]["unresolved_matured"]:
+            for stat in stats:
+                stat["promotion_status"] = "hold"
+                stat["outcome_coverage_reason"] = "matured_outcomes_unavailable"
 
     postmortems = [
         {
@@ -695,6 +729,8 @@ def build_learning_report(
         "strategy_versions": strategy_versions,
         "promotion_scope_strategy_version": promotion_strategy_version,
         "observation_count": len(observations),
+        "outcome_coverage": coverage,
+        "promotion_outcome_coverage": promotion_coverage,
         "learning_unit": "same-ticker observations are de-overlapped independently per horizon",
         "horizons": list(LEARNING_HORIZONS),
         "explosion_definitions": explosion_definitions(),
@@ -743,6 +779,8 @@ def public_learning_summary(report: dict[str, Any]) -> dict[str, Any]:
         "strategy_versions",
         "promotion_scope_strategy_version",
         "observation_count",
+        "outcome_coverage",
+        "promotion_outcome_coverage",
         "price_unavailable_ticker_count",
         "learning_unit",
         "horizons",

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.data.yfinance_prices import fetch_price_data
 from src.evaluation.inflection_historical import (
     BarPanel,
     FinancialsStore,
@@ -15,7 +16,7 @@ from src.evaluation.inflection_historical import (
     MasterHistory,
     reconstruct_scan,
 )
-from src.screening.inflection_live import scan_japan_inflection
+from src.screening.inflection_live import _technical_features, scan_japan_inflection
 
 DATES = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2025-01-06", periods=300)]
 FUTURE = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(pd.Timestamp(DATES[-1]) + pd.offsets.BDay(1), periods=20)]
@@ -26,7 +27,8 @@ CODES = [f"{n}{n}{n}{n}0" for n in range(1, 7)]
 def _bar(code: str, close: float, volume: float, adj: float = 1.0, **extra: Any) -> dict[str, Any]:
     return {
         "Code": code, "O": close, "H": close * 1.01, "L": close * 0.99, "C": close,
-        "Vo": volume, "Va": close * volume, "AdjFactor": adj, **extra,
+        "Vo": volume, "Va": close * volume, "AdjFactor": adj,
+        "ExRT": None if adj == 1.0 else 1 if adj < 1.0 else 2, **extra,
     }
 
 
@@ -75,8 +77,12 @@ def _fins() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for code in CODES:
         rows += [
-            _fin(code, "2025-02-01", "Q3", "2025-03-31", "100", "10", "20"),
-            _fin(code, "2026-02-01", "Q3", "2026-03-31", "140", "25", "25"),
+            _fin(code, "2025-02-01", "Q3", "2025-03-31", "100", "10", "20",
+                 DocType="3QFinancialStatements_Consolidated_JP", CurFYSt="2024-04-01",
+                 CurPerSt="2024-04-01", CurPerEn="2024-12-31"),
+            _fin(code, "2026-02-01", "Q3", "2026-03-31", "140", "25", "25",
+                 DocType="3QFinancialStatements_Consolidated_JP", CurFYSt="2025-04-01",
+                 CurPerSt="2025-04-01", CurPerEn="2025-12-31"),
             _fin(code, "2026-02-10", "Q3", "2026-03-31", "", "", "30", DocType="EarnForecastRevision", DiscNo="2"),
         ]
     return rows
@@ -131,6 +137,7 @@ def test_reconstruct_scan_matches_the_live_scan_for_the_same_inputs() -> None:
     with (
         patch("src.screening.inflection_live.fetch_price_data", return_value=live_prices),
         patch("src.screening.inflection_live.expected_tse_session_date", return_value=AS_OF),
+        patch.dict("os.environ", {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "0"}),
     ):
         live = scan_japan_inflection(client=LiveFake(), deep_candidates=2, min_turnover_jpy=0, control_sample_size=3)  # type: ignore[arg-type]
 
@@ -180,25 +187,60 @@ def test_free_plan_lag_excludes_disclosures_younger_than_84_days() -> None:
 
     assert len(store.view(as_of, "disclosure").financial_summary("11110")) == 2
     free = store.view(as_of, "free_12w").financial_summary("11110")
-    assert [row["DiscDate"] for row in free] == ["2026-01-05"]
+    assert free == []  # The exact 84-day boundary has no confirmed rollover time.
+    assert [row["DiscDate"] for row in store.view("2026-03-31", "free_12w").financial_summary("11110")] == ["2026-01-05"]
 
 
 @pytest.mark.parametrize(
     ("disc_time", "included"),
-    [("15:00", True), ("16:40", True), ("16:41", False), ("17:00", False), ("", False), ("not-a-time", False)],
+    [("15:00", True), ("16:40", True), ("16:41", True), ("17:00", True), ("", False), ("not-a-time", False)],
 )
 def test_disclosure_lag_respects_the_scan_time_of_the_same_day(disc_time: str, included: bool) -> None:
     store = FinancialsStore([_fin("11110", "2026-02-02", "Q3", "2026-03-31", "1", "1", "1", DiscTime=disc_time)])
 
     rows = store.view("2026-02-02", "disclosure").financial_summary("11110")
 
-    assert bool(rows) is included
-    assert store.view("2026-02-03", "disclosure").financial_summary("11110")  # next day always sees it
+    assert rows == []  # TDnet timing alone does not prove same-day API delivery.
+    assert bool(store.view("2026-02-03", "disclosure").financial_summary("11110")) is included
 
 
 def test_unparseable_disclosure_dates_are_skipped_and_counted() -> None:
     store = FinancialsStore([_fin("11110", "bad", "Q3", "2026-03-31", "1", "1", "1")])
     assert store.skipped_rows == 1
+
+
+def test_provider_delay_boundary_is_unknown_until_a_later_day_in_both_modes() -> None:
+    store = FinancialsStore([_fin("11110", "2026-01-05", "Q3", "2026-03-31", "100", "10", "20")])
+    assert store.view("2026-01-05", "disclosure").financial_summary("11110") == []
+    assert store.view("2026-01-06", "disclosure").financial_summary("11110")
+    assert store.view("2026-03-30", "free_12w").financial_summary("11110") == []
+    assert store.view("2026-03-31", "free_12w").financial_summary("11110")
+
+
+def test_unknown_disclosure_time_cannot_be_backfilled_as_known_availability() -> None:
+    store = FinancialsStore([_fin("11110", "2026-01-05", "Q3", "2026-03-31", "100", "10", "20", DiscTime="")])
+    assert store.view("2026-01-06", "disclosure").financial_summary("11110") == []
+
+
+def test_historical_financial_rows_preserve_comparability_evidence() -> None:
+    from src.screening.inflection_live import _fundamental_features
+
+    rows = [
+        _fin("11110", "2025-08-01", "1Q", "2026-03-31", "100", "10", "20",
+             DocType="1QFinancialStatements_Consolidated_JP", CurFYSt="2025-04-01",
+             CurPerSt="2025-04-01", CurPerEn="2025-06-30"),
+        _fin("11110", "2026-08-01", "1Q", "2027-03-31", "110", "12", "25",
+             DocType="1QFinancialStatements_Consolidated_JP", CurFYSt="2026-04-01",
+             CurPerSt="2026-04-01", CurPerEn="2026-06-30"),
+    ]
+    selected = FinancialsStore(rows).view("2026-08-02", "disclosure").financial_summary("11110")
+    assert selected[-1].get("CurPerSt") == "2026-04-01"
+    assert selected[-1].get("CurPerEn") == "2026-06-30"
+    assert selected[-1].get("CurFYSt") == "2026-04-01"
+    assert _fundamental_features(selected)["revenue_growth_yoy_pct"] == pytest.approx(10.0)
+    rows[-1]["CurPerSt"] = "2026-05-01"
+    selected = FinancialsStore(rows).view("2026-08-02", "disclosure").financial_summary("11110")
+    assert _fundamental_features(selected)["revenue_growth_yoy_pct"] is None
 
 
 def test_invalid_lag_is_rejected() -> None:
@@ -260,6 +302,70 @@ def test_negative_control_sample_size_is_rejected() -> None:
 # --- price adjustment -------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("factor", [0.5, 2.0])
+@pytest.mark.parametrize("actual_growth", [1.0, 1.6])
+def test_split_and_merger_volume_use_the_same_share_units(factor: float, actual_growth: float) -> None:
+    days = [str(day.date()) for day in pd.bdate_range("2026-01-05", periods=40)]
+    rows = {
+        day: [_bar("11110", 200.0 if i < 20 else 200.0 * factor,
+                   1_000_000.0 if i < 20 else 1_000_000.0 / factor * actual_growth,
+                   factor if i == 20 else 1.0, AdjVo=999_999_999.0)]
+        for i, day in enumerate(days)
+    }
+    frame = BarPanel.from_rows(rows).frames_as_of(days[-1])["1111.T"]
+    tech = _technical_features(frame)
+    assert tech is not None
+    assert tech["return_20d_pct"] == pytest.approx(0)
+    assert tech["volume_ratio_20d"] == pytest.approx(actual_growth)
+    assert frame["Volume"].iloc[:20].tolist() == [1_000_000.0 / factor] * 20
+    assert frame["Turnover"].iloc[:20].tolist() == [200_000_000.0] * 20
+    assert tech["avg_turnover_20d_jpy"] == pytest.approx(200_000_000.0 * actual_growth)
+
+
+@pytest.mark.parametrize("factor", [1.0, 0.8])
+def test_no_split_and_rights_issue_do_not_rescale_volume(factor: float) -> None:
+    days = [str(day.date()) for day in pd.bdate_range("2026-01-05", periods=40)]
+    rows = {day: [_bar("11110", 200.0 if i < 20 else 200.0 * factor, 1_000_000.0,
+                      factor if i == 20 else 1.0, ExRT=3 if i == 20 and factor != 1 else None)]
+            for i, day in enumerate(days)}
+    frame = BarPanel.from_rows(rows).frames_as_of(days[-1])["1111.T"]
+    assert frame["Volume"].tolist() == [1_000_000.0] * 40
+    assert _technical_features(frame)["volume_ratio_20d"] == pytest.approx(1)  # type: ignore[index]
+
+
+def test_future_splits_cannot_change_past_volume_units() -> None:
+    days = [str(day.date()) for day in pd.bdate_range("2026-01-05", periods=41)]
+    rows = {day: [_bar("11110", 200.0, 1_000_000.0)] for day in days[:-1]}
+    expected = BarPanel.from_rows(rows).frames_as_of(days[-2])["1111.T"]
+    rows[days[-1]] = [_bar("11110", 100.0, 2_000_000.0, 0.5)]
+    actual = BarPanel.from_rows(rows).frames_as_of(days[-2])["1111.T"]
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+@pytest.mark.parametrize("factor", [0.5, 2.0])
+def test_already_adjusted_live_provider_volume_is_not_adjusted_a_second_time(factor: float) -> None:
+    days = [str(day.date()) for day in pd.bdate_range("2026-01-05", periods=40)]
+    rows = {day: [_bar("11110", 200.0 if i < 20 else 200.0 * factor,
+                      1_000_000.0 if i < 20 else 1_000_000.0 / factor, factor if i == 20 else 1.0)]
+            for i, day in enumerate(days)}
+    history = BarPanel.from_rows(rows).frames_as_of(days[-1])["1111.T"]
+    # This fake provider explicitly supplies split-adjusted prices and share volume.
+    supplied = pd.DataFrame({column: 200.0 * factor for column in ("Open", "High", "Low", "Close", "Adj Close")},
+                            index=history.index)
+    supplied["Volume"] = 1_000_000.0 / factor
+    with patch("src.data.yfinance_prices.yf.download", return_value=supplied):
+        live = fetch_price_data(["1111.T"], 252, max_retries=0, sleep=lambda _: None)["1111.T"]
+    pd.testing.assert_frame_equal(live[["Close", "Volume", "Turnover"]], history)
+
+
+@pytest.mark.parametrize("event_type", [None, 9])
+def test_unknown_corporate_action_cannot_be_assumed_to_change_share_units(event_type: int | None) -> None:
+    rows = {"2026-01-05": [_bar("11110", 200.0, 1_000_000.0)],
+            "2026-01-06": [_bar("11110", 100.0, 2_000_000.0, 0.5, ExRT=event_type)]}
+    with pytest.raises(ValueError, match="volume adjustment"):
+        BarPanel.from_rows(rows)
+
+
 def _split_panel() -> BarPanel:
     closes = [200.0, 200.0, 100.0, 100.0, 100.0]
     factors = [1.0, 1.0, 0.5, 1.0, 1.0]  # 1-for-2 split with ex-date on day index 2
@@ -305,11 +411,13 @@ def test_bars_without_a_close_are_dropped_but_their_factor_still_counts() -> Non
     panel = BarPanel.from_rows(
         {
             days[0]: [_bar("11110", 100.0, 1000.0)],
-            days[1]: [{"Code": "11110", "O": None, "H": None, "L": None, "C": None, "Vo": 0, "Va": 0, "AdjFactor": 0.5}],
+            days[1]: [{"Code": "11110", "O": None, "H": None, "L": None, "C": None, "Vo": 0, "Va": 0,
+                       "AdjFactor": 0.5, "ExRT": 1}],
             days[2]: [_bar("11110", 50.0, 1000.0)],
         }
     )
     assert panel.evaluation_histories()["1111.T"]["Close"].round(6).tolist() == [50.0, 50.0]
+    assert panel.frames_as_of(days[2])["1111.T"]["Volume"].tolist() == [2000.0, 1000.0]
     assert panel.last_date() == days[2]
 
 

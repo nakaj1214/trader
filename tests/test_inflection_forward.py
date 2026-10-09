@@ -617,8 +617,8 @@ def test_return_moments_and_dsr_match_a_hand_calculated_reference() -> None:
 def test_fixed_horizon_benchmark_uses_delayed_entry_and_exit_dates() -> None:
     index = pd.bdate_range("2026-01-05", periods=10)
     benchmark = pd.DataFrame({"Open": 100.0, "High": 125.0, "Low": 95.0, "Close": 100.0}, index=index)
-    benchmark.loc[index[7], "Close"] = 120.0
-    history = benchmark.drop(index[[1, 4]])  # Entry is delayed; the fifth stock close is also later.
+    benchmark.loc[index[6], "Close"] = 120.0
+    history = benchmark.drop(index[1])  # Delayed actual entry; its fifth market session is index 6.
     signal = {"ticker": "1111.T", "signal_date": str(index[0].date()), "score": 80.0}
 
     report = _build_group_report([signal], {"1111.T": history}, {"1111.T": history},
@@ -628,7 +628,7 @@ def test_fixed_horizon_benchmark_uses_delayed_entry_and_exit_dates() -> None:
     for row in (h5["trades"][0], h5["stress"]["trades"][0]):
         assert row["benchmark_net_return_pct"] == pytest.approx(19.95)
         assert row["benchmark_entry_date"] == row["entry_date"] == str(index[2].date())
-        assert row["benchmark_exit_date"] == row["exit_date"] == str(index[7].date())
+        assert row["benchmark_exit_date"] == row["exit_date"] == str(index[6].date())
     assert h5["trades"][0]["excess_return_pct"] == pytest.approx(-0.15)
     assert h5["stress"]["trades"][0]["excess_return_pct"] == pytest.approx(-1.15)
     assert h5["benchmark_excess"]["evaluated"] == 1
@@ -647,6 +647,18 @@ def test_fixed_horizon_complete_dates_preserve_existing_benchmark_results() -> N
     assert h5["trades"][0]["benchmark_net_return_pct"] == pytest.approx(19.95)
     assert h5["trades"][0]["excess_return_pct"] == pytest.approx(-0.15)
     assert h5["stress"]["trades"][0]["excess_return_pct"] == pytest.approx(-1.15)
+
+
+def test_market_horizon_reports_resumed_unknown_gaps_as_unevaluated() -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    benchmark = pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0}, index=calendar)
+    history = benchmark.drop(calendar[3])
+    signal = {"ticker": "A.T", "signal_date": "2026-01-19", "score": 80}
+    report = _build_group_report([signal], {"A.T": history}, {"A.T": history}, benchmark, [signal["signal_date"]])
+    h5 = report["horizons"]["h5"]
+    assert h5["summary"]["completed"] == 0
+    assert h5["summary"]["unevaluated_reasons"] == {"incomplete_price_path": 1}
+    assert h5["benchmark_excess"]["evaluated"] == 0
 
 
 def _dsr_trades(count: int = 30, offset: float = 0.0):
@@ -930,7 +942,9 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
         pd.testing.assert_frame_equal(cached[ticker]["frame"], frames[ticker])
 
 
-ADDED_AFTER_THE_FINGERPRINTS = {"exit_legs", "regime_breakdown"}  # keys introduced since they were taken
+ADDED_AFTER_THE_FINGERPRINTS = {
+    "exit_legs", "regime_breakdown", "price_diagnostics", "unevaluated", "unevaluated_reasons",
+}  # Additive diagnostics only; keep the original numeric fingerprints unchanged.
 
 
 def _strip_added_keys(value):

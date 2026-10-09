@@ -20,6 +20,100 @@ def _history(opens: list[float], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame({"Open": opens, "Close": closes}, index=idx)
 
 
+@pytest.mark.parametrize("kind,reason,matured", [
+    ("right_censored", "right_censored", False),
+    ("ended_unknown", "price_unavailable", True),
+    ("resumed_unknown", "incomplete_price_path", True),
+    ("halt", "trading_halt", True),
+    ("terminated", "permanent_termination", True),
+])
+def test_market_time_distinguishes_price_endings_without_inventing_an_exit(kind, reason, matured) -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 49.0, "Close": 50.0}, index=calendar)
+    if kind == "resumed_unknown":
+        history = history.drop(calendar[3])
+    else:
+        history = history.iloc[:3].copy()
+    if kind == "right_censored":
+        calendar = calendar[:3]
+    elif kind in {"halt", "terminated"}:
+        history.attrs["price_status"] = {
+            "status": "trading_halt" if kind == "halt" else "permanent_termination",
+            "effective_date": "2026-01-22", "source": "documented-test-event",
+        }
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19", "score": 80}, history,
+                            holding_days=5, market_calendar=calendar)
+    assert trade.net_return_pct is None
+    assert trade.exit_price is None and trade.exit_date is None
+    assert trade.horizon_matured is matured
+    assert trade.price_diagnostics["unevaluated_reason"] == reason
+    assert trade.price_diagnostics["last_price_date"] == str(history.index[-1].date())
+    summary = summarize_trades([trade])
+    assert summary["unevaluated"] == 1
+    assert summary["unevaluated_reasons"] == {reason: 1}
+
+
+def test_documented_halt_can_resume_without_extending_the_market_horizon() -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "Close": 110.0}, index=calendar).drop(calendar[3])
+    history.attrs["price_status"] = {"status": "trading_halt", "effective_date": "2026-01-22",
+                                     "resumed_date": "2026-01-23", "source": "documented-test-event"}
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19"}, history,
+                            holding_days=5, round_trip_cost_pct=0, market_calendar=calendar)
+    assert trade.exit_date == str(calendar[5].date())
+    assert trade.net_return_pct == 10
+    assert trade.price_diagnostics["price_status"] == "trading_resumed"
+
+
+def test_unsubstantiated_or_future_termination_evidence_does_not_become_a_delisting() -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "Close": 50.0}, index=calendar[:3])
+    for metadata in ({"status": "permanent_termination", "effective_date": "2026-01-22"},
+                     {"status": "permanent_termination", "effective_date": "2026-03-01", "source": "test"}):
+        history.attrs["price_status"] = metadata
+        trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19"}, history,
+                                holding_days=5, market_calendar=calendar)
+        assert trade.price_diagnostics["price_status"] == "unknown"
+        assert trade.exit_price is None
+
+
+def test_unknown_daily_gap_cannot_hide_an_earlier_stop() -> None:
+    from src.evaluation.exit_rules import TrailingRule, simulate_exit_rule
+
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 99.0, "Close": 100.0}, index=calendar)
+    history.loc[calendar[3], "Low"] = 50.0
+    incomplete = history.drop(calendar[3])
+    for trade in (
+        simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19"}, incomplete, holding_days=5,
+                        trailing_stop_pct=15, market_calendar=calendar),
+        simulate_exit_rule({"ticker": "A.T", "signal_date": "2026-01-19"}, incomplete, TrailingRule(15),
+                           holding_days=5, market_calendar=calendar),
+    ):
+        assert trade.net_return_pct is None
+        assert trade.price_diagnostics["unevaluated_reason"] == "incomplete_price_path"
+
+
+@pytest.mark.parametrize("settlement_hint", [None, 0.0, 50.0])
+def test_a_settlement_hint_without_payment_terms_never_becomes_an_exit_price(settlement_hint) -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "Close": 50.0}, index=calendar[:3])
+    history.attrs["price_status"] = {"status": "permanent_termination", "effective_date": "2026-01-22",
+                                     "source": "test", "settlement_price": settlement_hint}
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19"}, history,
+                            holding_days=5, market_calendar=calendar)
+    assert trade.exit_price is None and trade.net_return_pct is None
+
+
+def test_a_proven_stop_before_a_later_gap_remains_completed() -> None:
+    calendar = pd.bdate_range("2026-01-19", periods=8)
+    history = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 80.0, "Close": 100.0}, index=calendar)
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-19"}, history.drop(calendar[3]),
+                            holding_days=5, trailing_stop_pct=15, market_calendar=calendar)
+    assert trade.exit_date == str(calendar[1].date()) and trade.exit_price == 85
+    assert trade.price_diagnostics["unevaluated_reason"] is None
+
+
 def test_signal_enters_next_trading_day_open() -> None:
     history = _history(
         [100, 110, 120, 130, 140, 150],

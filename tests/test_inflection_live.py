@@ -28,6 +28,12 @@ def no_edinet_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.data.edinet.requests.get", lambda *a, **kw: pytest.fail("unexpected HTTP"))
 
 
+def _q1_reporting_metadata(fiscal_end: str) -> dict[str, str]:
+    year = pd.Timestamp(fiscal_end).year - 1
+    return {"DocType": "1QFinancialStatements_Consolidated_JP", "CurFYSt": f"{year}-04-01",
+            "CurPerSt": f"{year}-04-01", "CurPerEn": f"{year}-06-30"}
+
+
 class FakeJQuantsClient:
     def is_available(self) -> bool:
         return True
@@ -46,6 +52,7 @@ class FakeJQuantsClient:
                 "DiscTime": "15:00",
                 "CurPerType": "Q1",
                 "CurFYEn": "2026-03-31",
+                **_q1_reporting_metadata("2026-03-31"),
                 "Sales": 100.0,
                 "OP": 10.0,
                 "FOP": 20.0,
@@ -56,6 +63,7 @@ class FakeJQuantsClient:
                 "DiscTime": "15:00",
                 "CurPerType": "Q1",
                 "CurFYEn": "2027-03-31",
+                **_q1_reporting_metadata("2027-03-31"),
                 "Sales": 140.0,
                 "OP": 25.0,
                 "FOP": 25.0,
@@ -124,7 +132,7 @@ def test_technical_features_require_21_closes(periods: int) -> None:
 
 @pytest.mark.parametrize(
     ("periods", "near_52w_high", "near_listing_high"),
-    [(21, False, True), (100, False, True), (251, False, True), (252, True, False)],
+    [(21, False, False), (100, False, False), (251, False, False), (252, True, False), (253, True, False)],
 )
 def test_technical_features_distinguish_listing_and_52w_highs(
     periods: int,
@@ -139,6 +147,43 @@ def test_technical_features_distinguish_listing_and_52w_highs(
     assert result["near_listing_high"] is near_listing_high
 
 
+@pytest.mark.parametrize("periods", [21, 100, 251])
+def test_short_history_without_listing_evidence_is_only_a_fetched_period_high(periods: int) -> None:
+    result = _technical_features(_price_frame(periods))
+    assert result is not None
+    assert result["near_listing_high"] is False
+    assert result["near_52w_high"] is False
+    assert result["distance_from_period_high_pct"] == pytest.approx(0)
+    assert any("listing" in reason for reason in result["price_limitations"])
+
+
+@pytest.mark.parametrize("kind", ["recent_ipo_without_date", "partial_delivery", "missing_sessions", "first_seen"])
+def test_short_price_history_and_cache_first_seen_do_not_prove_a_listing_high(kind: str) -> None:
+    frame = _price_frame(300)
+    frame.loc[frame.index[-100], "Close"] = 1000.0  # A real older high is outside the partial response.
+    if kind == "recent_ipo_without_date":
+        frame = _price_frame(80)
+    elif kind == "missing_sessions":
+        frame = frame.iloc[1::2]
+    else:
+        frame = frame.tail(80)
+    if kind == "first_seen":
+        frame.attrs["first_seen"] = str(frame.index[0].date())
+    result = _technical_features(frame)
+    assert result is not None
+    assert result["near_listing_high"] is False
+    assert any("listing" in reason for reason in result["price_limitations"])
+
+
+def test_unverified_high_is_reported_consistently_in_candidates_and_controls() -> None:
+    report = _scan_multi(MultiCodeFakeClient(), deep_candidates=2, control_sample_size=3)
+    for row in [*report["candidates"], *report["control_sample"]]:
+        assert row["near_listing_high"] is False
+        assert "上場来高値圏" not in row["reasons"]
+        assert "取得期間内高値圏" in row["reasons"]
+        assert any("listing" in reason for reason in row["limitations"])
+
+
 def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
     rows = FakeJQuantsClient().financial_summary("11110")
     result = _fundamental_features(rows)
@@ -148,6 +193,52 @@ def test_fundamentals_ignore_forecast_only_row_for_latest_actual() -> None:
     assert result["latest_actual_disclosure_date"] == "2026-08-01"
     assert result["latest_disclosure_date"] == "2026-08-15"
     assert result["upward_revision_pct"] == pytest.approx(20.0)
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), float("inf"), float("-inf"), "absent"])
+def test_invalid_latest_forecast_cannot_revive_an_older_revision(value: float | str | None) -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")
+    corrected = {**rows[-1], "DiscDate": "2026-08-16", "FOP": value}
+    if value == "absent":
+        corrected.pop("FOP")
+    rows.append(corrected)
+
+    result = _fundamental_features(rows, as_of="2026-08-17")
+
+    assert result["upward_revision_pct"] is None
+    assert result["forecast_disclosure_date"] == "2026-08-16"
+    assert any("financial_forecast: unavailable" in reason for reason in result["financial_limitations"])
+
+
+@pytest.mark.parametrize("value", [None, "", "absent"])
+def test_dividend_only_revision_does_not_invalidate_the_operating_profit_forecast(value: str | None) -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")
+    dividend = {**rows[-1], "DiscDate": "2026-08-16", "DocType": "DividendForecastRevision", "FOP": value}
+    if value == "absent":
+        dividend.pop("FOP")
+    rows.append(dividend)
+
+    result = _fundamental_features(rows, as_of="2026-08-17")
+
+    assert result["upward_revision_pct"] == pytest.approx(20.0)
+    assert result["forecast_disclosure_date"] == "2026-08-15"
+    assert result["latest_disclosure_date"] == "2026-08-16"
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), float("inf"), float("-inf"), "absent"])
+def test_invalid_latest_cashflow_cannot_revive_an_older_actual(value: float | str | None) -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")
+    rows[1]["CFO"] = -5.0
+    corrected = {**rows[1], "DiscDate": "2026-08-16", "CFO": value}
+    if value == "absent":
+        corrected.pop("CFO")
+    rows.append(corrected)
+
+    result = _fundamental_features(rows, as_of="2026-08-17")
+
+    assert result["latest_actual_disclosure_date"] == "2026-08-16"
+    assert result["negative_operating_cashflow"] is False
+    assert any("financial_cashflow: unavailable" in reason for reason in result["financial_limitations"])
 
 
 @pytest.mark.parametrize(
@@ -190,6 +281,8 @@ def test_fundamentals_use_prior_fiscal_year_instead_of_same_year_correction() ->
             "OP": 25.0,
         },
     ]
+    for row in rows:
+        row.update(_q1_reporting_metadata(str(row["CurFYEn"])))
     result = _fundamental_features(rows)
     assert result["revenue_growth_yoy_pct"] == pytest.approx(50.0)
     assert result["operating_profit_growth_yoy_pct"] == pytest.approx(150.0)
@@ -229,6 +322,54 @@ def test_fundamentals_do_not_treat_a_two_year_gap_as_yoy() -> None:
     result = _fundamental_features(rows)
 
     assert result["revenue_growth_yoy_pct"] is None
+
+
+def test_financial_asof_bounds_every_scored_feature_before_selecting_latest_rows() -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")
+    rows.append({**rows[1], "DiscDate": "2026-08-17", "Sales": 180.0, "OP": 60.0, "FOP": 90.0, "CFO": -5.0})
+    bounded = _fundamental_features(rows, as_of="2026-08-16")
+    assert bounded["revenue_growth_yoy_pct"] == pytest.approx(40.0)
+    assert bounded["operating_profit_growth_yoy_pct"] == pytest.approx(150.0)
+    assert bounded["operating_margin_change_pctpt"] == pytest.approx((25 / 140 - 10 / 100) * 100)
+    assert bounded["upward_revision_pct"] == pytest.approx(20.0)
+    assert bounded["negative_operating_cashflow"] is False
+    assert bounded["latest_actual_disclosure_date"] == "2026-08-01"
+    assert bounded["latest_disclosure_date"] == bounded["forecast_disclosure_date"] == "2026-08-15"
+
+
+@pytest.mark.parametrize("disc_time", ["15:00", "16:40", "16:41", "17:00", "", "invalid"])
+def test_disclosure_time_does_not_prove_same_day_provider_availability(disc_time: str) -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")[:2]
+    rows.append({**rows[1], "DiscDate": "2026-08-16", "DiscTime": disc_time, "Sales": 180.0})
+    bounded = _fundamental_features(rows, as_of="2026-08-16")
+    assert bounded["revenue_growth_yoy_pct"] == pytest.approx(40.0)
+    assert bounded["latest_actual_disclosure_date"] == "2026-08-01"
+
+
+@pytest.mark.parametrize("disc_time", ["", "invalid"])
+def test_unknown_disclosure_time_is_not_inferred_to_be_available_on_a_later_day(disc_time: str) -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")[:2]
+    rows.append({**rows[1], "DiscDate": "2026-08-10", "DiscTime": disc_time, "Sales": 180.0})
+    bounded = _fundamental_features(rows, as_of="2026-08-16")
+    assert bounded["latest_actual_disclosure_date"] == "2026-08-01"
+
+
+def test_future_correction_cannot_create_a_profitability_turnaround() -> None:
+    rows = FakeJQuantsClient().financial_summary("11110")[:2]
+    rows[0]["OP"], rows[1]["OP"] = -20.0, -10.0
+    rows.append({**rows[1], "DiscDate": "2026-08-17", "OP": 20.0})
+    assert _fundamental_features(rows, as_of="2026-08-16")["turned_profitable"] is False
+
+
+@pytest.mark.parametrize("delay_weeks", ["12", "0"])
+def test_live_scan_enforces_its_reported_free_plan_delay(delay_weeks: str) -> None:
+    with patch.dict("os.environ", {"JQUANTS_PLAN": "free", "JQUANTS_DATA_DELAY_WEEKS": delay_weeks}):
+        report = _scan_multi(MultiCodeFakeClient(), deep_candidates=1, control_sample_size=1)
+    assert report["data_policy"]["jquants_data_delay_weeks"] == 12
+    for row in [*report["candidates"], *report["control_sample"]]:
+        assert row["features"]["latest_actual_disclosure_date"] == "2025-08-01"
+        assert row["features"]["revenue_growth_yoy_pct"] is None
+        assert row["score_details"]["fundamental"] == 0.0
 
 
 def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
@@ -503,8 +644,10 @@ FUNDAMENTAL_FEATURE_KEYS = (
 )
 _FINANCIAL_ROWS = [
     {"DiscDate": "2025-08-01", "DiscTime": "15:00", "CurPerType": "Q1", "CurFYEn": "2026-03-31",
+     **_q1_reporting_metadata("2026-03-31"),
      "Sales": 100.0, "OP": 10.0, "FOP": 20.0, "CFO": 5.0},
     {"DiscDate": "2026-08-01", "DiscTime": "15:00", "CurPerType": "Q1", "CurFYEn": "2027-03-31",
+     **_q1_reporting_metadata("2027-03-31"),
      "Sales": 140.0, "OP": 25.0, "FOP": 25.0, "CFO": 8.0},
 ]
 
@@ -522,7 +665,9 @@ def _scan_multi(client: MultiCodeFakeClient, *, periods: int = 80, **kwargs: obj
 
 def test_candidate_persists_raw_features_score_details_and_sector() -> None:
     client = MultiCodeFakeClient()
-    report = _scan_multi(client, deep_candidates=2, control_sample_size=0)
+    # This fixture exposes recent disclosures, so it represents a paid plan rather than Free.
+    with patch.dict("os.environ", {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "0"}):
+        report = _scan_multi(client, deep_candidates=2, control_sample_size=0)
     candidate = report["candidates"][0]  # type: ignore[index]
     expected = _fundamental_features(_FINANCIAL_ROWS)
 
@@ -705,10 +850,6 @@ NEW_DIAGNOSTIC_KEYS = (
     "daily_volatility_20d_pct",
     "distance_from_period_high_pct",
 )
-# Taken from the code BEFORE the diagnostics existed: scoring, classification and selection must not move.
-PRE_DIAGNOSTICS_FINGERPRINT = "f8583efe1192924eece3dddcdd8a4188be4be65e04032d6996a4a74e0aee48fc"
-
-
 def _frame_from_returns(returns: list[float], base: float = 100.0) -> pd.DataFrame:
     closes = [base]
     for value in returns:
@@ -718,10 +859,10 @@ def _frame_from_returns(returns: list[float], base: float = 100.0) -> pd.DataFra
 
 
 def test_diagnostics_do_not_change_scores_classifications_or_selection() -> None:
-    import hashlib
-    import json
-
-    report = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
+    with patch.dict("os.environ", {"JQUANTS_PLAN": "free", "JQUANTS_DATA_DELAY_WEEKS": "12"}):
+        report = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
+        with patch("src.screening.inflection_live._quarterly_features", return_value={}):
+            without_diagnostics = _scan_multi(MultiCodeFakeClient(), deep_candidates=3, control_sample_size=3)
 
     def stripped(rows: list[dict[str, object]]) -> list[dict[str, object]]:
         return [
@@ -729,14 +870,16 @@ def test_diagnostics_do_not_change_scores_classifications_or_selection() -> None
             for row in rows
         ]
 
-    payload = {
-        "candidates": stripped(report["candidates"]),  # type: ignore[arg-type]
-        "control_sample": stripped(report["control_sample"]),  # type: ignore[arg-type]
-        "classification_counts": report["classification_counts"],
-    }
-    blob = json.dumps(payload, sort_keys=True, default=str)
-
-    assert hashlib.sha256(blob.encode()).hexdigest() == PRE_DIAGNOSTICS_FINGERPRINT
+    for key in ("candidates", "control_sample"):
+        assert stripped(report[key]) == stripped(without_diagnostics[key])  # type: ignore[arg-type]
+        for row in report[key]:  # type: ignore[union-attr]
+            # Free excludes recent financials. Without listing evidence, momentum is 5+6+5 (no high points).
+            assert row["score_details"]["fundamental"] == 0.0
+            assert row["score_details"]["near_listing_high"] == 0.0
+            assert row["raw_inflection_score"] == 16.0
+            assert row["live_normalized_score"] == pytest.approx(27.586)
+            assert row["classification"] == "NONE"
+    assert report["classification_counts"] == without_diagnostics["classification_counts"] == {"NONE": 3}
     assert set(NEW_DIAGNOSTIC_KEYS) <= set(report["candidates"][0]["features"])  # type: ignore[index]
 
 
@@ -835,6 +978,7 @@ def test_disclosure_ages_are_counted_from_the_scan_market_date() -> None:
     with (
         patch("src.screening.inflection_live.fetch_price_data", return_value=prices),
         patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict("os.environ", {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "0"}),
     ):
         report = scan_japan_inflection(client=FakeJQuantsClient(), deep_candidates=1, min_turnover_jpy=0)
 
@@ -945,6 +1089,110 @@ def _quarter_rows() -> list[dict[str, object]]:
     return rows
 
 
+def _primary_yoy_rows() -> list[dict[str, object]]:
+    quarterly = _quarter_rows()
+    return [dict(quarterly[0]), dict(quarterly[4])]
+
+
+@pytest.mark.parametrize("case", ["basis", "standard", "missing_basis", "missing_start", "missing_end",
+                                  "short_period", "different_actual_period", "fiscal_start"])
+def test_primary_yoy_requires_confirmed_reporting_basis_and_actual_period(case: str) -> None:
+    rows = _primary_yoy_rows()
+    rows[0]["OP"] = -10.0  # An incomparable negative base must not manufacture a turnaround.
+    if case == "basis":
+        rows[0]["DocType"] = "1QFinancialStatements_NonConsolidated_JP"
+    elif case == "standard":
+        rows[0]["DocType"] = "1QFinancialStatements_Consolidated_IFRS"
+    elif case == "missing_basis":
+        rows[1].pop("DocType")
+    elif case == "missing_start":
+        rows[1].pop("CurPerSt")
+    elif case == "missing_end":
+        rows[1].pop("CurPerEn")
+    elif case == "short_period":
+        rows[1]["CurPerSt"] = "2024-05-01"
+    elif case == "different_actual_period":
+        rows[0].update(CurPerSt="2023-07-01", CurPerEn="2023-09-30")
+    else:
+        rows[1]["CurFYSt"] = "2024-05-01"
+    result = _fundamental_features(rows, as_of="2024-08-01")
+    for key in ("revenue_growth_yoy_pct", "operating_profit_growth_yoy_pct", "operating_margin_change_pctpt"):
+        assert result[key] is None
+    assert result["turned_profitable"] is False
+    assert any("not_comparable" in reason for reason in result["financial_limitations"])
+
+
+def test_confirmed_primary_yoy_remains_cumulative_and_preserves_numeric_values() -> None:
+    result = _fundamental_features(_primary_yoy_rows(), as_of="2024-08-01")
+    assert result["revenue_growth_yoy_pct"] == pytest.approx(10.0)
+    assert result["operating_profit_growth_yoy_pct"] == pytest.approx(20.0)
+    assert result["operating_margin_change_pctpt"] == pytest.approx((12 / 110 - 10 / 100) * 100)
+    assert result["quarterly_sales_growth_yoy_pct"] == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("column", ["Sales", "OP"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_nonfinite_financial_inputs_remain_reasoned_missing(column: str, value: float) -> None:
+    rows = _primary_yoy_rows()
+    rows[-1][column] = value
+    result = _fundamental_features(rows, as_of="2024-08-01")
+    key = "revenue_growth_yoy_pct" if column == "Sales" else "operating_profit_growth_yoy_pct"
+    assert result[key] is None
+    assert result["operating_margin_change_pctpt"] is None
+    assert any("unavailable" in reason for reason in result["financial_limitations"])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), None])
+def test_invalid_latest_actual_cannot_fall_back_to_an_older_valid_statement(value: float | None) -> None:
+    rows = _primary_yoy_rows()
+    rows.append({**rows[-1], "DiscDate": "2024-07-31", "Sales": value, "OP": value})
+    result = _fundamental_features(rows, as_of="2024-08-01")
+    assert result["latest_actual_disclosure_date"] == "2024-07-31"
+    assert result["revenue_growth_yoy_pct"] is None
+    assert result["operating_profit_growth_yoy_pct"] is None
+    assert any("unavailable" in reason for reason in result["financial_limitations"])
+
+
+@pytest.mark.parametrize("year", ["current", "previous"])
+def test_latest_period_correction_is_selected_before_comparability_validation(year: str) -> None:
+    rows = _primary_yoy_rows()
+    corrected = rows[-1] if year == "current" else rows[0]
+    rows.append({**corrected, "DiscDate": "2024-07-31" if year == "current" else "2024-07-29", "CurPerSt": None,
+                 "Sales": 900.0, "OP": 90.0})
+    result = _fundamental_features(rows, as_of="2024-08-01")
+    for key in ("revenue_growth_yoy_pct", "operating_profit_growth_yoy_pct",
+                "quarterly_sales_growth_yoy_pct", "quarterly_op_growth_yoy_pct"):
+        assert result[key] is None
+    assert any("not_comparable" in reason for reason in result["financial_limitations"])
+
+
+@pytest.mark.parametrize("last_time", ["15:00", "15:00:00"])
+def test_disclosure_number_cannot_order_conflicting_simultaneous_actual_corrections(last_time: str) -> None:
+    rows = _primary_yoy_rows()
+    rows[-1]["DiscNo"] = "1"
+    rows.append({**rows[-1], "DiscTime": last_time, "DiscNo": "999", "Sales": 900.0})
+    for ordered in (rows, list(reversed(rows))):
+        result = _fundamental_features(ordered, as_of="2024-08-01")
+        assert result.get("revenue_growth_yoy_pct") is None
+        assert any("ambiguous" in reason for reason in result["financial_limitations"])
+
+
+def test_simultaneous_forecasts_do_not_create_a_chronological_revision() -> None:
+    rows = _primary_yoy_rows()
+    rows[-1]["FOP"] = 20.0
+    rows.append({**rows[-1], "Sales": None, "OP": None, "FOP": 30.0, "DiscNo": "999",
+                 "DocType": "EarnForecastRevision"})
+    result = _fundamental_features(rows, as_of="2024-08-01")
+    assert result["upward_revision_pct"] is None
+    assert any("ambiguous" in reason for reason in result["financial_limitations"])
+
+
+def test_strengthened_yoy_cannot_use_a_future_prior_year_correction() -> None:
+    rows = _primary_yoy_rows()
+    rows.append({**rows[0], "DiscDate": "2024-08-02", "Sales": 1.0})
+    assert _fundamental_features(rows, as_of="2024-08-01")["revenue_growth_yoy_pct"] == pytest.approx(10.0)
+
+
 @pytest.mark.parametrize(("period", "sales_growth", "op_growth", "accel"), [
     ("1Q", 10.0, 20.0, None), ("2Q", 20.0, 30.0, 10.0),
     ("3Q", 30.0, 40.0, 10.0), ("FY", 40.0, 50.0, 10.0),
@@ -988,6 +1236,7 @@ def test_quarterly_first_quarter_acceleration_crosses_fiscal_year() -> None:
     rows = _quarter_rows()
     rows.append({"Code": "11110", "DiscDate": "2025-07-30", "DiscTime": "15:00", "CurPerType": "1Q",
                  "CurFYEn": "2026-03-31", "DocType": "1QFinancialStatements_Consolidated_JP",
+                 **_q1_reporting_metadata("2026-03-31"),
                  "Sales": 180, "OP": 24})
     features = _fundamental_features(rows)
     assert features["quarterly_sales_growth_accel_pctpt"] == pytest.approx((180 / 110 - 1) * 100 - 40)
@@ -999,18 +1248,21 @@ def test_quarterly_corrections_basis_and_point_in_time() -> None:
 
     rows = _quarter_rows()
     latest = rows[-1]
-    revised = {**latest, "DiscDate": "2025-05-01", "Sales": 1400}
-    foreign = {**rows[-2], "DiscDate": "2025-04-30", "DocType": "3QFinancialStatements_NonConsolidated_JP",
+    revised = {**latest, "DiscDate": "2025-05-02", "Sales": 1400}
+    foreign = {**rows[-2], "DiscDate": "2025-05-01", "DocType": "3QFinancialStatements_NonConsolidated_JP",
                "Sales": 9999}
     source = FinancialsStore([*rows, revised, foreign])
-    before = _fundamental_features(source.view("2025-04-30", "disclosure").financial_summary("11110"))
-    after = _fundamental_features(source.view("2025-05-01", "disclosure").financial_summary("11110"))
-    # On 4/30 the latest actual is the non-consolidated 3Q, which has no comparable history.
+    before = _fundamental_features(source.view("2025-05-02", "disclosure").financial_summary("11110"))
+    after = _fundamental_features(source.view("2025-05-03", "disclosure").financial_summary("11110"))
+    # After the provider-day boundary, the latest actual is the non-consolidated 3Q.
     assert before["quarterly_sales_growth_yoy_pct"] is None
-    assert after["quarterly_sales_growth_yoy_pct"] == pytest.approx(65)
-    live_bounded = _fundamental_features([*rows, revised], as_of="2025-04-30")
+    # The latest 3Q correction is standalone; it cannot be subtracted from a consolidated FY.
+    assert after["quarterly_sales_growth_yoy_pct"] is None
+    assert after["revenue_growth_yoy_pct"] == pytest.approx(40)
+    assert any("financial_quarterly" in reason for reason in after["financial_limitations"])
+    live_bounded = _fundamental_features([*rows, revised], as_of="2025-05-01")
     assert live_bounded["quarterly_sales_growth_yoy_pct"] == pytest.approx(40)
-    assert live_bounded["revenue_growth_yoy_pct"] == pytest.approx(40)  # legacy uses the latest revision (1400/1000).
+    assert live_bounded["revenue_growth_yoy_pct"] == pytest.approx(30)  # Only the 1300/1000 actual is eligible.
 
 
 def test_quarterly_irregular_period_and_invalid_values_stay_missing() -> None:

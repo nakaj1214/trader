@@ -16,6 +16,7 @@ from src.notify.inflection_digest import send_daily_digest
 from src.screening.inflection_live import (
     MIN_LATEST_DATE_COVERAGE,
     MIN_PRICE_COVERAGE,
+    DataPolicyConfigError,
     PriceDataRetryExhausted,
     scan_japan_inflection,
 )
@@ -244,7 +245,7 @@ def main() -> None:
                 output.writelines(f"{key}={value}\n" for key, value in exc.details.items())
         raise
     except Exception as exc:
-        _publish_failure_stage("data_acquisition", exc)
+        _publish_failure_stage("configuration" if isinstance(exc, DataPolicyConfigError) else "data_acquisition", exc)
         raise
     try:
         snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)

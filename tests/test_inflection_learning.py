@@ -528,6 +528,8 @@ def test_factor_statistics_cover_positive_negative_and_hold_promotions() -> None
     ]:
         rows.extend(
             {
+                "ticker": f"{factor}{index}.T",
+                "signal_date": f"2026-02-{index % 7 + 1:02d}",
                 "factor_labels": [factor],
                 "horizons": {
                     "h20": {
@@ -536,7 +538,7 @@ def test_factor_statistics_cover_positive_negative_and_hold_promotions() -> None
                     }
                 },
             }
-            for _ in range(count)
+            for index in range(count)
         )
 
     statistics = {
@@ -703,6 +705,8 @@ def test_wilson_interval_matches_reference_values() -> None:
 def _rows(factor: str, count: int, exploded: int, excess: float = 1.0) -> list[dict[str, Any]]:
     return [
         {
+            "ticker": f"{factor}{index}.T",
+            "signal_date": f"2026-02-{index % 7 + 1:02d}",
             "factor_labels": [factor],
             "horizons": {"h20": {"explosive": index < exploded, "excess_return_pct": excess}},
         }
@@ -1050,3 +1054,58 @@ def test_loader_reads_schema5_snapshots_with_and_without_the_diagnostic_features
     assert all(rows["2026-01-07"]["features"][key] == value for key, value in diagnostics.items())
     assert rows["2026-01-07"]["features"]["disclosure_age_days"] == 19
     assert rows["2026-01-07"]["features"]["up_day_ratio_60d"] is None
+
+
+@pytest.mark.parametrize(
+    ("excess", "judged", "misses", "rate"),
+    [([-1.0, 2.0], 2, 1, 50.0), ([-1.0, None], 1, 1, 100.0), ([None, None], 0, 0, None)],
+    ids=["all_valid", "mixed_missing_benchmark", "all_missing_benchmark"],
+)
+def test_early_candidate_miss_rate_uses_only_judgeable_observations(excess, judged, misses, rate) -> None:
+    from src.evaluation.inflection_learning import _horizon_summary
+
+    rows = [
+        {"classification": "EARLY_CANDIDATE", "horizons": {"h5": {"excess_return_pct": value, "explosive": False}}}
+        for value in excess
+    ]
+    summary = _horizon_summary(rows, 5)
+    assert summary["early_candidate_observations"] == len(excess)
+    assert (summary["early_candidate_judged"], summary["early_candidate_misses"]) == (judged, misses)
+    assert summary["early_candidate_unjudgeable"] == len(excess) - judged
+    assert summary["early_candidate_miss_rate_pct"] == rate
+
+
+def _independence_rows(n: int, *, same_day: bool, sector: str | None = "A") -> list[dict[str, Any]]:
+    rows = []
+    for i in range(n):
+        day = "2026-01-05" if same_day else f"2026-01-{5 + i:02d}"
+        rows.append({
+            "ticker": f"{1000 + i}.T", "signal_date": day, "sector33_code": sector,
+            "factor_labels": ["f"], "classification": "WATCH",
+            "horizons": {"h5": {"explosive": i < n // 2, "excess_return_pct": 1.0,
+                                "completed": True}},
+        })
+    return rows
+
+
+def test_thirty_same_day_tickers_are_not_thirty_independent_events() -> None:
+    from src.evaluation.inflection_learning import _factor_statistics
+
+    rows = _independence_rows(30, same_day=True)
+    # 15 explosive of 30 against a lone non-factor baseline would look like a strong lift on counts alone.
+    baseline = {"explosion_rate_pct": 10.0}
+    stat = _factor_statistics(rows, horizon=5, baseline=baseline)[0]
+    assert stat["independent_observations"] == 30
+    assert (stat["distinct_tickers"], stat["distinct_signal_dates"]) == (30, 1)
+    assert stat["independence_status"] == "insufficient"
+    assert stat["uncorrected_direction"] == "positive_candidate"
+    assert stat["promotion_status"] == "hold"
+
+
+def test_sector_concentration_and_unknown_sector_are_reported_distinctly() -> None:
+    from src.evaluation.inflection_learning import _independence_evidence
+
+    spread = _independence_evidence("f", _independence_rows(30, same_day=False, sector=None))
+    assert spread["independence_status"] == "sufficient" and spread["top_sector_share_pct"] is None
+    assert _independence_evidence("f", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "insufficient"
+    assert _independence_evidence("sector33:A", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "sufficient"

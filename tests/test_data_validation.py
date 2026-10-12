@@ -71,3 +71,14 @@ def test_validation_detects_duplicate_market_dates_and_invalid_dates() -> None:
     assert "DUPLICATE_INDEX" in {issue.code for issue in validate_ohlcv(frame)}
     frame.index = pd.Index(["2026-01-05", "invalid"])
     assert "INVALID_INDEX" in {issue.code for issue in validate_ohlcv(frame)}
+
+
+def test_real_network_access_is_blocked_in_tests() -> None:
+    import socket
+
+    from tests.conftest import BLOCKED_NETWORK_ATTEMPTS
+
+    before = len(BLOCKED_NETWORK_ATTEMPTS)
+    with pytest.raises(RuntimeError, match="forbidden"):
+        socket.getaddrinfo("example.com", 443)
+    del BLOCKED_NETWORK_ATTEMPTS[before:]  # keep the run-level count to unintended attempts only

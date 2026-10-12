@@ -243,6 +243,37 @@ def test_historical_financial_rows_preserve_comparability_evidence() -> None:
     assert _fundamental_features(selected)["revenue_growth_yoy_pct"] is None
 
 
+def _quarter_rows(cur_end: str = "2026-06-30", cur_start: str | None = "2026-04-01") -> list[dict[str, Any]]:
+    doc = "1QFinancialStatements_Consolidated_JP"
+    rows = [
+        _fin("11110", "2025-08-01", "1Q", "2026-03-31", "100", "10", "20", DocType=doc, CurFYSt="2025-04-01",
+             CurPerSt="2025-04-01", CurPerEn="2025-06-30"),
+        _fin("11110", "2026-08-01", "1Q", "2027-03-31", "130", "15", "25", DocType=doc, CurFYSt="2026-04-01",
+             CurPerEn=cur_end),
+    ]
+    if cur_start is not None:
+        rows[-1]["CurPerSt"] = cur_start
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("cur_end", "cur_start", "comparable"),
+    [("2026-06-30", "2026-04-01", True), ("2026-09-30", "2026-04-01", False), ("2026-06-30", None, False)],
+    ids=["regular", "irregular_six_months", "period_start_missing"],
+)
+def test_quarterly_diagnostics_match_between_live_and_historical(cur_end, cur_start, comparable) -> None:
+    from src.screening.inflection_live import _fundamental_features
+
+    rows = _quarter_rows(cur_end, cur_start)
+    live = _fundamental_features([dict(row) for row in rows])
+    historical = _fundamental_features(FinancialsStore(rows).view("2026-08-02", "disclosure").financial_summary("11110"))
+    keys = ("quarterly_sales_growth_yoy_pct", "quarterly_op_growth_yoy_pct", "revenue_growth_yoy_pct")
+    assert {k: historical[k] for k in keys} == {k: live[k] for k in keys}
+    assert (live["quarterly_sales_growth_yoy_pct"] is not None) is comparable
+    if comparable:
+        assert live["quarterly_sales_growth_yoy_pct"] == pytest.approx(30.0)
+
+
 def test_invalid_lag_is_rejected() -> None:
     with pytest.raises(ValueError, match="lag"):
         FinancialsStore([]).view("2026-02-02", "weekly")

@@ -361,7 +361,7 @@ def test_future_correction_cannot_create_a_profitability_turnaround() -> None:
     assert _fundamental_features(rows, as_of="2026-08-16")["turned_profitable"] is False
 
 
-@pytest.mark.parametrize("delay_weeks", ["12", "0"])
+@pytest.mark.parametrize("delay_weeks", ["12"])  # free + 0 is rejected as misconfiguration (B10)
 def test_live_scan_enforces_its_reported_free_plan_delay(delay_weeks: str) -> None:
     with patch.dict("os.environ", {"JQUANTS_PLAN": "free", "JQUANTS_DATA_DELAY_WEEKS": delay_weeks}):
         report = _scan_multi(MultiCodeFakeClient(), deep_candidates=1, control_sample_size=1)
@@ -1318,3 +1318,45 @@ def test_sector_threshold_and_missing_long_history(count: int) -> None:
             assert features["sector33_return_20d_pct"] is None
         assert features["sector33_return_60d_pct"] is None
         assert features["relative_return_60d_vs_sector_pct"] is None
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, ("free", 12)),
+        ({"JQUANTS_PLAN": "Free", "JQUANTS_DATA_DELAY_WEEKS": "12"}, ("free", 12)),
+        ({"JQUANTS_PLAN": "premium"}, ("premium", 0)),
+        ({"JQUANTS_PLAN": "standard", "JQUANTS_DATA_DELAY_WEEKS": "2"}, ("standard", 2)),
+        ({"JQUANTS_PLAN": "free", "JQUANTS_DATA_DELAY_WEEKS": "16"}, ("free", 16)),
+    ],
+    ids=["default", "free", "other_plan", "explicit_override", "free_longer_delay"],
+)
+def test_data_policy_accepts_declared_settings(env, expected) -> None:
+    from src.screening.inflection_live import _data_policy
+
+    with patch.dict("os.environ", env, clear=True):
+        policy = _data_policy()
+    assert (policy["jquants_plan"], policy["jquants_data_delay_weeks"]) == expected
+    assert policy["jquants_delay_basis"] == "declared_by_environment"
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"JQUANTS_PLAN": "fre"},
+        {"JQUANTS_PLAN": ""},
+        {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "1.5"},
+        {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "twelve"},
+        {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": ""},
+        {"JQUANTS_PLAN": "premium", "JQUANTS_DATA_DELAY_WEEKS": "-1"},
+        {"JQUANTS_PLAN": "free", "JQUANTS_DATA_DELAY_WEEKS": "0"},
+    ],
+    ids=["typo", "empty_plan", "float", "text", "empty_delay", "negative", "free_understated"],
+)
+def test_data_policy_rejects_invalid_settings_without_coercion(env) -> None:
+    from src.screening.inflection_live import DataPolicyConfigError, _data_policy
+
+    with patch.dict("os.environ", env, clear=True), pytest.raises(DataPolicyConfigError) as error:
+        _data_policy()
+    assert "JQUANTS_" in str(error.value)
+    assert env.get("JQUANTS_DATA_DELAY_WEEKS", "x") not in str(error.value) or env.get("JQUANTS_DATA_DELAY_WEEKS") in ("", None)

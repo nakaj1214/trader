@@ -43,6 +43,10 @@ PROMOTION_POSITIVE_LIFT = 1.35
 PROMOTION_NEGATIVE_LIFT = 0.75
 # Benjamini-Hochberg false-discovery rate over every factor x horizon tested in one report.
 PROMOTION_MAX_Q_VALUE = 0.10
+# Independence gate: same-day or same-sector events are correlated, so they are not N independent observations.
+PROMOTION_MIN_DISTINCT_TICKERS = 10
+PROMOTION_MIN_SIGNAL_DATES = 5
+PROMOTION_MAX_SECTOR_SHARE_PCT = 50.0
 
 # Fixed diagnostic bands; they do not change production scores or weights.
 AGE_BANDS = ((31.0, 61.0, 91.0), ("le30", "31to60", "61to90", "gt90"))  # ages are whole calendar days
@@ -434,19 +438,19 @@ def _horizon_summary(rows: list[dict[str, Any]], horizon: int) -> dict[str, Any]
     ]
     explosive = [bool(row["horizons"][key].get("explosive")) for row in rows]
     early_rows = [row for row in rows if row.get("classification") == "EARLY_CANDIDATE"]
-    early_misses = [
-        row
-        for row in early_rows
-        if row["horizons"][key].get("excess_return_pct") is not None
-        and float(row["horizons"][key]["excess_return_pct"]) <= 0
-    ]
+    # Early candidates without a benchmark-comparable excess return are neither hits nor misses.
+    early_judged = [row for row in early_rows if row["horizons"][key].get("excess_return_pct") is not None]
+    early_misses = [row for row in early_judged if float(row["horizons"][key]["excess_return_pct"]) <= 0]
     return {
         "independent_observations": len(rows),
         "mean_excess_return_pct": round(mean(excess_values), 6) if excess_values else None,
         "explosion_rate_pct": round(sum(explosive) / len(explosive) * 100.0, 3) if explosive else None,
         "early_candidate_observations": len(early_rows),
+        "early_candidate_judged": len(early_judged),
+        "early_candidate_misses": len(early_misses),
+        "early_candidate_unjudgeable": len(early_rows) - len(early_judged),
         "early_candidate_miss_rate_pct": (
-            round(len(early_misses) / len(early_rows) * 100.0, 3) if early_rows else None
+            round(len(early_misses) / len(early_judged) * 100.0, 3) if early_judged else None
         ),
     }
 
@@ -514,6 +518,29 @@ def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, flo
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
+def _independence_evidence(label: str, factor_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Distinct tickers/dates/sector concentration behind a factor; ``insufficient`` blocks promotion only."""
+    # A row without an identity cannot be shown to be distinct, so it adds nothing to these counts.
+    tickers = {str(row["ticker"]) for row in factor_rows if row.get("ticker")}
+    dates = {str(row["signal_date"]) for row in factor_rows if row.get("signal_date")}
+    sectors = [row.get("sector33_code") for row in factor_rows]
+    top_share = None
+    # A sector factor is concentrated by construction; unknown sectors are reported as unknown, not as diversified.
+    if not label.startswith("sector33:") and sectors and all(sectors):
+        top_share = max(Counter(sectors).values()) / len(sectors) * 100.0
+    insufficient = (
+        len(tickers) < PROMOTION_MIN_DISTINCT_TICKERS
+        or len(dates) < PROMOTION_MIN_SIGNAL_DATES
+        or (top_share is not None and top_share > PROMOTION_MAX_SECTOR_SHARE_PCT)
+    )
+    return {
+        "distinct_tickers": len(tickers),
+        "distinct_signal_dates": len(dates),
+        "top_sector_share_pct": round(top_share, 3) if top_share is not None else None,
+        "independence_status": "insufficient" if insufficient else "sufficient",
+    }
+
+
 def _factor_statistics(
     rows: list[dict[str, Any]],
     *,
@@ -568,10 +595,13 @@ def _factor_statistics(
             and mean_excess < 0
         ):
             direction = "negative_candidate"
+        evidence = _independence_evidence(label, factor_rows)
+        promotion_status = "hold" if evidence["independence_status"] == "insufficient" else direction
         stats.append(
             {
                 "factor": label,
                 "independent_observations": len(factor_rows),
+                **evidence,
                 "mean_excess_return_pct": round(mean_excess, 6) if mean_excess is not None else None,
                 "explosion_rate_pct": round(rate, 3),
                 "explosion_rate_lift": round(lift, 6) if lift is not None else None,
@@ -582,7 +612,7 @@ def _factor_statistics(
                 "fisher_p_value": float(f"{fisher_p:.6g}") if fisher_p is not None else None,
                 "bh_q_value": None,
                 "uncorrected_direction": direction,
-                "promotion_status": direction,
+                "promotion_status": promotion_status,
             }
         )
     return sorted(
@@ -751,6 +781,9 @@ def build_learning_report(
             "positive_explosion_lift": PROMOTION_POSITIVE_LIFT,
             "negative_explosion_lift": PROMOTION_NEGATIVE_LIFT,
             "maximum_bh_q_value": PROMOTION_MAX_Q_VALUE,
+            "minimum_distinct_tickers": PROMOTION_MIN_DISTINCT_TICKERS,
+            "minimum_signal_dates": PROMOTION_MIN_SIGNAL_DATES,
+            "maximum_sector_share_pct": PROMOTION_MAX_SECTOR_SHARE_PCT,
             "test": "fisher_exact_two_sided (factor present vs absent, exploded vs not)",
             "correction": "benjamini_hochberg over every factor x horizon with a computable table",
             "tests_in_family": tests_in_family,

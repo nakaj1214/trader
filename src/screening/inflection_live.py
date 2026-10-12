@@ -457,16 +457,35 @@ def _classify(score: float, tech: dict[str, Any]) -> str:
     return "NONE"
 
 
+class DataPolicyConfigError(ValueError):
+    """JQUANTS_PLAN / JQUANTS_DATA_DELAY_WEEKS is invalid; never coerced to a usable value."""
+
+
+KNOWN_JQUANTS_PLANS = ("free", "light", "standard", "premium")
+
+
 def _data_policy() -> dict[str, Any]:
-    plan = os.getenv("JQUANTS_PLAN", DEFAULT_JQUANTS_PLAN).strip().lower() or DEFAULT_JQUANTS_PLAN
+    """Declared J-Quants plan and financial-data delay, validated. These are the operator's declaration, not an observation."""
+    plan = os.getenv("JQUANTS_PLAN", DEFAULT_JQUANTS_PLAN).strip().lower()
+    if plan not in KNOWN_JQUANTS_PLANS:
+        raise DataPolicyConfigError("JQUANTS_PLAN must be one of: " + ", ".join(KNOWN_JQUANTS_PLANS))
     default_delay = DEFAULT_FREE_DELAY_WEEKS if plan == "free" else 0
-    try:
-        delay_weeks = int(os.getenv("JQUANTS_DATA_DELAY_WEEKS", str(default_delay)))
-    except ValueError:
+    delay_text = os.getenv("JQUANTS_DATA_DELAY_WEEKS")
+    if delay_text is None:
         delay_weeks = default_delay
+    else:
+        try:
+            delay_weeks = int(delay_text.strip())
+        except ValueError:
+            raise DataPolicyConfigError("JQUANTS_DATA_DELAY_WEEKS must be a non-negative integer") from None
+        if delay_weeks < 0:
+            raise DataPolicyConfigError("JQUANTS_DATA_DELAY_WEEKS must be a non-negative integer")
+    if plan == "free" and delay_weeks < DEFAULT_FREE_DELAY_WEEKS:
+        raise DataPolicyConfigError(f"JQUANTS_DATA_DELAY_WEEKS must be >= {DEFAULT_FREE_DELAY_WEEKS} for the free plan")
     return {
         "jquants_plan": plan,
-        "jquants_data_delay_weeks": max(default_delay, delay_weeks),
+        "jquants_data_delay_weeks": delay_weeks,
+        "jquants_delay_basis": "declared_by_environment",
         "price_source": "yfinance",
         "fundamental_source": "J-Quants V2 financial summary",
     }
@@ -754,6 +773,7 @@ def scan_japan_inflection(
     generated_at = datetime.now(UTC).isoformat()
     expected_date = expected_tse_session_date(generated_at)
     retry_waits = _price_retry_waits()
+    policy = _data_policy()
     client = client or JQuantsV2Client()
     if not client.is_available():
         raise RuntimeError("JQUANTS_API_KEY is required for the production JP universe")
@@ -857,7 +877,6 @@ def scan_japan_inflection(
         if latest_date:
             latest_dates[ticker] = latest_date
 
-    policy = _data_policy()
     delay_weeks = int(policy["jquants_data_delay_weeks"])
     fundamental_limitation = (
         f"J-Quants {policy['jquants_plan']} の財務データは約{delay_weeks}週間遅延。"
@@ -939,7 +958,9 @@ def scan_japan_inflection(
             "watch_score": WATCH_SCORE,
             "measurable_max_score": LIVE_MEASURABLE_MAX_SCORE,
         },
-        "data_policy": policy,
+        "data_policy": {**policy, "observed_latest_actual_disclosure_date": max(
+            (str(c.features.get("latest_actual_disclosure_date")) for c in candidates
+             if c.features.get("latest_actual_disclosure_date")), default=None)},
         "runtime_versions": _package_versions(),
         "candidates": [candidate.as_dict() for candidate in candidates],
         "control_sample_size": control_sample_size,

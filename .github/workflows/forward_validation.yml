@@ -4,35 +4,12 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "src/evaluation/exit_rules.py"
-      - "src/evaluation/explosion.py"
-      - "src/evaluation/regime.py"
-      - "src/evaluation/inflection_backtest.py"
-      - "src/evaluation/inflection_forward.py"
-      - "src/evaluation/inflection_portfolio.py"
-      - "src/evaluation/inflection_recall.py"
-      - "src/evaluation/inflection_learning.py"
-      - "src/data/forward_prices.py"
-      - "src/data/live_quote.py"
-      - "src/data/session_gaps.py"
-      - "src/data/snapshot_crypto.py"
-      - "src/strategy/**"
-      - "scripts/rebuild_inflection_forward_validation.py"
-      - "scripts/rebuild_inflection_learning.py"
+      - "src/**"
+      - "scripts/**"
       - "dashboard/data/inflection/**"
-      - "tests/test_exit_rules.py"
-      - "tests/test_explosion.py"
-      - "tests/test_regime.py"
-      - "tests/test_session_gaps.py"
-      - "tests/test_forward_prices.py"
-      - "tests/test_snapshot_crypto.py"
-      - "tests/test_inflection_strategy.py"
-      - "tests/test_inflection_backtest.py"
-      - "tests/test_inflection_forward.py"
-      - "tests/test_inflection_portfolio.py"
-      - "tests/test_inflection_recall.py"
-      - "tests/test_inflection_learning.py"
-      - "tests/test_live_quote.py"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/forward_validation.yml"
   schedule:
     # Sunday 09:30 JST (00:30 UTC).
@@ -54,12 +31,12 @@ jobs:
 
     steps:
       - id: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
         with:
           fetch-depth: 0
 
       - id: setup
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # actions/setup-python v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -67,8 +44,9 @@ jobs:
       - name: Install dependencies
         id: install
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install uv==0.9.21
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Test forward-validation core
         id: test
@@ -103,6 +81,7 @@ jobs:
 
       - name: Validate accumulated encrypted snapshots
         id: forward_validation
+        if: github.event_name != 'pull_request'
         env:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: |
@@ -116,7 +95,7 @@ jobs:
       - name: Pass encrypted price hashes to persistence job
         id: upload-price-hashes
         if: steps.forward_validation.outputs.price_hashes_created == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # actions/upload-artifact v7
         with:
           name: inflection-forward-price-hashes
           path: dashboard/data/inflection_forward_price_hashes.enc
@@ -124,7 +103,7 @@ jobs:
 
       - name: Preserve aggregate validation summary
         id: upload-validation-summary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # actions/upload-artifact v7
         with:
           name: inflection-forward-summary
           path: artifacts/inflection_forward_validation_summary.json
@@ -141,7 +120,7 @@ jobs:
       - name: Preserve aggregate learning summary
         id: upload-learning-summary
         if: github.event_name == 'schedule'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # actions/upload-artifact v7
         with:
           name: inflection-learning-summary
           path: artifacts/inflection_learning_summary.json
@@ -162,12 +141,12 @@ jobs:
 
     steps:
       - id: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
         with:
           fetch-depth: 0
 
       - id: download-price-hashes
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # actions/download-artifact v7
         with:
           name: inflection-forward-price-hashes
           path: dashboard/data
@@ -197,7 +176,7 @@ jobs:
     steps:
       - name: Checkout trusted notifier
         id: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
         with:
           ref: main
           persist-credentials: false
@@ -205,7 +184,7 @@ jobs:
       - name: Restore notification state
         id: restore-alert-state
         continue-on-error: true
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # actions/cache/restore v4
         with:
           path: .harness/state/workflow-alerts.json
           key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
@@ -224,7 +203,7 @@ jobs:
       - name: Save notification state
         if: steps.notify.outcome == 'success'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # actions/cache/save v4
         with:
           path: .harness/state/workflow-alerts.json
           key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

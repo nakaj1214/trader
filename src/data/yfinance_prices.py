@@ -7,7 +7,7 @@ from collections.abc import Callable
 import pandas as pd
 import yfinance as yf
 
-from src.data.provider_output import suppress_provider_output
+from src.data.provider_output import ProviderFailureCategory, classify_provider_failure, suppress_provider_output
 from src.data.validation import validate_ohlcv
 
 BATCH_SIZE = 50
@@ -83,6 +83,7 @@ def fetch_price_data(
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    diagnostics: dict[str, int] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Fetch raw OHLCV plus ``Adj Close`` and retry missing/invalid symbols."""
     if not tickers:
@@ -109,10 +110,21 @@ def fetch_price_data(
                         actions=False,
                         threads=True,
                     )
-            except Exception:  # noqa: BLE001 - third-party provider failures are retried uniformly
+            except Exception as exc:
+                category = classify_provider_failure(exc)
+                if category == ProviderFailureCategory.UNEXPECTED:
+                    raise
+                if diagnostics is not None:
+                    diagnostics[category] = diagnostics.get(category, 0) + 1
                 raw = pd.DataFrame()
 
             found = _extract_batch(raw, pending) if not raw.empty else {}
+            if diagnostics is not None and not raw.empty and len(found) < len(pending):
+                diagnostics[ProviderFailureCategory.INVALID_OHLCV] = (
+                    diagnostics.get(ProviderFailureCategory.INVALID_OHLCV, 0) + len(pending) - len(found)
+                )
+            elif diagnostics is not None and raw.empty:
+                diagnostics[ProviderFailureCategory.EMPTY] = diagnostics.get(ProviderFailureCategory.EMPTY, 0) + 1
             data.update(found)
             pending = [ticker for ticker in pending if ticker not in found]
 

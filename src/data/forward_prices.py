@@ -16,7 +16,7 @@ import pickle
 import re
 import time
 from collections.abc import Callable, Collection, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,7 +26,7 @@ import yfinance as yf
 from yfinance.utils import auto_adjust
 
 from src.data.jquants_history import tse_sessions
-from src.data.provider_output import suppress_provider_output
+from src.data.provider_output import ProviderFailureCategory, classify_provider_failure, suppress_provider_output
 from src.data.validation import validate_ohlcv
 from src.data.yfinance_prices import _drop_unquoted_bars, _extract_ticker_frame
 
@@ -90,6 +90,7 @@ class PriceHistories:
     start: date
     end: date
     unavailable: int = 0
+    failures: dict[str, int] = field(default_factory=dict)
 
     def split_only(self) -> dict[str, pd.DataFrame]:
         """Yahoo's OHLC with ``auto_adjust=False`` (already split-adjusted), as fetched."""
@@ -141,7 +142,9 @@ def _save_cache(path: Path | None, entries: dict[str, dict[str, Any]]) -> None:
     path.write_bytes(pickle.dumps({"entries": entries}))
 
 
-def _download_batch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
+def _download_batch(
+    tickers: list[str], start: date, end: date, diagnostics: dict[str, int] | None = None
+) -> pd.DataFrame:
     try:
         with suppress_provider_output():
             return yf.download(
@@ -155,7 +158,12 @@ def _download_batch(tickers: list[str], start: date, end: date) -> pd.DataFrame:
                 threads=True,
                 timeout=15,
             )
-    except Exception:  # noqa: BLE001 - provider failures share the retry path and never expose tickers
+    except Exception as exc:
+        category = classify_provider_failure(exc)
+        if category == ProviderFailureCategory.UNEXPECTED:
+            raise
+        if diagnostics is not None:
+            diagnostics[category] = diagnostics.get(category, 0) + 1
         return pd.DataFrame()
 
 
@@ -172,6 +180,7 @@ def fetch_price_histories(
     batch_interval_seconds: float = BATCH_INTERVAL_SECONDS,
     max_failure_ratio: float = MAX_FAILURE_RATIO,
     sleep: Callable[[float], None] = time.sleep,
+    diagnostics: dict[str, int] | None = None,
 ) -> PriceHistories:
     """Fetch raw OHLC + actions for ``tickers`` over ``[start, end)`` in bounded batches.
 
@@ -185,6 +194,7 @@ def fetch_price_histories(
         raise ValueError("price window must have start before exclusive end")
     sessions = pd.DatetimeIndex(tse_sessions(start, end - timedelta(days=1)))
     wanted = sorted(set(tickers))
+    failures = diagnostics if diagnostics is not None else {}
     entries = _load_cache(cache_path)
     raw: dict[str, pd.DataFrame] = {}
     for ticker in wanted:
@@ -200,7 +210,9 @@ def fetch_price_histories(
         for attempt in range(max_retries + 1):
             if not pending:
                 break
-            downloaded = _download_batch(pending, start, end)
+            downloaded = _download_batch(pending, start, end, failures)
+            if downloaded.empty:
+                failures[ProviderFailureCategory.EMPTY] = failures.get(ProviderFailureCategory.EMPTY, 0) + 1
             found: dict[str, pd.DataFrame] = {}
             for ticker in pending:
                 frame = _extract_ticker_frame(downloaded, ticker, len(pending))
@@ -229,4 +241,4 @@ def fetch_price_histories(
             if ticker in raw:
                 entries[ticker] = {"frame": raw[ticker], "start": start, "end": end}
         _save_cache(cache_path, entries)
-    return PriceHistories(raw=raw, start=start, end=end, unavailable=len(missing))
+    return PriceHistories(raw=raw, start=start, end=end, unavailable=len(missing), failures=dict(failures))

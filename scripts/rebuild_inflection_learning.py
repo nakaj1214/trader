@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.atomic_write import atomic_write_text
 from src.data.forward_prices import DEFAULT_CACHE_RELATIVE_PATH, fetch_price_histories, shared_price_window
 from src.data.snapshot_crypto import snapshot_encryption_secret
 from src.evaluation.inflection_forward import BENCHMARK_TICKER
@@ -84,14 +85,11 @@ def main() -> int:
     )
     report["price_unavailable_ticker_count"] = len({str(row["ticker"]) for row in observations} - set(histories))
     output = repo_root / args.output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    atomic_write_text(output, json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
 
     summary_output = repo_root / args.summary_output
-    summary_output.parent.mkdir(parents=True, exist_ok=True)
-    summary_output.write_text(
-        json.dumps(public_learning_summary(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
+    atomic_write_text(
+        summary_output, json.dumps(public_learning_summary(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     )
 
     print(

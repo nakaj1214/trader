@@ -311,6 +311,11 @@ def test_transient_failures_are_retried_with_backoff() -> None:
     assert "1111.T" in result.raw and sleeps == [2.0]
 
 
+def test_programmer_errors_are_not_converted_to_missing_prices() -> None:
+    with patch("yfinance.download", side_effect=TypeError("bug")), pytest.raises(TypeError):
+        fetch_price_histories(["1111.T"], START, END, max_retries=0, batch_interval_seconds=0.0)
+
+
 def test_provider_output_and_logs_never_reach_the_console(
     capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
 ) -> None:

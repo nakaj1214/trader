@@ -56,6 +56,11 @@ def test_fetch_price_data_retries_provider_exception() -> None:
     assert download.call_count == 2
 
 
+def test_fetch_price_data_does_not_hide_programmer_errors() -> None:
+    with patch("src.data.yfinance_prices.yf.download", side_effect=TypeError("bug")), pytest.raises(TypeError):
+        fetch_price_data(["1111.T"], 30, max_retries=0, sleep=lambda _: None)
+
+
 def test_fetch_price_data_retries_only_missing_symbols_from_partial_batch() -> None:
     index = pd.date_range("2026-09-01", periods=3, freq="B")
     columns = pd.MultiIndex.from_product([["1111.T"], ["Open", "High", "Low", "Close", "Adj Close", "Volume"]])

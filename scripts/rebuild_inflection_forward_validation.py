@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.atomic_write import atomic_write_text
 from src.data.forward_prices import (
     DEFAULT_CACHE_RELATIVE_PATH,
     fetch_price_histories,
@@ -141,8 +142,7 @@ def _persist_price_hashes(
         "hashes": hashes,
         "revisions": changed,
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(encrypt_json(payload, secret), encoding="utf-8")
+    atomic_write_text(path, encrypt_json(payload, secret))
     return changed
 
 
@@ -369,13 +369,9 @@ def main() -> int:
     )
 
     output = repo_root / args.output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    atomic_write_text(output, json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     summary_output = output.with_name(f"{output.stem}_summary.json")
-    summary_output.write_text(
-        json.dumps(_summary_only(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_text(summary_output, json.dumps(_summary_only(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     print(
         json.dumps(
             {

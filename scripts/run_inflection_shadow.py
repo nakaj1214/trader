@@ -1,6 +1,7 @@
 """Run the production Japanese inflection scanner and persist an immutable daily snapshot."""
 from __future__ import annotations
 
+import json
 import os
 from datetime import date as calendar_date
 from datetime import datetime
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.data.atomic_write import atomic_write_text
 from src.data.market_calendar import expected_tse_session_date
 from src.data.provider_output import safe_error_details
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
@@ -24,6 +26,7 @@ from src.screening.inflection_live import (
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "dashboard" / "data" / "inflection" / "v3"
 LATEST = ROOT / "dashboard" / "data" / "inflection_candidates.enc"
+DIGEST_STATE = OUT_DIR.parent / "digest_state.json"
 JST = ZoneInfo("Asia/Tokyo")
 
 MIN_UNIVERSE_COUNT = 3000
@@ -211,24 +214,49 @@ def persist_report(
     }
     payload = encrypt_json(stored_report, encryption_secret)
 
-    snapshot_created = False
-    if not snapshot.exists():
-        snapshot.write_text(payload, encoding="utf-8")
-        snapshot_created = True
+    snapshot_created = atomic_write_text(snapshot, payload, overwrite=False)
 
-    latest_path.parent.mkdir(parents=True, exist_ok=True)
-    latest_path.write_text(payload, encoding="utf-8")
+    atomic_write_text(latest_path, payload)
     return snapshot, snapshot_created
 
 
-def _deliver_digest(report: dict[str, Any], *, snapshot_created: bool) -> str:
-    """Send the daily digest once per market day (only when this run created the snapshot).
+def _digest_states(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict) or any(
+        not isinstance(day, str) or state not in {"pending", "succeeded"} for day, state in loaded.items()
+    ):
+        raise ValueError("invalid digest state")
+    return loaded
 
-    The status string is logged; the digest itself never is (the job log is public).
-    """
-    if not snapshot_created:
-        return "skipped:snapshot-existed"
-    return send_daily_digest(report, snapshot_dir=OUT_DIR, webhook=os.getenv("SLACK_WEBHOOK_URL"))
+
+def _write_digest_state(path: Path, states: dict[str, str]) -> None:
+    atomic_write_text(path, json.dumps(dict(sorted(states.items())[-30:]), sort_keys=True) + "\n")
+
+
+def _deliver_digest(
+    report: dict[str, Any], *, snapshot_created: bool, state_path: Path | None = None, resend: bool = False
+) -> str:
+    """Persist pending/succeeded around best-effort delivery; Git publication is a later step."""
+    state_path = state_path or OUT_DIR.parent / DIGEST_STATE.name
+    market_date = str(report["latest_price_date"])
+    states = _digest_states(state_path)
+    state = states.get(market_date)
+    if not resend and state == "succeeded":
+        return "skipped:already-succeeded"
+    if not resend and state is None and not snapshot_created:
+        return "skipped:legacy-no-state"
+    states[market_date] = "pending"
+    _write_digest_state(state_path, states)
+    status = send_daily_digest(report, snapshot_dir=OUT_DIR, webhook=os.getenv("SLACK_WEBHOOK_URL"))
+    if status == "sent":
+        states[market_date] = "succeeded"
+        try:
+            _write_digest_state(state_path, states)
+        except OSError:
+            return "sent:state-save-failed"
+    return status
 
 
 def main() -> None:
@@ -252,7 +280,11 @@ def main() -> None:
     except Exception as exc:
         _publish_failure_stage("snapshot_save", exc)
         raise
-    digest_status = _deliver_digest(report, snapshot_created=snapshot_created)
+    digest_status = _deliver_digest(
+        report,
+        snapshot_created=snapshot_created,
+        resend=os.getenv("RESEND_DIGEST", "false").lower() == "true",
+    )
 
     counts = report.get("classification_counts", {})
     market_summary = " ".join(

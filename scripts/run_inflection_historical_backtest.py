@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data.atomic_write import atomic_write, atomic_write_text
 from src.data.jquants_history import (
     HistoryFetchStopped,
     default_fetch_range,
@@ -142,16 +143,16 @@ def main(argv: list[str] | None = None) -> int:
     # The aggregates are small and are the result, so they are written first: a crash while writing the huge
     # per-trade file (an out-of-memory kill took WSL down once) can no longer lose them.
     summary_output = repo_root / args.summary_output
-    summary_output.parent.mkdir(parents=True, exist_ok=True)
-    summary_output.write_text(
-        json.dumps(summary_report(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    atomic_write_text(
+        summary_output, json.dumps(summary_report(report), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     )
     output: Path | None = None
     if args.include_trades:
         output = repo_root / args.output
-        with output.open("w", encoding="utf-8") as handle:
+        def write_report(handle: Any) -> None:
             json.dump(report, handle, ensure_ascii=False, allow_nan=False)  # streamed without a giant string
             handle.write("\n")
+        atomic_write(output, write_report)
     print(
         json.dumps(
             {

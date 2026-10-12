@@ -10,6 +10,7 @@ on:
       - "tests/**"
       - "scripts/**"
       - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/test.yml"
 
 concurrency:
@@ -22,17 +23,18 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # actions/setup-python v7
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install uv==0.9.21
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Lint
         run: ruff check src scripts tests
@@ -78,17 +80,18 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # actions/setup-python v7
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install uv==0.9.21
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run regression suite with coverage
         run: python -m pytest tests/ -q

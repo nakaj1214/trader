@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from src.data.jquants_history import tse_sessions
+from src.data.provider_output import bounded_retry_after
 
 JST = ZoneInfo("Asia/Tokyo")
 LIST_URL = "https://api.edinet-fsa.go.jp/api/v2/documents.json"
@@ -134,13 +135,10 @@ class EdinetClient:
             if not retryable or attempt == self.max_retries:
                 raise failure from None
             delay = self.retry_backoff * 2**attempt
-            if response is not None:
-                try:
-                    retry_after = float(response.headers.get("Retry-After", ""))
-                    if math.isfinite(retry_after):
-                        delay = max(delay, retry_after)
-                except ValueError:
-                    pass
+            if response is not None and (
+                retry_after := bounded_retry_after(response.headers.get("Retry-After"))
+            ) is not None:
+                delay = max(delay, retry_after)
             self._wait(delay)
         raise AssertionError("unreachable")
 

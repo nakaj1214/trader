@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from src.data.provider_output import bounded_retry_after
+
 BASE_URL = "https://api.jquants.com/v2"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
@@ -84,12 +86,8 @@ class JQuantsV2Client:
 
     def _retry_delay(self, response: requests.Response | None, attempt: int) -> float:
         retry_after_raw = response.headers.get("Retry-After") if response is not None else None
-        if retry_after_raw is not None:
-            try:
-                retry_after = float(str(retry_after_raw))
-                return max(0.0, retry_after)
-            except ValueError:
-                pass
+        if retry_after_raw is not None and (retry_after := bounded_retry_after(retry_after_raw)) is not None:
+            return retry_after
         return float(self.retry_backoff * (2**attempt))
 
     def _request(self, path: str, query: dict[str, str]) -> requests.Response:

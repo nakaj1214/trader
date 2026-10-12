@@ -8,6 +8,7 @@ import pytest
 import requests
 
 import scripts.run_inflection_shadow as shadow
+from src.data.atomic_write import atomic_write, atomic_write_text
 from src.notify.inflection_digest import build_digest, daily_warnings, send_daily_digest
 from src.notify.slack import escape, post_text
 
@@ -251,7 +252,7 @@ def test_main_does_not_resend_when_the_snapshot_already_existed(
     _, post = run_main(monkeypatch, tmp_path, snapshot_created=False)
 
     post.assert_not_called()
-    assert "digest=skipped:snapshot-existed" in capsys.readouterr().out
+    assert "digest=skipped:legacy-no-state" in capsys.readouterr().out
 
 
 def test_main_does_nothing_without_a_webhook(
@@ -282,3 +283,64 @@ def test_a_failed_digest_never_fails_the_scan_and_nothing_sensitive_is_printed(
     assert f"digest=failed:{type(error).__name__}" in captured.out
     for secret in (WEBHOOK, "SECRETTOKEN", "1111.T", "Company"):
         assert secret not in captured.out and secret not in captured.err
+
+
+def test_pending_digest_is_retried_and_success_is_not_resent(tmp_path: Path) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text('{"2026-09-30": "pending"}\n', encoding="utf-8")
+    report = make_report()
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "sent"
+        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "skipped:already-succeeded"
+    send.assert_called_once()
+    assert '"2026-09-30": "succeeded"' in state.read_text(encoding="utf-8")
+
+
+def test_manual_resend_sends_a_succeeded_digest(tmp_path: Path) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text('{"2026-09-30": "succeeded"}\n', encoding="utf-8")
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        assert shadow._deliver_digest(make_report(), snapshot_created=False, state_path=state, resend=True) == "sent"
+    send.assert_called_once()
+
+
+def test_success_followed_by_state_failure_is_classified_for_possible_duplicate(tmp_path: Path) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text('{"2026-09-30": "pending"}\n', encoding="utf-8")
+    with (
+        patch.object(shadow, "send_daily_digest", return_value="sent"),
+        patch.object(shadow, "_write_digest_state", side_effect=[None, OSError("stopped")]),
+    ):
+        status = shadow._deliver_digest(make_report(), snapshot_created=False, state_path=state)
+    assert status == "sent:state-save-failed"
+    assert '"pending"' in state.read_text(encoding="utf-8")
+
+
+def test_atomic_write_preserves_the_old_file_when_publication_fails(tmp_path: Path) -> None:
+    target = tmp_path / "result.json"
+    target.write_text("old", encoding="utf-8")
+    with patch("src.data.atomic_write.os.replace", side_effect=OSError("stopped")), pytest.raises(OSError):
+        atomic_write_text(target, "new")
+    assert target.read_text(encoding="utf-8") == "old"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_atomic_immutable_write_and_new_parent(tmp_path: Path) -> None:
+    target = tmp_path / "new" / "snapshot.enc"
+    assert atomic_write_text(target, "first", overwrite=False) is True
+    assert atomic_write_text(target, "second", overwrite=False) is False
+    assert target.read_text(encoding="utf-8") == "first"
+
+
+def test_atomic_write_cleans_up_after_writer_failure(tmp_path: Path) -> None:
+    target = tmp_path / "result.json"
+    target.write_text("old", encoding="utf-8")
+
+    def fail(handle: Any) -> None:
+        handle.write("partial")
+        raise OSError("stopped")
+
+    with pytest.raises(OSError):
+        atomic_write(target, fail)
+    assert target.read_text(encoding="utf-8") == "old"
+    assert not list(tmp_path.glob("*.tmp"))

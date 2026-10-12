@@ -187,3 +187,36 @@ VERDICT: PASS / READY（REQ-059・REQ-060・REQ-061のlearning接続を実装済
 - 独立レビューで見つかった実装上のずれは修正済み。提出日時と違い、状態変更日時はライブの取下げ除外の締切ではない。16:40後の取下書を無視せず、16:40以前に提出済みの書類を後の状態変更日時だけで落とさない。修正後のEDINET・ライブ133テストはPASS。
 - 60日境界・提出の締切・取下げ除外・欠損の0件化・締切後の状態変更・締切後の取下げを壊す6通りの変更をメモリ内で加え、追加テストがすべて失敗することを確認した。合成6,000件・300銘柄の集計は約3秒。キー・個人名・会社名をログに出さず、テストのHTTPはすべて置換している。今回、実APIの再取得・実通知・永続キャッシュ更新は行っていない（公式の公開様式コード一覧のみ確認した）。
 - 最終検証: 全体697テストPASS、カバレッジ95.86%。ruff・CI対象32ファイルのmypy・タスク対象13ファイルの `minimal_diff_guard.py`・`git diff --check` はすべてPASS。`validate_report`、forward／learning loaderは追加キーの有無の両方を読み込める。レビュー修正後の最終コードで全体テストを再実行し、終了コード0を確認した。
+
+## REQ-062〜067 Stage 4B 実装計画レビュー
+
+レビュー日: 2026-10-12
+
+対象: 現在の [plan.md](plan.md) と [proposal.md](proposal.md)。以下は今回のレビュー結果。
+
+### 結論
+
+VERDICT: CHANGES REQUIRED（実装未着手）
+
+### Blocking
+
+**指摘1: Actions 出力だけでは、次の通常実行が前回の通知状態を判定できない。**
+
+- 対象: [plan.md](plan.md:61) の「Actions 出力を第一候補」、[plan.md](plan.md:62) の「通常実行は snapshot 新規作成時のみ送信」、[plan.md](plan.md:65) の障害境界テスト。
+- 根拠: `GITHUB_OUTPUT` と stdout は同じ workflow run 内の情報であり、次の通常実行へ通知成功・失敗を永続化しない。現行コードも既存 snapshot では `snapshot_created=False` となり、通知を `skipped:snapshot-existed` にする。
+- 影響: Slack 送信前に停止して snapshot だけ残った場合、通常再実行は通知を送れず受入条件 (1) を満たさない。一方、既存 snapshot でも常に送る変更では、通知成功済みの通常再実行を抑止できず受入条件 (4)(6) を満たさない。手動再送だけでは「通常再実行で通知される」という要件の代替にならない。
+- 必要な修正: 次回 run から読める通知状態をどこに永続化するか決め、通常実行の判定を計画に明記する。要件が許す既存 snapshot のメタ情報を使うか、理由を記した小さな状態ファイルを REQ-066 の atomic write 対象として使える。少なくとも `pending / succeeded` を区別し、状態の保存と Git push の順序、push 失敗時の再実行挙動を受入条件 (1)〜(6) に対応づける。
+- Blocking Qualification Gate: 条件1=NO、2=YES（run 間で参照できる通知状態の保存先が未決定）、3=NO、4=YES（第一候補の方式では受入条件 (1)(4)(6) を同時に満たせない）、5=YES（状態の永続化境界が実装方式と変更ファイルを左右する）。分類根拠は条件2・4・5。
+
+### 確認
+
+- `plan_scope_guard.py` は READY-GATE / SCOPE-WARN 0 だったが、これは構造検査であり上記の実行間状態の矛盾は判定しない。
+- 現行の `persist_report`、`_deliver_digest`、`inflection_shadow.yml` の scan→commit 順序を確認した。コード・workflow・テストは変更していない。
+
+### 第2回レビュー・実装（2026-10-12）
+
+VERDICT: PASS
+
+- 前回Blockingは解消済み。通知状態を `dashboard/data/inflection/digest_state.json` の `pending` / `succeeded` としてrun間で保持し、通常再実行、明示再送、旧snapshot、状態保存・Git push失敗の境界を実装した。
+- 最終差分を、権限・secret、通知消失／重複、atomic write、provider例外の伝播、テストの外部副作用の順に限定レビューした。追加のBlockingはない。
+- 全1016テストPASS、coverage 95.77%、ruff PASS、mypyは既知31件のみ（新規0）。対象回帰200件も最終のprovider診断接続後にPASSし、外部通信試行は0。Action 5リポジトリのタグSHAは公式 `git ls-remote --tags` で再確認した。

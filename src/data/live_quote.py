@@ -13,7 +13,12 @@ import pandas as pd
 import yfinance as yf
 
 from src.data.market_calendar import TSE_CALENDAR
-from src.data.provider_output import ProviderFailure, suppress_provider_output
+from src.data.provider_output import (
+    ProviderFailure,
+    ProviderFailureCategory,
+    classify_provider_failure,
+    suppress_provider_output,
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 # yfinance TSE 1m bars lag ~15 min (measured 2026-10-01); 20 leaves one bar of slack.
@@ -143,7 +148,7 @@ def fetch_split_adjusted_history(
     )
 
 
-def fetch_today_bars(ticker: str) -> pd.DataFrame | None:
+def fetch_today_bars(ticker: str, *, diagnostics: dict[str, int] | None = None) -> pd.DataFrame | None:
     """Return today's timestamped one-minute bars in JST."""
     try:
         with suppress_provider_output():
@@ -163,11 +168,18 @@ def fetch_today_bars(ticker: str) -> pd.DataFrame | None:
             return None
         today.attrs["requested_date"] = now.date().isoformat()
         return today
-    except Exception:  # noqa: BLE001 - provider and malformed response failures are equivalent here
+    except Exception as exc:
+        category = classify_provider_failure(exc)
+        if category == ProviderFailureCategory.UNEXPECTED:
+            raise
+        if diagnostics is not None:
+            diagnostics[category] = diagnostics.get(category, 0) + 1
         return None
 
 
-def fetch_session_bars(ticker: str, session_date: str) -> pd.DataFrame | None:
+def fetch_session_bars(
+    ticker: str, session_date: str, *, diagnostics: dict[str, int] | None = None
+) -> pd.DataFrame | None:
     """Retrieve a pending session, including its closing auction, without caching failures."""
     session = date.fromisoformat(session_date)
     try:
@@ -185,11 +197,16 @@ def fetch_session_bars(ticker: str, session_date: str) -> pd.DataFrame | None:
         result = frame.loc[frame.index.date == session].sort_index()
         result.attrs["requested_date"] = session.isoformat()
         return result
-    except Exception:  # noqa: BLE001 - unavailable recovery data must leave the checkpoint pending
+    except Exception as exc:
+        category = classify_provider_failure(exc)
+        if category == ProviderFailureCategory.UNEXPECTED:
+            raise
+        if diagnostics is not None:
+            diagnostics[category] = diagnostics.get(category, 0) + 1
         return None
 
 
-def build_today_quote(bars: pd.DataFrame) -> TodayQuote | None:
+def build_today_quote(bars: pd.DataFrame, *, diagnostics: dict[str, int] | None = None) -> TodayQuote | None:
     """Build a coherent aggregate quote from one-minute bars."""
     try:
         if bars.empty or not {"Open", "High", "Low", "Close"}.issubset(bars.columns):
@@ -204,7 +221,11 @@ def build_today_quote(bars: pd.DataFrame) -> TodayQuote | None:
         if not low <= min(opening, last) <= max(opening, last) <= high:
             return None
         return TodayQuote(opening, high, low, last, frame.index[-1].isoformat())
-    except Exception:  # noqa: BLE001 - malformed bars are unusable as a quote
+    except (ValueError, KeyError, IndexError):
+        if diagnostics is not None:
+            diagnostics[ProviderFailureCategory.INVALID_OHLCV] = (
+                diagnostics.get(ProviderFailureCategory.INVALID_OHLCV, 0) + 1
+            )
         return None
 
 

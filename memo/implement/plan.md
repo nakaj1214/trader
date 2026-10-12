@@ -1,124 +1,125 @@
-## 実装計画: EDINET の大量保有報告を、診断用の特徴量として記録する（REQ-059〜061）
+## 実装計画: Stage 4B — CI・通知・保存・障害診断（REQ-062〜067）
 
 ### 目的
-無料で point-in-time に取れる EDINET の大量保有報告書・変更報告書（`docTypeCode` 350/360）を取得・保存し（REQ-059）、日次 scan の `features` に診断用の3項目として記録し（REQ-060）、B1 の過去検証と learning でも使えるようにする（REQ-061）。スコア・分類・候補の選定・戦略は変えない。
+Q03/Q04/Q05/Q07/Q09 を、投資判定の数値を変えずに実装し（CI信頼性・secret/権限・通知状態・provider障害診断・保存耐障害性）、境界を回帰テストで固定する。Stage 4A は確定済み baseline で、再設計しない。
 
 ### スコープ
-- 含むもの: EDINET の取得クライアントとキャッシュ、確認用の `--probe`、EDINET コードリストによる銘柄の対応づけ、`features` の3項目、過去検証での再現、learning の factor ラベル
-- 含まないもの: 保有目的・保有割合の解析（書類の中身）、TDnet・信用残・空売り・決算予定日、特徴量のスコアへの採用、`STRATEGY_VERSION`・`REPORT_SCHEMA_VERSION` の変更、戦略に影響する項目
+- 含むもの: REQ-062（Forward PR 検証範囲と secret 分離）、REQ-063（ダイジェストの状態分離と再送）、REQ-064（uv.lock・Action SHA・最小権限）、REQ-065（provider 失敗分類・Retry-After 上限）、REQ-066（atomic write）、REQ-067（境界テスト）
+- 含まないもの: Stage 4C（Q08/B09）、Growth、Q06 閾値の変更、mypy 既知 31件の解消、新特徴量・スコア・閾値・重み、過去 snapshot 書換え、archive 変更、無関係な依存更新、全面リファクタリング
 
-### 実装の順序と関門
-**Phase A（REQ-059）→ 関門 → Phase B（REQ-060・061）。** 関門は、実 API での確認（`--probe`）で、「大量保有報告で、発行会社をどの項目で特定できるか」を確かめること。前提が成り立たなければ、Phase B に進まず、結果を報告して判断を仰ぐ。関門より前の作業（取得・キャッシュ・テスト）は、API キーなしで完了できる。
-
-### 事前に確認した事実
-- 既存の B1 の取得は、日付ごとのファイル（`.data/<kind>/YYYY-MM-DD.json.gz`）に保存し、取得済みの日を飛ばして再開する。保存・読み出しの関数は [src/data/jquants_history.py](../../src/data/jquants_history.py) の `_write_day`（一時ファイルから `os.replace`）、`read_day`、`_path`。`KINDS = ("bars", "master", "fins")` は `fetch_range` の対象の限定にだけ使われ、`_path`・`_write_day`・`read_day` は `kind` の文字列を自由に渡せる。`.data/` は gitignore。
-- B1 の取得の再試行は、`JQuantsV2Client(max_retries, retry_backoff)`（[jquants_v2_client.py](../../src/data/jquants_v2_client.py) の `_request`、`requests.get`、`_retry_delay`）と、スクリプト側の `PATIENT_MAX_RETRIES = 5`・`PATIENT_RETRY_BACKOFF_SECONDS = 15.0`。EDINET のクライアントも、同じ考え方（`requests`、待って再試行、上限で失敗）で作る。
-- `select_and_evaluate(prices, ticker_meta, client, *, seed_date, deep_candidates, min_turnover_jpy, control_sample_size, fundamental_limitation)` は、ライブ（`scan_japan_inflection`）と過去検証（`reconstruct_scan`）の**両方から**呼ばれる。ここに任意の引数を足せば、同じコードで両方に特徴量が入る。
-- 日次 scan の job は `timeout-minutes: 45`。`JQUANTS_API_KEY` は scan の step の `env` で渡される。
-- `_evaluate_candidate` は `source`（辞書）から `FEATURE_DEFAULTS` のキーを `features` に書く。新しい項目は、`FEATURE_DEFAULTS` と `source` への追加だけで入る（REQ-050・053・054 と同じ方式）。
-- **取下げ後の書類は、後日の一覧から消去される（レビューで確認。[EDINET API 仕様書 Version 2](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/download/ESE140206.pdf) の 3-1-3・3-1-5）。** 過去の日付を指定した一覧も更新され、取下げ後は元の `docTypeCode`・`submitDateTime`・`issuerEdinetCode` などが `null` になる。取下書の書類種別も `null`。したがって、**要件書の「提出日時があるので point-in-time で復元できる」は、そのままでは成り立たない**。後日取得した一覧から、当時は有効だった（のちに取り下げられた）提出が消えるため、過去の判定日の件数が実際より少なくなりうる。
-- **本計画の方針（過去時点の保証を維持する）:** ①日ごとのキャッシュに、取得時刻（`captured_at`）と、種別が消去された記録（`docTypeCode` が `null` の記録）を、**捨てずに**保存する。②ある日の一覧が、判定の時刻 `cutoff`（`as_of` の16:40 JST）の評価に使えるのは、**次の2つを両方満たす場合だけ**とする（レビューの再指摘を受けて、条件を逆にした。「`cutoff` 以前に取得した一覧」は、取得後に追加された提出・取下げを含まないので、**使えない**）。**(a) その一覧を `cutoff` 以後に取得した（`captured_at` ≥ `cutoff`）**: `cutoff` までの提出と状態の変更が、すべて反映されている（取得が `cutoff` より前だと、取得後の同日の追加提出や、その後の取下げを反映できない）。**(b) 種別が消去された記録のうち、大量保有報告だった可能性を否定できないものが0件**: `cutoff` 以後の取下げで消えた提出、`cutoff` より前に取り下げられた提出（当時は取り下げ済み）の区別がつかないため、可能性が残るなら使わない。どちらかを満たさない日は**復元不能**とする。日別キャッシュは、取得済みの日を飛ばす再開のためだけに使い、**判定に使えるかの保証は、再開機能とは分けて、評価の時点の `day_usable` が決める**。③復元不能な日を、60日の窓に1日でも含む判定日は、全銘柄の3項目を `None`（0件にしない）にする。④ライブ scan は、実行時点の一覧を使う（取下げ済みの書類が消えているのは、その時点の実際の状態なので、point-in-time として正しい）。⑤`--probe` で、消去後も残る項目（`ordinanceCode`・`formCode` など）と、種別が消去された記録の頻度を測る。残る項目で「大量保有報告ではない」と判定できる記録は、(b) の否定に使ってよい（**どの項目が残るかは未確認。推測せず、`--probe` で確かめる**）。
-- **未確認（Phase A の関門で確かめる）:** 350/360 の `secCode`・`issuerEdinetCode`・`subjectEdinetCode` の意味、EDINET コードリストの取得先 URL と形式（EDINET コード ↔ 証券コードの列）、取得できる過去の範囲、1日の書類数、応答時間、**取下げ後も残る項目と、種別が消去された記録の頻度（復元不能な日の割合）**。**取得先 URL や項目名を、記憶や二次情報から推測して実装しない。**
+### 調査結果（実装の前提）
+- **[確認済]** `uv.lock` は存在し `uv lock --check --offline` が通る（53 packages、pyproject と同期）。pyproject は直接依存を `==` で固定済み。CI は全 workflow で `pip install -e .` / `".[dev]"`（`uv.lock` 未使用）。ローカル uv は 0.9.21。Python は CI で 3.11。
+- **[確認済]** 使用中の Action は 6 種: `checkout@v7`（11箇所）、`setup-python@v7`（6）、`cache/restore@v4`（5）、`cache/save@v4`（5）、`upload-artifact@v7`（3）、`download-artifact@v7`（1）。`gh` コマンドは未インストールのため、タグ→SHA は `git ls-remote --tags`（読み取り専用）で解決できる。解決済み（2026-10-12 時点、いずれも軽量タグで `^{}` なし）:
+  - checkout v7 = `3d3c42e5aac5ba805825da76410c181273ba90b1`（v7.0.1 と同一）
+  - setup-python v7 = `5fda3b95a4ea91299a34e894583c3862153e4b97`
+  - cache v4 = `0057852bfaa89a56745cba8c7296529d2fc39830`
+  - upload-artifact v7 = `cf430e030ddbb5b0abf93d22962f4752f3646cd9`
+  - download-artifact v7 = `37930b1c2abaa49bbe596cd826c3c89aef350131`
+  実装時に再度 ls-remote で同値を確認してから置換する（浮動タグなので日付を記録）。
+- **[確認済]** `forward_validation.yml` の `pull_request.paths` は 28 個の手列挙（`src/screening/**`・`inflection_historical.py`・`inflection_report.py`・`pyproject.toml`・`uv.lock` を含まない）。`validate` ジョブは PR でも `SNAPSHOT_ENCRYPTION_KEY` を使う `rebuild_inflection_forward_validation.py` を実行する。workflow 全体 `contents: read`、`persist-price-hashes` のみ `contents: write`（schedule 限定）。
+- **[確認済]** `inflection_shadow.yml` は workflow 全体が `contents: write`、`scan` ジョブに `SLACK_WEBHOOK_URL`・`SNAPSHOT_ENCRYPTION_KEY` が job env、`JQUANTS_API_KEY`/`EDINET_API_KEY` が scan ステップ env。push は同ジョブ内の Commit ステップ。
+- **[確認済]** `test.yml` は PR で lint/mypy/pytest を回す（secret 不要）。`pull_request_target` は全 workflow で未使用 [未確認: 実装時に grep で再確認]。
+- **[確認済]** ダイジェスト: `_deliver_digest` は `snapshot_created=False` だと `skipped:snapshot-existed`。`send_daily_digest` は webhook 無し→`skipped:no-webhook`、例外→`failed:<型名>`、成功→`sent`。結果は stdout のステータス文字列のみで、永続状態は無い。送信は Git push より前に行われる。
+- **[確認済]** 保存: `persist_report` は `snapshot.exists()` で immutable を守るが、書込みは `write_text` 直書き（snapshot と `latest_path`）。snapshot 列挙は `^YYYY-MM-DD.enc` 完全一致（`snapshot_dates`）と `glob("????-??-??.enc")` のため、`*.tmp` 名の一時ファイルは読込・欠損判定に混入しない。直書きは他に `rebuild_inflection_forward_validation.py:145,373,375`、`rebuild_inflection_learning.py:88,92`、`run_inflection_historical_backtest.py:146,152`。既存の安全パターンは `jquants_history.py:99-101,135-136`、`edinet.py:310-312`、`check_workflow_health.py:49-50`。
+- **[確認済]** 広い except: `yfinance_prices.py:112`、`forward_prices.py:133,158`、`live_quote.py:101,166,188,207`。Retry-After: `jquants_v2_client.py:86-90`（非負のみ）、`edinet.py:139-141`（有限のみ、負数・上限なし）。
+- **[未確認]** `yfinance_prices.py` の retry 内部構造と、`live_quote.py:101` が既に保持している分類情報の範囲（実装 Step 4 の冒頭で読む）。`run_position_monitor.py` の取得失敗の扱い。
 
 ### 影響範囲（変更/追加予定ファイル）
-- 新規 [src/data/edinet.py](../../src/data/edinet.py): 取得クライアント、350/360 の抽出、日付ごとのキャッシュ、EDINET コードリストの対応表、特徴量の計算
-- 新規 [scripts/run_edinet_fetch.py](../../scripts/run_edinet_fetch.py): CLI（`--probe`、`--fetch`）
-- [.env.example](../../.env.example): `EDINET_API_KEY` を追加（値は書かない）
-- [src/screening/inflection_live.py](../../src/screening/inflection_live.py): `FEATURE_DEFAULTS`、`select_and_evaluate`・`_evaluate_candidate` の任意引数、`scan_japan_inflection` での取得（best-effort）
-- [src/evaluation/inflection_historical.py](../../src/evaluation/inflection_historical.py): `reconstruct_scan` / `HistoricalData` への受け渡し
-- [scripts/run_inflection_historical_backtest.py](../../scripts/run_inflection_historical_backtest.py): キャッシュの読み込み（任意）
-- [src/evaluation/inflection_learning.py](../../src/evaluation/inflection_learning.py): `factor_labels`
-- [.github/workflows/inflection_shadow.yml](../../.github/workflows/inflection_shadow.yml): scan の step の `env` に `EDINET_API_KEY`（GitHub Secrets）を追加
-- `tests/test_edinet.py`（新規）、`tests/test_inflection_live.py`、`tests/test_inflection_historical.py`、`tests/test_inflection_learning.py`（既存に追記）
-- `memo/analysis/`: `--probe` の結果の記録（受入条件）
-- 変更しないもの: スコア・分類の計算、`STRATEGY_VERSION`、`REPORT_SCHEMA_VERSION`、forward・Monitor
+- `.github/workflows/forward_validation.yml`: path filter 見直し、secret 不要/必要の分離（REQ-062）、Action SHA 固定・lockfile install・権限（REQ-064）
+- `.github/workflows/test.yml`, `inflection_shadow.yml`, `position_monitor.yml`, `reliability_watchdog.yml`: Action SHA 固定、lockfile install、権限最小化（REQ-064）
+- `dashboard/data/inflection/digest_state.json`（新規、小さな状態ファイル。日付→`pending`/`succeeded`）: 通知状態の永続化（REQ-063）。実 repo のファイルは作らず、テストは一時ディレクトリのみ
+- `scripts/run_inflection_shadow.py`: ダイジェスト状態の分離・再送（REQ-063）、snapshot/latest の atomic write（REQ-066）
+- `src/notify/inflection_digest.py`、`src/notify/slack.py`: 送信結果の分類（REQ-063）
+- `src/data/yfinance_prices.py`、`forward_prices.py`、`live_quote.py`、`provider_output.py`、`jquants_v2_client.py`、`edinet.py`: 失敗分類・Retry-After 上限（REQ-065）
+- `scripts/rebuild_inflection_forward_validation.py`、`rebuild_inflection_learning.py`、`run_inflection_historical_backtest.py`: atomic write（REQ-066）
+- 共通の atomic write helper: 既存の `os.replace` パターンを 1 箇所に寄せる場合のみ新規（候補 `src/data/atomic_write.py`）。既存 3 箇所の流儀と重複するため、**新設は最小限**（既存関数で足りれば再利用）。
+- `docs/playbooks.md`: 通知の保証境界（REQ-063）と、障害分類の読み方（REQ-065）を短く追記
+- `tests/test_workflow_reliability.py`、`tests/test_inflection_digest.py`、`tests/test_yfinance_prices.py`、`tests/test_forward_prices.py`、`tests/test_live_quote.py`、`tests/test_jquants_v2_client.py`、`tests/test_edinet.py`、`tests/test_inflection_forward.py`、`tests/test_inflection_learning.py`: 既存ファイルを拡張（新規ファイルは、既存で検証できない場合のみ）
+- `tests/conftest.py`: 変更しない（Stage 4A の外部通信拒否を維持）
 
 ### 実装ステップ
 
-#### Phase A（REQ-059）
+実装順は「リスクが低く独立 → 依存あり」: Q09 → Q07 → Q04 → Q05 → Q03 → Q10 まとめ。Q04 の状態表現が Q09 の書込みに依存するため Q09 を先に行う。各 Step 完了時に対象テスト＋直前までの回帰を実行する。
 
-##### Step 1: 取得クライアントと抽出（API キー不要）
-- [ ] `src/data/edinet.py` に、書類一覧（`documents.json`、`date` 指定）を取得するクライアントを作る。キーは環境変数 `EDINET_API_KEY` から読み、**例外のメッセージ・ログにキーを含めない**（URL やヘッダーをそのまま出さない）。
-- [ ] リクエスト間隔は3秒以上（既定値を定数にし、`sleep` と時計を引数で差し替えられるようにして、テストで待たずに間隔を検証できるようにする）。HTTP 429・5xx・通信の失敗は、待って再試行する（上限を超えたら理由つきで失敗。B1 と同じ考え方で、回数と待ち時間は定数）。4xx（429 以外）は、再試行せずに失敗する。
-- [ ] レスポンスの `results` から、`docTypeCode` が 350・360 のものを抽出し、必要な項目（`docID`、`submitDateTime`、`docTypeCode`、`secCode`、`issuerEdinetCode`、`subjectEdinetCode`、`filerName`、`withdrawalStatus` など。項目名は、`--probe` で実在を確認してから確定する）を保存する。**加えて、`docTypeCode` が `null` の記録（取下げ後に種別が消去された書類、取下書）も、捨てずに、残っている識別項目（`docID`、`ordinanceCode`、`formCode` など、`--probe` で残ると確認できたもの）だけを `erased_records` として保存する**（種別が消去された記録は、大量保有報告だった可能性を否定できないため、復元不能の判定に必要）。350・360 以外の種別の記録は、保存しない。
-- [ ] 日付ごとのキャッシュ（`.data/edinet/filings/YYYY-MM-DD.json.gz`。要件書のパスに統一する）は、**辞書**で保存する: `{"captured_at": 取得時刻（JST、タイムゾーンつき）, "filings": [...], "erased_records": [...]}`。取得済みの日を飛ばす。**正常応答で書類がなかった日は、`filings` も `erased_records` も空で保存する**（API の失敗で取得できなかった日は保存しない。空の日と未取得の日を区別する）。保存・読み出しは、`jquants_history` の `_write_day`・`read_day` の考え方（一時ファイルから `os.replace`）に従う（読み出しは、リストではなく辞書を返すので、同等の小さな関数を `edinet.py` に置く。コピーが小さいなら、依存を避けてコピーする）。
-- [ ] 日の評価に使えるかを返す関数 `day_usable(day_record, cutoff)` を作る: **`captured_at` ≥ `cutoff` かつ、`erased_records` のうち大量保有報告だった可能性を否定できないものが0件**のときだけ使える。それ以外（`captured_at` < `cutoff`、または消去記録が残る）は復元不能（使えない）。「否定できる」の条件は、`--probe` で残ると確認した項目に基づく（確認できるまでは、`erased_records` が1件でもあれば復元不能とする安全側の扱い）。
-- [ ] 日別キャッシュは、**一度保存したら上書きしない**（取得済みの日を飛ばす再開のため。`captured_at` が最初の取得時刻のまま残る）。判定に使えるかは、再開の有無と関係なく、評価の時点の `day_usable` が決める。**取得を、評価したい期間の判定時刻（`cutoff`）より後に実行すること**が、過去検証で値が入るための前提になる（B1 の取得を今実行すれば、2026-07 以前の判定は条件 (a) を満たす）。
-**検証**: 受入条件 1〜5（REQ-059）。合成のレスポンスでテストする。外部通信はしない。取下げ後の記録（種別が `null`）が `erased_records` に保存され、350/360 以外の種別は保存されないこと、空の日と未取得の日が区別されること、`day_usable` の3つの場合（取得時刻が当時以前、消去記録なし、消去記録あり）を確認する。
+#### Step 1: Q09 — atomic write（REQ-066）
+- [ ] 既存パターン（`jquants_history.py`/`edinet.py`/`check_workflow_health.py`）を比較し、再利用する関数または 1 つの小さな helper（temp 書込み→flush→fsync→`os.replace`、同一ディレクトリの `.tmp` サフィックス、失敗時の temp 削除）を決める
+- [ ] 失敗再現テストを先に書き、現行の直書きで旧ファイルが破損することを示す（`write_text` を途中で例外にする fake で確認）
+- [ ] `persist_report` の snapshot と latest を atomic 化。snapshot は「存在しない場合のみ作成」を維持（`os.link`/排他作成で二重実行競合も防ぐ。`FileExistsError` は既存扱い）
+- [ ] rebuild 系 3 スクリプトの JSON/summary/hash 書込みを atomic 化（親ディレクトリは `mkdir(parents=True, exist_ok=True)`）
+- [ ] 複数ファイル間（snapshot と latest）は transaction にしない。順序（snapshot→latest）と「どちらかだけ残り得る」境界を docstring に明記
+**検証**: write 途中失敗 / flush 失敗 / replace 前停止 / replace 失敗で旧ファイルが無傷、二重実行、既存 immutable snapshot 不変、新規 output directory、temp が snapshot 列挙に出ない。保存バイト列が従来と同一。
 
-##### Step 2: CLI（`--probe`、`--fetch`）
-- [ ] `scripts/run_edinet_fetch.py` に、`--probe DATE`（その日の 350/360 の件数と、各項目の値の例を表示する。**保有者名・会社名は表示しない**。項目が空かどうか、形式（桁数）だけを出す）と、`--fetch --start --end`（期間を取得する）を作る。
-- [ ] キーがないときは、分かりやすいメッセージで終了コード1にする（キーの値は出さない）。
-**検証**: キーなしのメッセージ、引数の検証をテストする。
+#### Step 2: Q07 — provider 失敗の安全な分類（REQ-065）
+- [ ] `yfinance_prices.py`・`forward_prices.py`・`live_quote.py` の現行 except を読み、既に分類している箇所（`live_quote.py:101`）を基準に、安全な分類 enum/文字列（timeout / rate_limit / server_error / protocol / empty / invalid_ohlcv / validation / auth / unexpected）を 1 箇所（`provider_output.py` を拡張）に定義
+- [ ] 例外→分類の純関数（HTTP status・例外型のみ参照。メッセージ本文・URL は見ない）。想定外（TypeError 等）は `unexpected` とし、**再 raise する経路と「ログして継続」する経路を区別**（握り潰さない）
+- [ ] 「データなし」へ畳む箇所に分類結果（件数・分類別カウント・retry 回数）を付与。公開出力は分類名と件数のみ（ticker・URL・response body・生例外本文は出さない。Q02 の保護を維持）
+- [ ] `Retry-After` の共通パース関数（有限・非負・上限 N 秒）を 1 つ作り、J-Quants と EDINET の両方で利用（上限値は既存の最大待機設定に合わせ実装時に決定）
+- [ ] 修正前に失敗するテスト: `inf`/`nan`/負/巨大 Retry-After、TypeError が「データなし」に変わること
+**検証**: fake provider で timeout/429/500/malformed/empty/invalid price/TypeError を各 1 ケース。公開出力に ticker/URL/秘密が無い。正常入力の取得結果は不変（既存テスト無変更で通る）。
 
-##### Step 3: EDINET コードリストによる対応表
-- [ ] **関門の結果（[edinet_probe_2026-10-07.md](../analysis/edinet_probe_2026-10-07.md)）: 発行会社は `issuerEdinetCode`（350/360 の 100% で6桁）で特定する。`secCode` は4〜12%しか入らず、使わない。** EDINET コードリスト（EDINET コード ↔ 証券コード）で対応表（EDINET コード → 4桁のティッカー）を作る関数を `edinet.py` に追加する。
-  - 取得先（実 API の確認で、HTTP 200 を確認済み）: `https://disclosure2dl.edinet-fsa.go.jp/searchdocument/codelist/Edinetcode.zip`（約570KB）。中の `EdinetcodeDlInfo.csv` は **Shift-JIS（cp932）**。1行目は「ダウンロード実行日…件数」の見出しで、2行目が列の見出し。使う列は `ＥＤＩＮＥＴコード`（全角）と `証券コード`（5桁。空の行は上場していない）。件数は 11,405 件、証券コードがあるのは 3,817 件。**列名は全角なので、文字列を正確に合わせる**（変化に備えて、列が見つからなければ明確なエラーにする）。
-  - ティッカーへの変換: 5桁の証券コードの先頭4桁 + `.T`（既存の `_ticker_from_code` と同じ規則に合わせる。普通株は5桁目が `0`）。
-  - 実測の対応率: 350/360 のうち 88%（1,792 / 2,027）が、上場会社の証券コードに対応づく。残りは非上場の発行会社などで、対象外（件数に数えない）。
-  - 日次 scan では、実行のたびにコードリストを取得する（best-effort。失敗したら3項目を `None`）。保存は不要。
-**検証**: 合成のコードリスト（cp932、全角の列名、見出し行つき）で、対応表が作られる。列が見つからない、証券コードが空の行、4桁への変換を確認する。
+#### Step 3: Q04 — ダイジェスト状態分離と再送（REQ-063）
+- [ ] `send_daily_digest` の戻りを維持しつつ、状態語彙を定義: `snapshot_created` / `persisted`（保存成功）/ `notification_attempted` / `notification_succeeded` / `published`（Git 反映は workflow ステップの outcome で表現）
+- [ ] 状態の置き場所（run をまたいで残す）: `dashboard/data/inflection/digest_state.json` に日付ごとの `{"<market_date>": "pending" | "succeeded"}` を持つ小さな状態ファイルを新設する（理由: `GITHUB_OUTPUT`/stdout は同一 run 内の情報で、次の通常実行へ通知成功・失敗を渡せないため。Actions 出力だけの案は採用しない）。ファイルは Step 1 の atomic write で書く。既存の Commit ステップが `git add dashboard/data/inflection/` を行うため、snapshot と同じコミットで反映される。`snapshot_dates`/`glob("????-??-??.enc")` に一致しない名前なので欠損判定・learning には影響しない。直近 30 日分のみ保持する。
+- [ ] `_deliver_digest` の判定（通常実行。読むのは checkout 済みのリポジトリ上の状態）: ① 状態ファイルに当日エントリが無く snapshot も無い → snapshot 作成と同時に `pending` を書き、Slack 送信。② 当日 `pending` → 送信（snapshot が既存でも送る。Slack 失敗後の通常再実行が該当）。③ 当日 `succeeded` → `skipped:already-succeeded`。④ snapshot が既存で状態エントリが無い（状態ファイル導入前の旧 snapshot）→ 従来どおり送らず `skipped:legacy-no-state`。書込み順は「状態 `pending`（atomic）→ snapshot（atomic）→ Slack 送信 → 成功時のみ `succeeded`（atomic）→ workflow が Commit/push」。webhook 未設定は `skipped:no-webhook` として `pending` のまま。
+- [ ] 再送: `workflow_dispatch` 入力 `resend_digest`（既定 false、schedule では無効）。true のとき状態に関係なく送信し、成功時に `succeeded` を書く。再送は scan を再実行して得た新しい report から作るため、元の snapshot（immutable、再書込みしない）とは内容が異なり得る。復号は `SNAPSHOT_ENCRYPTION_KEY` を持つ scan ジョブ内でのみ行い、再送のために snapshot を復号しない。
+- [ ] 保証できない境界を `docs/playbooks.md` に明記し、「Exactly once を保証しない（at-least-once を目指す）」と書く: Slack 受理後に状態保存が失敗、または状態保存後に Git push が失敗 → コミットされていないため次の run は `pending`（または snapshot 未作成）から再実行され、重複通知し得る。Slack が受理しても配信されなかった場合は `succeeded` になるため、手動再送で補う。
+**検証**: fake Slack と一時ディレクトリで、障害境界を状態ファイルの内容で検証する。(1) Slack 送信前に停止（状態は `pending`、または未コミット）→ 通常再実行で送られる／(2) Slack 成功後に状態保存失敗 → 状態は `pending` のまま、通常再実行で重複し得ることを分類・文書化／(3) 状態保存後に Git push 失敗（push 前の状態を再現）→ 再実行で重複し得ることを確認／(4) 同日通常再実行（`succeeded`）は送らない／(5) 手動再送は `succeeded` でも送られ、状態が更新される／(6) 再送後の通常実行は `succeeded` のため送らない／(7) 旧 snapshot（状態エントリ無し）は送らない。ステータス文字列・公開ログに候補情報が無い。
 
-##### 関門: 実 API での確認（ユーザーの API キーが必要）
-- [ ] ユーザーが EDINET で API キーを発行し、`.env` に `EDINET_API_KEY` として置く（キーを会話・ログ・Git に出さない）。
-- [ ] `--probe` を、大量保有報告の提出が多い日（例: 直近の営業日と、数か月前の営業日）で実行し、①発行会社を特定する項目、②各項目の形式、③1日の応答時間と書類数、④取得できる過去の範囲を確認する。
-- [ ] **取下げ後の記録を確認する:** 過去の数日分の一覧で、`docTypeCode` が `null` の記録の件数、その記録に残っている項目（`docID`、`ordinanceCode`、`formCode`、`withdrawalStatus` など）、種別が消去された記録がある日の割合を測る。残る項目で、大量保有報告ではないと判定できるかを確認する。
-- [ ] 結果を `memo/analysis/edinet_probe_YYYY-MM-DD.md` に記録する（個人名・会社名は書かない）。復元不能な日の割合の見込みも書く。
-- [ ] **発行会社を特定できない、または 350/360 が取得できない場合は、Phase B に進まず、結果を報告して判断を仰ぐ。** また、**復元不能な日の割合が高く、REQ-061 の過去検証がほとんど `None` になる見込みの場合も、REQ-061 の範囲（過去検証への適用）を、報告して判断を仰ぐ**（REQ-060 のライブの記録は、この影響を受けない）。
-- **関門の結果（2026-10-07、実施済み）:** 発行会社は `issuerEdinetCode` で特定できる（上の Step 3）。一方、種別が消去された記録は、残る項目（`docID`・`parentDocID`・`withdrawalStatus` など）では大量保有報告だったかを判定できず、**1件以上ある日が 26 / 31（84%）**だった。厳密な条件では、過去検証の3項目は、ほぼすべて `None` になる。
-- **REQ-061 の範囲（判断: ②過去検証への適用を見送る。レビューと本計画の推奨）:** 過去検証（`reconstruct_scan`・`HistoricalData`・`run_inflection_historical_backtest.py`）への適用は、**今回は実装しない**。ライブの記録（REQ-060）が溜まった後、forward と learning で評価する。近似（消去記録を数えない）で過去検証に入れる案は、検証・昇格判定への利用範囲を先に要件で決める必要があるため、今回は含めない（既存の検証経路に黙って入れない）。`day_usable`（Phase A で実装済み）は、将来の過去検証への適用に備えて残すが、Phase B では配線しない。
-**検証**: 受入条件 6（REQ-059）。実施済み（[edinet_probe_2026-10-07.md](../analysis/edinet_probe_2026-10-07.md)）。
+#### Step 4: Q05 — lockfile・Action SHA・最小権限（REQ-064）
+- [ ] 依存導入: 新しい Action を追加せず、`python -m pip install uv==0.9.21`（現行ローカルと同一、固定）→ `uv sync --frozen`（または `uv export --frozen` を `pip install -r`）に置換。dev 依存は `--extra dev`。`uv.lock` と現行環境の差があれば更新せず報告
+- [ ] 全 `uses:` を Step の調査結果の SHA に置換し、`# actions/checkout v7` 形式のコメントで元タグを残す。置換前に `git ls-remote` を再実行して同値を確認
+- [ ] 権限棚卸し表を作る（workflow/job/step × contents/pull-requests/actions/secret/push）。`inflection_shadow.yml` は workflow 全体を `contents: read` にし、Commit ステップを持つジョブ（または分離ジョブ）のみ `contents: write`。secret は必要ステップの env にのみ置く（job env の `SLACK_WEBHOOK_URL`/`SNAPSHOT_ENCRYPTION_KEY` を必要ステップへ移動できるか確認）
+- [ ] checkout の `persist-credentials: false` を push 不要ジョブで検討（変更する場合は影響を確認）
+- [ ] 静的テスト（`tests/test_workflow_reliability.py`）を追加: 全 `uses:` が 40 桁 SHA、write 権限は push ジョブのみ、`pull_request_target` 不使用、不要権限なし、依存導入が lockfile ベース
+**検証**: 静的テスト PASS。`uv.lock` に差分なし（または説明済み）。CI の実環境で解決されるパッケージが現行ローカル環境と同一であることを `uv sync --frozen` の dry-run/`uv pip list` で比較。
 
-#### Phase B（REQ-060・061。関門を通過した場合だけ）
+#### Step 5: Q03 — Forward PR 検証範囲と secret 条件（REQ-062）
+- [ ] `forward_validation.yml` の `pull_request` トリガーを再設計: 軽量・secret 不要ジョブ（pytest の Forward/評価関連、lint、型検査相当）は広い path（`src/**`、`scripts/**`、`tests/**`、`pyproject.toml`、`uv.lock`、workflow 自身）で起動
+- [ ] 復号を伴う `validate` の snapshot 検証は `schedule`/`workflow_dispatch`（secret あり）に限定し、PR では実行しない。PR で secret が無い場合の skip を条件式（`github.event_name != 'pull_request'`）で明示。fork 由来（`github.event.pull_request.head.repo.fork`）でも secret 参照ステップが走らない構造にする
+- [ ] `pull_request_target` は使わない。secret は `schedule`/`workflow_dispatch`/push のジョブにのみ渡す
+- [ ] 失敗通知ジョブ（`notify-failure`、既存）が PR で動かないことを確認（既存の `github.ref == 'refs/heads/main'` 条件）
+- [ ] 静的テスト: 変更カテゴリ別（screening/evaluation/report/historical/forward/共有コード/data validation/依存定義/workflow）に対して該当 path が filter に含まれること、event × secret の組合せごとに secret 参照ステップの実行条件を検証
+**検証**: 静的テスト PASS（same-repo PR / fork PR / push / schedule / workflow_dispatch × secret あり/なし）。実 Actions 上の挙動は未確認として報告。
 
-##### Step 4: 特徴量の計算関数
-- [ ] `edinet.py` に、純粋関数 `holder_filing_features(day_records, ticker, as_of, cutoff, mode)` を作る。入力は、日付 → 日ごとの記録（`captured_at`・`filings`・`erased_records`）の対応（`mode="historical"` では、`day_usable` が真の日だけを使う）、対象のティッカー（発行会社の特定は Step 3・関門の結果に従う）、scan の市場日、提出日時の上限（`cutoff`）、`mode`（`"live"` か `"historical"`）。出力は、`major_holder_filings_60d`、`major_holder_new_filings_60d`（350 のみ）、`days_since_major_holder_filing`。
-- [ ] 数える提出は、`submitDateTime` が `cutoff` 以下で、`as_of` から60暦日以内のもの。**`mode="live"`**: 実行時点の一覧をそのまま使う（取下げ済みで消去された書類は、その時点で存在しないので、数えない）。**`mode="historical"`**: 60日の窓の営業日のうち、**`day_usable` が偽の日（復元不能）、または記録がない日が1日でもあれば、3項目すべて `None`**（0件にしない。全銘柄に適用する）。提出がない場合は、件数 0・経過日数 `None`。**取得に失敗した（データがない）場合は、3項目すべて `None`**（0件と欠損を区別する）。
-- [ ] タイムゾーンを明示して比較する（`submitDateTime` は JST。`cutoff` は JST の `as_of` の16:40 を使う）。
-**検証**: 受入条件 1、2（REQ-060）。境界（ちょうど60日、`cutoff` ちょうど）、取り下げ、他の銘柄の提出を、合成データでテストする。加えて、レビューの再現ケースをテストにする。(1) 「10/1 に 350 が提出され、10/2 の判定時点では未取下げ、10/3 に取り下げられ、10/4 に 10/1 分を取得する（種別が `null` に消去されている）」とき、`mode="live"`（10/4 の実行）では0件、`mode="historical"` の 10/2 の判定では、消去記録が残るので、3項目が `None`（0件ではない）になること。(2) **「10/1 の 09:00 に空の一覧を取得し、同日の 10:00 に 350 が提出される」とき、16:40 の判定（`captured_at` < `cutoff`）は復元不能で、3項目が `None`（0件ではない）になること。** (3) **「10/1 分を同日 17:00 に保存し、10/2 に取り下げられる。10/5 の判定に、古い 10/1 分（`captured_at` 10/1 17:00）を渡す」とき、`captured_at` < `cutoff` なので `None` になり、古い記録の1件を数えないこと。** (4) `captured_at` ≥ `cutoff` で、消去記録がない日は、使えて、件数が数えられること。(5) `captured_at` ≥ `cutoff` でも、消去記録が残る日は、`None` になること。
+#### Step 6: Q10 — Stage 4B 境界テストの整理（REQ-067）
+- [ ] Step 1〜5 で追加した境界テストを一覧化し、REQ-062〜066 の受入条件が全て 1 つ以上のテストに対応することを確認
+- [ ] 不足分のみ追加（secret なし PR、Slack 失敗と再送、通知成功・保存失敗、provider timeout/429/500、生ログ漏洩防止、atomic write 失敗、immutable、permissions）
+- [ ] coverage 目的だけのテストは追加しない。`tests/conftest.py` の外部通信拒否を維持
+**検証**: 外部通信試行数 0。
 
-##### Step 5: ライブ scan への組み込み（best-effort）
-- [ ] `select_and_evaluate` と `_evaluate_candidate` に、任意の引数（`holder_filings`、既定は `None`）を追加する。`None` のとき、3項目は `None`。`FEATURE_DEFAULTS` に3項目（既定 `None`）を追加し、`source` に入れる。
-- [ ] `scan_japan_inflection` で、`EDINET_API_KEY` があるとき、直近60暦日の営業日分の書類一覧を取得して `holder_filings` を作る。**例外は `Exception` 全般ではなく、取得クライアントが投げる失敗（通信・HTTP・解析）を捕捉し**、失敗したら `holder_filings = None` で scan を続行する。ログには、例外の型名と日数だけを出す。scan の終了コードは変えない。
-- [ ] 取得の所要時間を測り（リクエスト間隔3秒 × 約43営業日 + 応答時間）、scan の job の `timeout-minutes: 45` に収まるかを確認する。収まらない場合は、取得の上限時間を設け、超えたら打ち切って `None` にする（日次 scan の完了を、診断用の特徴量より優先する）。
-- [ ] `inflection_shadow.yml` の scan の step の `env` に `EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}` を追加する（Secrets の登録は、ユーザーが GitHub で行う）。
-**検証**: 受入条件 3〜6（REQ-060）。取得が失敗しても scan が成功し、3項目が `None` になる。ログにキー・保有者名・銘柄名が出ない。
-
-##### Step 6: learning への接続（REQ-061 の縮小した範囲）
-- [ ] **過去検証への適用は、今回は実装しない**（上の関門の判断）。`reconstruct_scan`・`HistoricalData`・`run_inflection_historical_backtest.py` は変更しない。`holder_filing_features` の `mode="historical"` も、Phase B では実装しない（`mode="live"` だけ）。
-- [ ] `factor_labels` に、`major_holder_filings_60d` の区分（0件、1件、2件以上）と `major_holder_new_filings_60d > 0` を、値がある（`None` でない）観測にだけ加える（REQ-055 と同じ方式。既存のラベルは変えない）。ライブの snapshot に溜まった値が、forward の learning で評価される。
-**検証**: 受入条件 3、4（REQ-061）。learning の `factor_labels` が、値のある観測にだけラベルを付け、欠損（`None`）の観測にラベルが付かないこと。既存のラベルが変わらないこと。受入条件 1、2（過去検証）は、今回の範囲外（見送り）。
-
-##### Step 7: 回帰と最終確認
-- [ ] 新しい項目を足しても、スコア・分類・`candidates`・`classification_counts` が変わらないこと（REQ-050 のテストと同じ方式）。`validate_report`、forward・learning の loader が、項目がある snapshot とない snapshot の両方を読めること。
-- [ ] ruff、mypy（CI の対象に `src/data/edinet.py` と `scripts/run_edinet_fetch.py` を加える。`.github/workflows/test.yml` の mypy の一覧）、`pytest tests/ -q`（カバレッジ 80% 以上）。
-**検証**: 完了条件の全項目。
+#### Step 7: 全体検証と報告
+- [ ] 対象テスト → Stage 4A 回帰 → 第1〜第3段階回帰 → 全テスト（約7分）→ coverage → ruff → mypy（31 件のエラー内容を変更前とファイル/メッセージ単位で比較）
+- [ ] 保存済み snapshot（`dashboard/data/inflection/`）・archive の `git status` 差分が 0、外部通信試行数 0
+- [ ] baseline 確認: 候補・EARLY_CANDIDATE・スコア・outcome・portfolio・learning 入力が有効入力で不変（既存の回帰テストと同一入力の before/after 比較）
+- [ ] 独立レビュー（secret 漏洩・ログ漏洩・二重通知・通知消失・ファイル破損・PR 検証漏れ・provider 障害の握り潰し・回帰）。重大な問題のみ修正
+- [ ] `.harness/reports/reliability-stage4b-2026-10-12.md` に報告（形式は proposal の「完了報告」）。Stage 4C へ進まず停止
 
 ### 例外・エラーハンドリング方針
-- EDINET の失敗は、日次 scan を止めない（特徴量を `None` にして続行）。ただし、`except Exception` で広く握りつぶさず、取得クライアントの失敗の型に限る。
-- 4xx（429 以外）や認証の失敗（キーの誤り）は、再試行せず、理由（HTTP の状態）つきで失敗する。キーの値は、どこにも出さない。
-- 規約: リクエスト間隔は3秒以上。短時間の大量アクセスをしない。`--fetch` の途中で止まっても、取得済みの日を飛ばして再開できる。
-- ログと通知には、保有者名・会社名・銘柄名・キーを出さない（公開リポジトリのログ）。出すのは、日付・件数・例外の型名だけ。
+- 失敗は「分類して残す」。正常系の戻り値を変えない（空 DataFrame/None を返す既存契約は維持し、分類は付随情報で渡す）。想定外例外は握り潰さず上位へ伝える。
+- 公開ログ・Slack・stdout には分類名・件数・HTTP status・retry 回数のみ。ticker・URL・response body・生例外本文・secret は出さない。
+- 保存は「旧ファイル維持」を最優先。temp は同一ディレクトリ、失敗時に削除。immutable snapshot は上書きしない。
+- 通知は best-effort のまま（スキャンを失敗させない）。「少なくとも 1 回送る」を目指すが exactly-once は保証しない。
 
 ### テスト/検証方針
-- 自動テスト: `.venv/bin/python -m pytest tests/test_edinet.py tests/test_inflection_live.py tests/test_inflection_historical.py tests/test_inflection_learning.py -q`（対象）、最後に `.venv/bin/python -m pytest tests/ -q`。`ruff check src scripts tests`、CI と同じ対象の `mypy --ignore-missing-imports`。
-- 受入条件のテストが、実装の誤りを検出できることを、一時的にバグを入れて確認する（例: 60日の境界を `<=` から `<` にする、`cutoff` を無視する、取り下げを数える、欠損を0件にする）。
-- 手動確認観点: `--probe` の出力に個人名・会社名が出ないこと。実 API での確認の結果の記録。
+- 自動テスト: `uv run --offline pytest -q -p no:cacheprovider tests/<対象>`（対象別）→ 全テスト `uv run --offline pytest -q -p no:cacheprovider` → `uv run --offline ruff check src scripts tests` → `uv run --offline mypy src scripts`
+- 手動確認観点: workflow YAML の権限・条件式を目視（`pull_request_target` 無し、fork で secret 参照ステップが走らない）。実 Actions・実 Slack は確認不能（報告で分離）。
+- baseline: 有効入力での戦略数値不変を、既存テストの無変更通過と代表入力の before/after 比較で確認。
 
 ### リスクと対策
-1. リスク: 大量保有報告で発行会社を特定できず、対応づけが誤る → 対策: 関門（`--probe`）で実際の API の項目の意味を確認してから、Phase B に進む。確認できなければ、実装を止めて報告する。
-2. リスク: scan の取得が遅く、job のタイムアウトや、日次 scan の完了時刻の遅れにつながる → 対策: 取得の上限時間を設け、超えたら打ち切って `None` にする。所要時間を、関門で測る。
-3. リスク: EDINET の利用規約（短時間の大量アクセス）に触れ、API が停止される → 対策: リクエスト間隔は3秒以上、再試行の待ち時間を長くする、過去の取得は手元で1回だけ実行する。
-4. リスク: API キーが公開ログや Git に漏れる → 対策: キーを例外・ログに出さない。`.env` と GitHub Secrets だけに置く。テストで、例外のメッセージにキーが含まれないことを確認する。
-5. リスク: 提出日時の扱い（タイムゾーン、提出時刻と書類一覧の日付のずれ）で、先読みが起きる → 対策: `submitDateTime` を JST で比較し、`cutoff`（16:40 JST）以下だけを数える。境界のテストを追加する。書類一覧の日付と `submitDateTime` が異なる日付になりうる点を、関門で確認する。
-5b. リスク: 後日取得した一覧では、取下げ後に消去された提出を復元できず、過去の件数が実際より少なくなる（過去検証の point-in-time が崩れる） → 対策: 日ごとのキャッシュに `captured_at` と `erased_records` を保存し、**`captured_at` ≥ `cutoff` かつ消去記録なし**の日だけを判定に使い（取得後の追加提出・取下げを反映できないキャッシュは使わない）、復元不能な日を窓に含む判定日は、0件にせず `None` にする。取得は、評価したい期間より後に1回実行すれば、その期間の判定は条件を満たす。ライブ scan は実行時点の状態を使うので影響を受けない。復元不能な日の割合を、関門で測り、高い場合は REQ-061 の範囲を判断を仰ぐ。将来の過去検証のために、ライブ scan の取得結果（当時の状態）を残す方式は、本計画の対象外とする（必要になれば別の要件にする）。
-6. リスク: 日次 scan の snapshot の `features` に新しい項目が増えても、読む側を壊す → 対策: 追加のキーだけで、既存のキーは変えない。既存の loader のテストで、項目がある場合とない場合の両方を確認する。
+1. リスク: `uv sync --frozen` への置換で CI の解決結果が変わり、既存テストが CI でだけ落ちる → 対策: ローカルで `uv sync --frozen` した環境で全テストを実行。差があれば lockfile を機械更新せず内容を報告。
+2. リスク: Action SHA 固定が浮動タグ（v7）の現在位置とずれる、または非公式 fork の SHA を指す → 対策: 公式リポジトリへの `git ls-remote` のみ使用し、置換前に再確認、コメントに日付と元タグを記録。
+3. リスク: path filter 単純化で PR のたびに重い処理が走る → 対策: 重い復号処理は PR で走らせず、軽量検証のみ全 PR。
+4. リスク: ダイジェスト状態ファイルの導入で設計が過剰になる／状態の書込みと Git push の順序で重複・消失が起きる → 対策: 状態は `pending`/`succeeded` の 2 値と日付のみ、atomic write で書き、snapshot と同一コミットで push する。旧 snapshot は送らない（`skipped:legacy-no-state`）。完全な exactly-once は目標にせず、重複し得る境界を文書化する。
+5. リスク: atomic write 化で書込み先 FS の挙動（Windows/WSL の replace）が変わる → 対策: 同一ディレクトリ temp + `os.replace`、既存パターンと同じ流儀。保存バイト列の同一性テスト。
+6. リスク: Q07 の分類追加が公開ログに情報を漏らす → 対策: 分類は列挙型のみ、例外本文を見る処理を作らない。Q02 の漏洩テストを再実行。
+7. リスク: 既存テストが旧挙動（広い except による握り潰し）を固定している → 対策: 該当テストは意図を確認し、新仕様（分類して残す・想定外は伝播）に合わせる場合は理由を報告。単なる合わせ込みはしない。
 
 ### 完了条件
-- [ ] REQ-059 の受入条件 1〜6 が、テストと実 API での確認で確認されている（6 は、API キーの用意後）
-- [ ] REQ-060 の受入条件 1〜6 が、テストで確認されている（関門を通過した場合）
-- [ ] REQ-061 の受入条件 3・4（learning への接続）が、テストで確認されている。受入条件 1・2（過去検証への適用）は、関門の判断により見送り（ライブの記録の蓄積後に再検討）
-- [ ] スコア、分類、`candidates`、`classification_counts` が変わらない
-- [ ] `STRATEGY_VERSION`（v3）と `REPORT_SCHEMA_VERSION`（5）が変わっていない
-- [ ] ruff、mypy（CI の対象に新しいファイルを追加）、`pytest tests/ -q` が PASS（カバレッジ 80% 以上）
-- [ ] API キーが、ログ・メモ・Git・テストの出力に含まれていない
+- [ ] REQ-062: 変更カテゴリごとの検証起動と、secret あり/なし × イベント別の静的テストが PASS。fork PR に secret を渡す構成が無い
+- [ ] REQ-063: 通知状態（`pending`/`succeeded`）が run をまたいで保存され、通常実行の判定規則（①〜④）と障害境界 7 ケースが fake Slack でテスト済み。保証できない境界が `docs/playbooks.md` に明記
+- [ ] REQ-064: 全 Action が SHA 固定（元タグコメント付き）、依存は `uv.lock` から導入、権限・secret が最小化され静的テスト PASS
+- [ ] REQ-065: 分類 9 種が fake provider で区別され、公開出力に機微情報なし、Retry-After が有限・非負・上限付き。想定外例外は握り潰されない
+- [ ] REQ-066: 該当書込みが atomic、旧ファイル維持・immutable・二重実行・新規 dir・temp 非混入のテスト PASS
+- [ ] REQ-067: 境界テストが各 REQ に対応。外部通信試行数 0
+- [ ] 全テスト PASS、ruff PASS、mypy 新規エラー 0（31 件の内容差分なし）、保存済み snapshot・archive 変更 0、戦略数値 baseline 不変
+- [ ] Stage 4B レポート作成後に停止（Stage 4C 未着手）

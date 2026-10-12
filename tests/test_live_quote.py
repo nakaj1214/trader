@@ -173,6 +173,13 @@ def test_today_bars_converts_provider_failure_to_none() -> None:
         assert fetch_today_bars("1111.T") is None
 
 
+def test_today_bars_does_not_hide_programmer_errors() -> None:
+    ticker = Mock()
+    ticker.history.side_effect = TypeError("bug")
+    with patch("src.data.live_quote.yf.Ticker", return_value=ticker), pytest.raises(TypeError):
+        fetch_today_bars("1111.T")
+
+
 def test_recovery_requests_a_whole_day_including_the_close_and_returns_its_request_date() -> None:
     index = pd.DatetimeIndex(["2026-09-08 15:25", "2026-09-08 15:30", "2026-09-09 09:00"], tz=JST)
     frame = pd.DataFrame({"Open": [100.0]*3, "High": [100.0]*3, "Low": [80.0,100.0,100.0],

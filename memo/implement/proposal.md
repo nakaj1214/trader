@@ -1,95 +1,95 @@
-# 実装要件書（REQ-059〜061: EDINET の大量保有報告を、診断用の特徴量として記録する）
+# 実装要件書（REQ-068〜069: Stage 4C — 重複処理の削減と文書整合）
 
 > このファイルは create-plan の入力です。
-> 出典: [memo/analysis/improvement_report_2026-10-01.md](../analysis/improvement_report_2026-10-01.md) の B6、[memo/analysis/b6_additional_data_sources_2026-10-07.md](../analysis/b6_additional_data_sources_2026-10-07.md)（2026-10-07 の調査）。
-> 以前の要件書: REQ-001〜058 → それぞれ `proposal_req*.md`
+> 出典: [memo/local/tmp.md](../local/tmp.md)（Stage 4C 依頼文）、`.harness/reports/repository-audit-2026-10-08.md` の Q08/B09、`.harness/reports/reliability-stage4a-2026-10-09.md`、Stage 4B 報告（`.harness/reports/reliability-stage4b-2026-10-12.md` があれば参照）。
+> 以前の要件書: REQ-001〜067 → それぞれ `proposal_req*.md`（直前の Stage 4B は `proposal_req062-067.md`）
 
-## 背景
+## 背景・スコープ
 
-- catalyst（材料）の点数は、本番では常に0点で、`LIVE_MEASURABLE_MAX_SCORE=58` の原因になっている。材料を point-in-time で取れるデータがないためである。
-- **EDINET の大量保有報告書・変更報告書（5%ルール、`docTypeCode` 350/360）は、無料で取得でき、提出日時があるので point-in-time で復元できる。** 機関投資家やアクティビストの参入を示す材料になりうる。有料の J-Quants（Standard 以上、月3,300円）を使わずに済む。
-- 効果は未検証なので、**スコアには使わず、診断用の特徴量として記録する**。効果は forward と B1 の過去検証で確認する。
-
-## 決定済みの事項
-
-- **戦略・スコア・分類・候補の選定は変えない。** `STRATEGY_VERSION`（v3）と `REPORT_SCHEMA_VERSION`（5）は変えない。snapshot に足すのは `features`（辞書）の項目だけ（REQ-050・053・054 と同じ方式）。
-- **EDINET の取得の失敗で、日次 scan を止めない。** 失敗したら特徴量を `None` にして続行する（best-effort）。
-- 取得の頻度は、規約（短時間の大量アクセスの禁止）に従い、**1リクエストあたり3秒以上の間隔**を空ける。
-- EDINET の API キーは、`.env`（gitignore）と GitHub の Secrets にだけ置く。ログ・メモ・Git に出さない。**キーの発行は、ユーザーが EDINET の公式サイトで行う**（メールアドレスの登録が必要）。
-
-## 事実確認の状況（2026-10-07）
-
-確認済み（公式または複数の出典）:
-- EDINET API v2 の書類一覧: `GET https://api.edinet-fsa.go.jp/api/v2/documents.json`（`date`、`type`、`Subscription-Key`）。日付の指定のみで、銘柄での絞り込みはできない。提出日時（`submitDateTime`）、`docTypeCode`、`secCode`、`issuerEdinetCode`、`subjectEdinetCode`、`filerName` を返す。
-- API キーの取得は無料。商用利用も可。短時間の大量アクセスは、予告なく停止されうる。
-
-**未確認（実装の前に、実際の API で確かめる。REQ-059 の確認の段階）:**
-- 大量保有報告書（350/360）で、`secCode`・`issuerEdinetCode`・`subjectEdinetCode` が、それぞれ**保有者**と**発行会社（対象の銘柄）**のどちらを指すか。**発行会社の証券コードを得るには、EDINET コードリスト（EDINET コード ↔ 証券コードの対応表）が必要になる可能性が高い。**
-- 取得できる過去の範囲（出典により 2016 年以降、2021 年3月以降と食い違う）。
-- 1日の書類数、取得に必要なリクエスト数、応答時間。
-- 保有目的（純投資・重要提案行為など）が、一覧のメタデータにあるか。ない場合は、今回は記録しない（書類の中身の解析は対象外）。
+- 対象は **Q08（重複取得・再計算の削減）と B09（運用・実装状態の文書整合）の 2 項目のみ**。Growth Opportunity（G01〜G07）には進まない。完了後は停止して報告する。
+- Stage 4A（B05/B06/B10/Q06/Q10 外部通信禁止）と Stage 4B（Q03/Q04/Q05/Q07/Q09）、および第1〜第3段階（C01〜C07・B01〜B04・B07・B08・Q01・Q02）は現在の baseline として維持する。再設計しない。
+- 目的は性能と保守性のみ。**同じ正常入力 → 同じ候補・スコア・評価結果・学習結果**。Q06 の閾値（ticker 10 / signal date 5 / 最大業種比率 50%）、スコア、閾値、重みは変更しない。
+- 現在の作業ツリーには Stage 4B の変更が含まれる（`git status` で workflow・scripts・src の変更を確認済み）。baseline はこの作業ツリーとする。
+- mypy 既知 31件（スタブ未導入）は baseline。件数ではなく内容の差分で新規 0 件を確認する。依存変更は想定せず、`uv.lock` は差分なしを期待する。
+- 実装手順（Q08）: 監査の元指摘を再確認 → **最初に計測**（固定サイズの fake / synthetic データ）→ 計測で重複が確認できた箇所だけ最小修正 → 修正前後の結果完全一致を確認 → 対象テスト → Stage 4A/4B 回帰 → 第1〜第3段階回帰 → 全テスト → ruff → mypy → 外部通信・snapshot・archive・`uv.lock` 確認。効果がほとんど無い箇所は「変更不要」と判断してよい。
 
 ---
 
 ## 要件一覧
 
-### REQ-059: EDINET の大量保有報告のメタデータを取得し、ローカルに保存する（確認の段階を含む）
+### REQ-068: run 内の重複取得・再計算の削減（Q08）
 
-- **画面**: なし（取得スクリプト、ローカルのキャッシュ）
-- **対象ファイル**: 新規 `src/data/edinet.py`（取得とキャッシュ）、新規 `scripts/run_edinet_fetch.py`（CLI）、`.env.example`（キー名の追加）、新規 `tests/test_edinet.py`
-- **Before（現状）**: EDINET のデータを取得する仕組みがない。
+- **画面**: Position Monitor / 評価レポート（forward validation・backtest）
+- **対象ファイル**: [scripts/run_position_monitor.py](../../scripts/run_position_monitor.py)（`run` の保有行ループ、`fetch_split_adjusted_history`・`fetch_today_bars` の呼出し）、[src/data/live_quote.py](../../src/data/live_quote.py)、[src/data/sheets_client.py](../../src/data/sheets_client.py)（`_worksheet`、`read_holdings`・`read_status`・`write_status`）、[src/evaluation/inflection_report.py](../../src/evaluation/inflection_report.py)（horizon・cost ごとの `simulate_signals` / `_paired_trade_rows`）、[src/evaluation/inflection_backtest.py](../../src/evaluation/inflection_backtest.py)
+- **Before（現状）**:
+  - Position Monitor は保有行ごとに `fetch_split_adjusted_history(ticker, …)` と `fetch_today_bars(ticker)` を呼ぶ。同一 ticker に複数の保有行があると、同じ run 内で同じ ticker の当日足を何度も取得し、気配時刻も行ごとに異なり得る。
+  - Sheets は `read_status`・`read_holdings`・`write_status` ごとに `_worksheet()` が認証・`open_by_key` をやり直す（1 run で複数回接続）。
+  - 評価レポートは 5 つの horizon × 通常/ストレス cost で `simulate_signals`・`_paired_trade_rows` を繰り返し、同じ価格系列の整形・index 調整・日付変換・共通統計を再計算する。
+  - 上記の回数・時間・メモリは未計測 [要確認: 計測で重複の実在と規模を確認する]。
 - **After（期待）**:
-  1. **確認（`--probe`）:** 指定した日付1日分の書類一覧から、`docTypeCode` が 350・360 の件数と、各項目の値の例（個人・企業名を除く）を表示する。保有者と発行会社のどちらがどの項目に入るかを、人が確認できる。
-  2. **取得（`--fetch`）:** 指定した期間の各日について、書類一覧を取得し、350・360 のメタデータ（`docID`、`submitDateTime`、`docTypeCode`、`secCode`、`issuerEdinetCode`、`subjectEdinetCode`、`filerName`、`withdrawalStatus` など必要な項目だけ）を、日付ごとのファイル（`.data/edinet/filings/YYYY-MM-DD.json.gz`）に保存する。
-     - 取得済みの日は飛ばす（途中から再開できる）。1リクエストごとに3秒以上の間隔を空ける。HTTP 429 や一時的な失敗は、B1 の取得（`PATIENT_MAX_RETRIES`）と同じ方式で待って再試行する。
-     - 休日・開示のない日は、空のリストとして保存する（再取得を避ける）。
-  3. **対応表:** EDINET コードリストを取得して保存し、EDINET コード → 証券コード（4桁のティッカー）の対応を作る。取得できない場合は、`secCode` だけで対応づけられる項目だけを使う（判断は確認の段階の結果による）。
-  4. API キーは環境変数 `EDINET_API_KEY` から読む。ログ・例外のメッセージにキーを含めない。
+  1. **まず計測する**。固定サイズの fake / synthetic データで、provider call 数、同一 ticker の価格取得回数、Sheets connection / read / write 回数、同じ系列の整形回数、同一統計の再計算回数、実行時間、peak memory を before として記録する。実 API・実環境のベンチマークは行わない。
+  2. 計測で重複が確認できた箇所に限り、**1 run 内だけ**の共有を入れる。
+     - Position Monitor: 市場データ取得は ticker 単位で共有し、取引判定（購入日・entry price・stop・position 固有状態・取引固有の split 調整）は position 単位で独立のままにする。
+     - Sheets: 1 run 内で worksheet / 接続を安全に共有できる範囲だけ削減する。retry 境界・認証エラー・batch 更新・Q04 通知状態・C07 writer 排他を壊さない。長寿命のグローバル接続や connection pool は導入しない。
+     - 評価系列・統計: 安全に共有できる immutable な中間結果だけ共有する。可変 DataFrame を共有して後続処理が相互に影響する設計にしない（copy または immutable な表現を使う）。
+  3. 最適化前後で正常入力に対する結果が**完全一致**する。浮動小数点の計算順序が変わる最適化はしない。
+  4. 効果がほとんど無い、またはリスクが勝つ候補は変更せず、理由を報告する。
 - **受入条件**:
-  1. 合成のレスポンスで、350・360 だけが抽出され、必要な項目が保存される（他の書類種別は保存しない）。
-  2. 取得済みの日を飛ばして再開できる。空の日が空のリストとして保存される。
-  3. 429 や一時的な失敗で、待って再試行し、上限を超えたら理由つきで失敗する。リクエスト間隔が3秒以上である（時計を差し替えたテストで確認する）。
-  4. キーが、ログ・例外のメッセージ・保存ファイルに含まれない。
-  5. 外部通信は、テストでは行わない（取得関数を差し替える）。
-  6. **実 API での確認（`--probe`）の結果が、`memo/analysis/` に記録され、REQ-060・061 の前提（発行会社の特定方法）が確認されている。** 前提が成り立たない場合は、REQ-060・061 に進まず、結果を報告して判断を仰ぐ。
-- **備考**: キーの発行は、ユーザーが行う。キーが用意されるまで、実 API での確認（受入条件 6）はできない。それ以外はキーなしで実装・テストできる。
+  - before / after の provider call 数と Sheets connection 数を具体的な数値で報告できる（実行時間・peak memory は可能な範囲。ローカルの小さな時間差を根拠にしない。主な評価基準は重複処理回数が構造的に減ったか）。
+  - 同一 ticker に複数 position があっても当日足の取得が 1 回であることを、fake provider の呼出し回数で確認する。
+  - 同一 ticker・異なる購入日の position の結果（stop 判定・entry 調整・通知対象・warned 状態）が最適化前と一致する。
+  - ある ticker の provider 失敗が他の ticker の position に誤伝播しない。同一 ticker の複数 position は同じ失敗を一貫して受け、他 position の固有計算を壊さない。
+  - 共有された DataFrame 等を一方が変更しても他方に影響しない（cross contamination なし）。
+  - Sheets を共有しても、既存の read / write の結果・書込み内容・retry・認証エラーの扱いが変わらない。
+  - 最低限、candidate / EARLY_CANDIDATE / classification / score / feature 値 / stop 判定 / notification 対象 / outcome / portfolio / benchmark / learning 入力・出力が before / after で完全一致（既存仕様で順序が保証されているものは順序も一致）。
+  - 永続 cache・外部 cache・新しい DB・multiprocessing・大規模 async・provider への並列大量アクセス・memoization framework・新しい依存 package・全面アーキテクチャ変更を導入していない。
+- **備考**: Q08 は baseline-preserving でなければならない。正常入力の戦略結果が 1 件でも変わったら原因を調査する（性能改善を理由に結果差を許容しない）。
 
-### REQ-060: 日次 scan で、大量保有報告の提出を診断用の特徴量として記録する
+### REQ-069: 現行仕様を説明する文書の整合（B09）
 
-- **画面**: なし（snapshot の `features`）
-- **対象ファイル**: [src/screening/inflection_live.py](../../src/screening/inflection_live.py)（`FEATURE_DEFAULTS`、`_evaluate_candidate`、`scan_japan_inflection`）、`src/data/edinet.py`、[.github/workflows/inflection_shadow.yml](../../.github/workflows/inflection_shadow.yml)（キーの受け渡し）、`tests/test_inflection_live.py`
-- **Before（現状）**: `features` に、大量保有報告の情報がない。
-- **After（期待）**: `features` に、次の項目を追加する（すべて**スコアには使わない**）。計算できなければ `None`。
-  - `major_holder_filings_60d`: 直近60暦日に、その銘柄（発行会社）を対象にした大量保有報告書・変更報告書（350・360）の提出件数
-  - `major_holder_new_filings_60d`: 同、新規の大量保有報告書（350）の件数
-  - `days_since_major_holder_filing`: 直近の提出からの経過日数（scan の市場日 − 提出日）
-  - 提出は、scan の実行時刻（16:40 JST）までに提出されたもの（`submitDateTime` が scan 時刻以前）だけを数える（point-in-time）。取り下げられた書類は数えない。
-  - scan は、直近60暦日分の書類一覧を取得する（リクエスト数は営業日数ぶん。間隔を3秒以上空けるので、数分かかる）。
-  - **EDINET の取得に失敗した場合（キーなし、通信の失敗、規約による停止など）は、3項目を `None` にして scan を続行する。** scan の終了コードを失敗にしない。ログには、例外の型名と件数だけを出す（銘柄名・キーは出さない）。
-  - `EDINET_API_KEY` が設定されていなければ、取得せず、3項目を `None` にする。
-- **受入条件**:
-  1. 合成の提出データで、対象銘柄の件数・新規の件数・経過日数が期待どおりになる。scan 時刻より後の提出、取り下げ、他の銘柄の提出は数えない。
-  2. 提出が60日より前の銘柄、提出のない銘柄は、件数が0、経過日数が `None`（あるいは要件のとおり）になる（欠損と「0件」を区別する）。
-  3. EDINET の取得が失敗しても、scan が成功し、3項目が `None` になる。キーがないときも同じ。
-  4. 新しい項目を足しても、スコア、分類、`candidates`、`classification_counts` が変わらない。
-  5. `validate_report`、forward の loader、learning の loader が、新しい項目がある snapshot と、ない snapshot の両方を読める。
-  6. ログと標準出力に、API キー、保有者名、銘柄名が含まれない。
-- **備考**: 取得にかかる時間（数分）を、日次 scan のタイムアウト内に収められるかを、REQ-059 の確認で測る。収まらない場合は、取得を差分（前日までのキャッシュ + 当日）にする方式を、計画で検討する。
+- **画面**: 現行仕様を説明する文書（[memo/project-overview.md](../project-overview.md)、[docs/playbooks.md](../../docs/playbooks.md)、`.env.example`、必要に応じて AGENTS.md 以外の README 相当）
+- **対象ファイル**: 上記の現行仕様文書。照合元は [.github/workflows/*.yml](../../.github/workflows/)、[.env.example](../../.env.example)、[scripts/](../../scripts/)・[src/](../../src/) の現行コード。
+- **Before（現状）**: 監査時点で、概要が暗号鍵の API key fallback・最低限 secret は J-Quants のみ・Monitor 9:03 / 12:35 と記す一方、現行コードは専用暗号鍵必須・9:20 / 12:50。EDINET の状態も実装と食い違う。Stage 4A/4B で追加・変更された設定や運用（`JQUANTS_PLAN` / `JQUANTS_DATA_DELAY_WEEKS` の validation、Forward Validation の secret 分離、Q04 の通知状態と再送、uv.lock と Action SHA 固定、Q07 の障害分類、Q09 の atomic write）は未反映の可能性がある [要確認: 現行文書を照合して不一致を確定する]。
+- **After（期待）**: 現行コードを正として、現行仕様を説明する文書だけを更新する。最低限、次を現在の実装と照合して反映する。
+  - **セットアップ**: 必須環境変数、J-Quants 関連（`JQUANTS_PLAN`・`JQUANTS_DATA_DELAY_WEEKS` と設定 validation の挙動）、snapshot 暗号化 key、Slack、Google Sheets、その他 secret。
+  - **GitHub Actions**: workflow 一覧、schedule、`workflow_dispatch`、concurrency、permissions、secret 利用、`uv.lock` 利用、Action SHA 固定。古い時刻・権限・依存導入方法を残さない。
+  - **Forward Validation**: secret 不要の PR 検証、secret 必須の評価の分離、fork PR の扱い。
+  - **Position Monitor**: 実行時間、stop 回収、checkpoint、incomplete 判定、branch / writer 制限、concurrency、通知状態。
+  - **通知**: snapshot 生成・保存・Git 反映・Slack 通知・通知状態・明示再送が別状態であること。**Exactly-once を保証すると書かない**。runner 停止や Slack 受理後・状態保存前の停止で重複し得ることを必要な範囲で明記。
+  - **Watchdog**: workflow 失敗・未起動・snapshot 欠落・一般障害通知の現在仕様。
+  - **provider 障害**: timeout / 429 / HTTP 5xx / protocol 異常 / empty / validation / authentication / unexpected の分類を、運用者が理解する範囲だけ。実装詳細は過剰に書かない。
+  - **atomic write**: snapshot・評価成果物が atomic に書かれること。複数成果物全体が transactional とは書かない。
+  - **EDINET**: コード接続済み / test 済み / live 利用 / historical 利用 / learning 利用 / 実 API 確認済みか未確認かを実装に基づいて整理。「実装済み」と「本番で実証済み」を同一視しない。
+  - 機能状態は、可能なら implemented / tested with fake・unit test / integration not verified / production enabled / production unverified（自然な日本語で可）を区別する。コードがあることと実サービスで確認済みであることを区別する。
+- **変更してはいけないもの**: repository audit、Stage 1〜4 の実装報告、過去の分析メモ・研究メモ、過去の backtest 結果（`memo/analysis/`・`memo/research/`・`.harness/reports/` の過去レポート等）。判断に迷う文書は変更せず報告する。
+- **受入条件**: 更新した各文書について「何が古かったか」「現在何に合わせたか」を整理して報告できる。文書記載の時刻・secret 名・環境変数・権限が workflow・`.env.example`・CLI 引数と一致する（自動照合が合理的な既存の仕組みがあれば利用。文書値を固定するだけの大量テストは追加しない）。過去記録は無変更（`git diff` で確認）。runtime baseline は変化しない（文書のみの変更）。意図的に変更しなかった文書を明記する。
+- **備考**: コード・テスト・設定ファイルの値は変更しない（`.env.example` はコード上の事実に文書側を合わせるための照合対象で、不一致が見つかった場合は報告する。値を変えるかは別判断）。
 
-### REQ-061: B1 の過去検証と learning で、大量保有報告の特徴量を使えるようにする
+### REQ-070: Stage 4C 分の境界回帰テスト（Q10）
 
-- **画面**: なし（過去検証のレポート、learning のレポート）
-- **対象ファイル**: [src/evaluation/inflection_historical.py](../../src/evaluation/inflection_historical.py)（`reconstruct_scan`）、[scripts/run_inflection_historical_backtest.py](../../scripts/run_inflection_historical_backtest.py)、[src/evaluation/inflection_learning.py](../../src/evaluation/inflection_learning.py)（`factor_labels`）、`tests/`
-- **Before（現状）**: 過去検証は、大量保有報告を知らない。learning も、この特徴量を factor にしていない。
-- **After（期待）**:
-  - 過去検証の各判定日で、キャッシュ（`.data/edinet/filings/`）から、REQ-060 と同じ関数で3項目を計算する（同じコードを通る）。キャッシュがない日は `None`。
-  - learning の `factor_labels` に、`major_holder_filings_60d` の区分（0件、1件、2件以上）と `major_holder_new_filings_60d > 0` を、値がある観測にだけ加える（REQ-055 と同じ方式。既存のラベルは変えない）。
-- **受入条件**:
-  1. 過去検証で、判定日より後の提出を変えても、その日の3項目が変わらない（先読みしない）。
-  2. キャッシュがない期間で、例外にならず `None` になる。
-  3. learning の `factor_labels` が、値のある観測にだけラベルを付け、既存のラベルが変わらない。新しいラベルは、既存の昇格判定（Fisher 検定と BH 補正）の対象になる。
-  4. 既存の過去検証・learning のテストが PASS する。
-- **備考**: 過去の取得（2024-10 以降の約500営業日）は、3秒間隔で30分ほどかかる見込み。取得は、ユーザーが手元で実行する（B1 の取得と同じ運用）。
+- **画面**: テスト全般
+- **対象ファイル**: [tests/conftest.py](../../tests/conftest.py)（Stage 4A の外部通信禁止 fixture を維持）、`tests/test_run_position_monitor.py`、`tests/test_live_quote.py`、`tests/test_sheets_client.py`、`tests/test_inflection_backtest.py`、`tests/test_inflection_forward.py`（必要な既存ファイルを拡張。新規ファイルは既存で検証できない場合のみ）
+- **Before（現状）**: 同一 ticker 複数 position での取得回数、cross contamination、Sheets 共有後の結果維持、最適化前後の同等性を固定するテストが無い。
+- **After（期待）**: 次を回帰テストとして固定する。同一 ticker 複数 position でも価格取得 1 回 / 異なる購入日の position 結果維持 / 共有 DataFrame による cross contamination なし / provider 失敗が他 position へ誤伝播しない / Sheets 共有後も既存結果維持 / 最適化前後の評価結果一致。B09 のために文書値を固定する大量のテストは追加しない。
+- **受入条件**: 外部通信試行数 0。保存済み snapshot・archive の変更 0。最適化前の実装と同一入力で結果が一致する比較テスト（または保存した期待値）が存在する。
+
+---
+
+## 保護対象（Stage 4C で壊さない）
+
+Stage 4A・Stage 4B の全項目、第1〜第3段階の全回帰（C01〜C07・B01〜B04・B07・B08・Q01・Q02）。特に Position Monitor の C02/C03、writer 排他 C07、Q02 公開ログ保護、Q04 通知状態、Q07 障害分類、Q09 atomic write、Q10 外部通信禁止。
+
+## Harness 関連
+
+Harness の正式入口が既存の `plan.md` / `proposal.md` の全面差替え判定で停止する問題は、Stage 4C 本体とは別問題として扱う。Harness infrastructure・installer は変更しない。今回の変更について、task 対象の minimal diff guard、`git diff --check`、レビューなど利用可能な既存検証を実施する。正式入口が同じ既存理由で停止する場合は事実だけ報告し、Stage 4C の失敗扱いにしない。新しい Blocking 原因が出たら別途報告する。
+
+## 検証（Stage 4C 完了時）
+
+Q08 対象テスト / Q10 Stage 4C 境界テスト / Stage 4A 回帰 / Stage 4B 回帰 / 第1〜第3段階回帰 / 全テスト / coverage / ruff / mypy（既知 31件・新規 0 件・内容差分で確認）/ 外部通信試行数 / `git diff --check` / task 対象 minimal diff guard / 保存済み snapshot 差分 / archive 差分 / `uv.lock` 差分（なし）。
+
+## 完了報告
+
+Stage 4C 終了後に停止（Growth へ進まない）。形式: 1 Q08（修正前の重複・修正内容・変更ファイル・追加テスト・baseline 一致結果）/ 2 性能比較（provider call 数・Sheets connection 数の before/after、可能なら実行時間・peak memory、変更しなかった候補とその理由）/ 3 B09（更新した文書ごとの「古かった点」と「合わせた先」、意図的に変更しなかった文書）/ 4 baseline（Q08: preserving / changing、B09: runtime への影響、正常入力の投資結果が完全一致したか）/ 5 検証結果（全テスト件数・failed・coverage・ruff・mypy 総件数と新規件数・最終対象回帰件数・外部通信試行数・snapshot / archive 変更数・`uv.lock` 差分・`git diff --check`・minimal diff guard）/ 6 未確認事項（実 GitHub Actions・実 Slack・実 provider・実 Google Sheets・実 Git push・runner 強制停止・Actions 基盤障害。コード上の未解決問題と混同しない）/ 7 Harness（正式入口の Blocking が既存の plan.md / proposal.md 問題と同一か、新規か）/ 8 第4段階最終状態（B05・B06・B09・B10・Q03〜Q10 の完了/未完了。監査の Critical / Bug / Quality に未対応が残っていないかの確認。見つかっても勝手に実装しない）/ 9 次フェーズへの引き継ぎ（保守フェーズ最終 baseline の確定・integration / production smoke test・Growth 候補評価で実施すべき事項のみ。Growth の実装は開始しない）。詳細は `.harness/reports/reliability-stage4c-2026-10-12.md` に記録。
 
 ---
 
@@ -102,10 +102,12 @@
 ## 完了済み・保留中
 
 ### 完了済み
-- REQ-048〜058（候補の見える化、診断用の特徴量、日次 scan の耐性、learning への接続、過熱警告、DSR、市場別ベンチマーク）
+- Stage 4A: B05 / B06 / B10 / Q06 / Q10（外部通信禁止 fixture）。
+- Stage 4B: Q03 / Q04 / Q05 / Q07 / Q09（依頼文の記載による。実装・検証完了の確認はレポートを参照）。
 
 ### 保留中（今回のスコープ外）
-- **保有目的・保有割合の解析。** 書類の中身（XBRL・CSV）の解析が必要。メタデータだけで効果を確認してから判断する。
-- **TDnet（適時開示）、信用残・空売り、決算発表予定日。** 有料プランの判断が先（[調査メモ](../analysis/b6_additional_data_sources_2026-10-07.md)）。
-- **大量保有報告の特徴量のスコアへの採用。** 記録だけを行う。採用は、forward と過去検証で効果を確認してから。
-- **戦略に影響する項目**（A7 の減衰、A8-a・b、相場環境による切り替え、売却ルールの採用、B5）。
+- Growth Opportunity（G01〜G07）。Stage 4C 完了後も実装を開始せず、保守フェーズ全体の結果確認後に優先順位を決める。
+- Q06 閾値の再評価（実データ利用可能になった段階）。
+- mypy 既知 31件（スタブ未導入）の解消。
+- Harness infrastructure / installer の修正（正式入口の既存停止問題）。
+- 新特徴量・スコア・閾値・重み変更、ML framework、新 provider、自動売買・自動発注、永続 cache・大規模並列化、無関係な依存更新、archive 変更、過去 snapshot 変更、過去レポートの歴史修正、全面リファクタリング。

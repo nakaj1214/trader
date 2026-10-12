@@ -798,7 +798,8 @@ def scan_japan_inflection(
         except KeyError as exc:
             raise RuntimeError(f"DATA_HEALTH: unexpected market code: {market_code}") from exc
 
-    prices = fetch_price_data(tickers, lookback_days)
+    provider_failures: dict[str, int] = {}
+    prices = fetch_price_data(tickers, lookback_days, diagnostics=provider_failures)
     latest_dates: dict[str, str] = {}
     dropped_future: set[str] = set()
     for attempt in range(len(retry_waits) + 1):
@@ -839,21 +840,24 @@ def scan_japan_inflection(
             if ticker not in prices or latest_dates.get(ticker) != expected_date
         ]
         if attempt == len(retry_waits):
-            raise PriceDataRetryExhausted(
-                {
-                    "retry_exhausted": "true",
-                    "expected_date": expected_date,
-                    "universe": str(len(tickers)),
-                    "missing": str(len(tickers) - price_data),
-                    "price_data": str(price_data),
-                    "price_coverage": f"{price_coverage:.1%}",
-                    "latest_coverage": f"{latest_coverage:.1%}",
-                    "failed_gate": ",".join(failed_gates),
-                    "attempts": str(attempt + 1),
-                    "latest_dates": histogram,
-                    "dropped_future_bars": str(len(dropped_future)),
-                }
-            )
+            details = {
+                "retry_exhausted": "true",
+                "expected_date": expected_date,
+                "universe": str(len(tickers)),
+                "missing": str(len(tickers) - price_data),
+                "price_data": str(price_data),
+                "price_coverage": f"{price_coverage:.1%}",
+                "latest_coverage": f"{latest_coverage:.1%}",
+                "failed_gate": ",".join(failed_gates),
+                "attempts": str(attempt + 1),
+                "latest_dates": histogram,
+                "dropped_future_bars": str(len(dropped_future)),
+            }
+            if provider_failures:
+                details["provider_failures"] = ",".join(
+                    f"{category}:{count}" for category, count in sorted(provider_failures.items())
+                )
+            raise PriceDataRetryExhausted(details)
         if not retry_tickers:
             break
         wait = retry_waits[attempt]
@@ -867,7 +871,7 @@ def scan_japan_inflection(
             f"latest_dates={histogram} dropped_future_bars={len(dropped_future)}"
         )
         time.sleep(wait)
-        prices.update(fetch_price_data(retry_tickers, lookback_days))
+        prices.update(fetch_price_data(retry_tickers, lookback_days, diagnostics=provider_failures))
 
     # Price coverage per market (the technical features are computed in select_and_evaluate).
     for ticker, df in prices.items():
@@ -962,6 +966,7 @@ def scan_japan_inflection(
             (str(c.features.get("latest_actual_disclosure_date")) for c in candidates
              if c.features.get("latest_actual_disclosure_date")), default=None)},
         "runtime_versions": _package_versions(),
+        **({"provider_failures": dict(sorted(provider_failures.items()))} if provider_failures else {}),
         "candidates": [candidate.as_dict() for candidate in candidates],
         "control_sample_size": control_sample_size,
         "control_sample_seed": selection.control_seed,

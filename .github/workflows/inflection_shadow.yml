@@ -5,6 +5,11 @@ on:
     # 16:40 JST (07:40 UTC), Monday-Friday.
     - cron: '40 7 * * 1-5'
   workflow_dispatch:
+    inputs:
+      resend_digest:
+        description: Resend today's digest even if already marked succeeded
+        type: boolean
+        default: false
 
 concurrency:
   # A manual branch run must never cancel the scheduled main run.
@@ -13,12 +18,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
     outputs:
       failure_stage: ${{ steps.checkout.outcome == 'failure' && 'checkout' || steps.setup.outcome == 'failure' && 'setup' || steps.install.outcome == 'failure' && 'install' || steps.scan.outputs.failure_stage || steps.persist.outcome == 'failure' && 'git_push' || 'data_acquisition' }}
       retry_exhausted: ${{ steps.scan.outputs.retry_exhausted }}
@@ -34,21 +41,19 @@ jobs:
       attempts: ${{ steps.scan.outputs.attempts }}
 
     env:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       JQUANTS_PLAN: free
       JQUANTS_DATA_DELAY_WEEKS: '12'
-      SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
 
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
         id: setup
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # actions/setup-python v7
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -56,14 +61,18 @@ jobs:
       - name: Install runtime dependencies
         id: install
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install uv==0.9.21
+          uv sync --frozen
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run JP inflection shadow scan
         id: scan
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
+          RESEND_DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resend_digest || false }}
         run: python scripts/run_inflection_shadow.py
 
       # Intentional direct push: this step writes encrypted generated data only, never source code.
@@ -92,7 +101,7 @@ jobs:
     steps:
       - name: Checkout trusted notifier
         id: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7
         with:
           ref: main
           persist-credentials: false
@@ -100,7 +109,7 @@ jobs:
       - name: Restore notification state
         id: restore-alert-state
         continue-on-error: true
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # actions/cache/restore v4
         with:
           path: .harness/state/workflow-alerts.json
           key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
@@ -120,7 +129,7 @@ jobs:
       - name: Save notification state
         if: steps.notify.outcome == 'success'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # actions/cache/save v4
         with:
           path: .harness/state/workflow-alerts.json
           key: workflow-reliability-main-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

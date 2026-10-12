@@ -389,7 +389,7 @@ def test_scan_japan_inflection_filters_market_and_builds_candidate() -> None:
             min_turnover_jpy=0,
         )
 
-    fetch.assert_called_once_with(["1111.T"], 252)
+    fetch.assert_called_once_with(["1111.T"], 252, diagnostics={})
     assert expected_session.call_args.args[0] == report["generated_at"]
     assert report["universe_count"] == 1
     assert report["price_data_count"] == 1

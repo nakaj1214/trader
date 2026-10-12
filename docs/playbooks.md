@@ -28,3 +28,15 @@ Use this flow when a command, container operation, PHP process, JavaScript reque
 - `as_of_at` is the last verified price checkpoint. `incomplete` preserves the checkpoint and requires a later retry; it does not confirm no stop contact. Recovery rechecks the checkpoint session and subsequent closed sessions against daily OHLCV. A recovered stop is labelled historical and remains latched after prices recover. Minute history that the provider no longer retains needs private manual investigation; do not advance its checkpoint to silence the warning.
 - The separate Reliability Watchdog checks main workflow success and the expected encrypted snapshot at 20:10 JST, with exchange holidays and two hours of scheduler grace. Forward requires a scheduled run because manual dispatch skips weekly-only processing. Delivered alert identities are stored in the Actions cache; cache eviction can cause a repeat alert. A platform-wide Actions outage also stops this watchdog: an independent scheduler may run `scripts/check_workflow_health.py` with read-only GitHub credentials, a private Slack webhook, a current snapshot checkout, and durable `--state` outside Actions.
 - Slack timeout/500 is a failed notification, never recorded as delivered. Slack acceptance and Sheets status persistence are separate operations; after a status-write failure, reconcile the private notification and Sheets state before rerunning. Public logs retain stage, error type, row number, counts, and HTTP status; diagnose provider exception details through private channels rather than publishing holdings or credentials.
+# Stage 4B reliability boundaries
+
+The daily digest records `pending` or `succeeded` by market date in
+`dashboard/data/inflection/digest_state.json`. A pending day is retried by the next normal run;
+`workflow_dispatch` with `resend_digest=true` forces a retry. Delivery is best-effort, not exactly
+once: a runner stop after Slack accepts a message but before the state is pushed can duplicate it,
+and Slack acceptance does not prove end-user delivery.
+
+Provider diagnostics expose only a category (`timeout`, `rate_limit`, `server_error`, `protocol`,
+`empty`, `invalid_ohlcv`, `validation`, `auth`, or `unexpected`), status, retry count, and aggregate
+count. Never add tickers, URLs, response bodies, credentials, or raw exception messages to public
+workflow output. `unexpected` errors are propagated instead of being converted to missing data.

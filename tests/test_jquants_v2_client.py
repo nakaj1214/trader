@@ -6,6 +6,29 @@ import pytest
 import requests
 
 from src.data.jquants_v2_client import JQuantsV2Client
+from src.data.provider_output import ProviderFailureCategory, bounded_retry_after, classify_provider_failure
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-1", "bad", None])
+def test_invalid_retry_after_is_ignored(value: object) -> None:
+    assert bounded_retry_after(value) is None
+
+
+def test_retry_after_is_capped() -> None:
+    assert bounded_retry_after("999999") == 300.0
+
+
+def test_provider_failures_are_safely_classified() -> None:
+    response = requests.Response()
+    response.status_code = 429
+    limited = requests.HTTPError(response=response)
+    response_500 = requests.Response()
+    response_500.status_code = 500
+    server = requests.HTTPError(response=response_500)
+    assert classify_provider_failure(requests.Timeout()) == ProviderFailureCategory.TIMEOUT
+    assert classify_provider_failure(limited) == ProviderFailureCategory.RATE_LIMIT
+    assert classify_provider_failure(server) == ProviderFailureCategory.SERVER_ERROR
+    assert classify_provider_failure(TypeError()) == ProviderFailureCategory.UNEXPECTED
 
 
 def test_headers_require_api_key() -> None:

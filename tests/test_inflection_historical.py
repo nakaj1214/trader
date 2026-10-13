@@ -740,3 +740,43 @@ def test_dropping_trade_rows_keeps_every_aggregate_identical() -> None:
     assert '"trades"' in json.dumps(full) and '"trades"' not in json.dumps(lean)
     stable = {key: value for key, value in summary_report(full).items() if key != "generated_at"}
     assert stable == {key: value for key, value in lean.items() if key != "generated_at"}
+
+
+def _market_gap_data() -> tuple[HistoricalData, list[str], dict[str, str]]:
+    """A session the stock and the TOPIX ETF both lack while another ticker trades (ISSUE-01 / C04)."""
+    sessions = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-01-05", periods=80)]
+    gap = sessions[3]
+
+    def row(code: str, step: float, index: int) -> dict[str, Any]:
+        price = 100.0 + step * index
+        return {"Code": code, "O": price, "H": price, "L": price, "C": price, "Vo": 1000.0, "Va": price * 1000.0,
+                "AdjFactor": 1.0, "ExRT": 1}
+
+    rows_by_day: dict[str, list[dict[str, Any]]] = {}
+    for index, day in enumerate(sessions):
+        rows = [row("22220", 0.2, index)]  # trades on every session, so the session exists in the market
+        if day != gap:
+            rows += [row("11110", 0.5, index), row("13060", 0.1, index)]
+        rows_by_day[day] = rows
+    data = HistoricalData(BarPanel.from_rows(rows_by_day), MasterHistory({}), FinancialsStore([]))
+    return data, sessions, {"gap": gap}
+
+
+def test_historical_evaluation_uses_every_market_session_not_the_benchmark_dates() -> None:
+    from src.evaluation import inflection_historical as historical
+
+    data, sessions, marks = _market_gap_data()
+    signal = {"ticker": "1111.T", "signal_date": sessions[0], "date": sessions[0], "score": 80.0,
+              "classification": "EARLY_CANDIDATE", "market": "プライム", "avg_turnover_20d_jpy": 1e9}
+    collected = {lag: {"signals": [dict(signal)], "yoy": {}} for lag in historical.LAGS}
+
+    with patch.object(historical, "collect_signals", return_value=collected):
+        report = historical.build_backtest_report(data, [sessions[0]], min_independent=1, log=lambda _: None)
+
+    for lag_report in report["lags"].values():
+        h5 = lag_report["groups"]["early_candidate"]["horizons"]["h5"]["summary"]
+        # The stock lacks a real market session inside the holding window: not a completed trade.
+        assert (h5["completed"], h5["unevaluated"]) == (0, 1)
+        assert h5["unevaluated_reasons"] == {"incomplete_price_path": 1}
+        trade = lag_report["groups"]["early_candidate"]["horizons"]["h5"]["trades"][0]
+        assert trade["net_return_pct"] is None and trade["price_diagnostics"]["missing_sessions"] == [marks["gap"]]

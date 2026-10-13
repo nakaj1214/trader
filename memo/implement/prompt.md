@@ -1,697 +1,207 @@
-Stage 4B の実装・検証が完了したので、Stage 4C を実施してください。
+# 保守フェーズ最終監査後の未解決問題一覧（2026-10-13）
 
-Stage 4A / 4B までの変更を現在のbaselineとして維持してください。
-
-今回は以下の2項目だけを対象とします。
-
-- Q08 重複取得・再計算の実行時間を抑える
-- B09 運用・実装状態の文書に複数の不一致がある
-
-**Growth Opportunityには進まないでください。**
-
-また、Stage 4C完了後もGrowth実装は開始せず、一度停止して報告してください。
+> 出典:
+> - Codex 最終監査 [.harness/reports/reliability-final-audit-2026-10-13.md](../../.harness/reports/reliability-final-audit-2026-10-13.md)（判定 BLOCKED。PARTIALLY FIXED 6件）
+> - Claude 追加調査（2026-10-13。Codex が挙げていない問題）
+>
+> 対象コード: commit `3e9b930`（dev6）。各項目は `verify-before-fix` で 1 件ずつ扱う前提。
+> 本ファイルは「現象と仮説の材料」であり、原因・修正方針の確定ではない。修正前に必ず証拠を取り直すこと。
 
 ---
 
-# Stage 4Cの目的
+## 使い方
 
-今回の目的は、
+1. 下の「推奨順」から 1 件選び、`verify-before-fix` に ID を指定して渡す（例: 「ISSUE-01 を verify-before-fix で」）。
+2. スキルの Phase 1 は各項目の「現象」、Phase 2 は「仮説と検証方法」を出発点にする。記載の再現は過去の結果なので、Phase 3 で再実行して確認する。
+3. 1 件の修正・検証が終わってから次へ進む。複数件を同時に直さない。
 
-- 同一run内の不要な重複処理を削減する
-- 現在の実装とドキュメントを一致させる
+## 全項目共通の制約
 
-ことです。
+- 外部 API・実 Slack・実 Sheets・永続キャッシュ・保存済み snapshot・archive に触れない。検証は fake / synthetic と一時ディレクトリで行う。
+- スコア・閾値・重み・Q06 閾値（ticker 10 / signal date 5 / 最大業種比率 50%）を変更しない。Growth（G01〜G07）に進まない。
+- 修正で正常入力の候補・スコア・評価結果が変わる場合は、変化が修正の意図どおりか説明する（baseline-changing として記録）。
+- 既存テストを新実装に合わせて書き換えるだけの修正は禁止。修正前に失敗するテストを先に用意する。
 
-投資戦略・検知ロジック・スコア・評価基準を改善または変更する段階ではありません。
+## 一覧
 
-原則として、
+| ID | 出典 | 重大度 | 概要 | 再現状況 | baseline 影響の見込み |
+|---|---|---|---|---|---|
+| ISSUE-01 | Codex (C04) | 高（BLOCKED 要因） | historical がベンチマークの index を市場カレンダーにし、欠落日を隠す | Codex が synthetic で再現 | changing（historical 評価） |
+| ISSUE-02 | Codex (C04) | 高（BLOCKED 要因） | 成熟した未評価取引が kill criterion の判定から落ちる | Codex が synthetic で再現 | changing（kill criterion） |
+| ISSUE-03 | Claude | 中 | live scan で優先株が普通株のメタデータを上書き（6 銘柄） | 実 master で確認 | changing（該当 6 銘柄の特徴量） |
+| ISSUE-04 | Claude | 中 | Position Monitor が古い保有銘柄を永久に評価できない | fake で再現 | preserving（正常系） |
+| ISSUE-05 | Claude | 中〜低 | 翌営業日の始値が欠けるとエントリー日が黙ってずれる | synthetic で再現 | changing（該当取引が未評価に） |
+| ISSUE-06 | Codex (Q04) + Claude | 中〜低 | 日次 scan の snapshot と通知状態の境界（通知取りこぼし／snapshot 未 commit） | Codex が fake で再現（前半）。後半はコードと workflow で確認 | preserving |
+| ISSUE-07 | Claude | 低〜中 | learning の超過収益だけベンチマークコストが 0.2%（forward・historical は 0.05%） | コードで確認 | changing（learning の超過収益 −0.15pt） |
+| ISSUE-08 | Codex (Q01) | 低〜中 | 失敗通知ジョブが依存未導入で `requests` を import する | Codex が no-site 実行で確認 | preserving |
+| ISSUE-09 | Codex (Q07) | 低 | Monitor・forward の障害分類が最終結果に残らない／自前バグが validation に分類される | コードで確認 | preserving |
+| ISSUE-10 | Claude | 低 | 日次 scan workflow に main ブランチの限定が無い | workflow で確認 | preserving |
+| ISSUE-11 | Codex (Q05) | 低 | `test.yml` に `permissions` 指定が無い | workflow で確認 | preserving |
+| ISSUE-12 | Codex (Q10) | 低 | 外部通信拒否 fixture が yfinance の curl_cffi 経路を止めない | Codex が確認 | preserving |
+| ISSUE-13 | Claude | 低 | 価格キャッシュ `artifacts/price_cache.pkl` が直書き（Q09 の取り残し） | コードで確認 | preserving |
+| ISSUE-14 | Claude | 低 | レポート内で「up/down」が 20 日騰落と 200 日移動平均の 2 定義で使われる | コードで確認 | preserving（表示のみ） |
 
-**同じ正常入力 → 同じ候補・同じスコア・同じ評価結果・同じ学習結果**
+**推奨順:** ISSUE-01 → 02（BLOCKED 解除。修正後に baseline を取り直す）→ 03 → 04 → 05 → 06 → 07 → 08 以降。
+05 は 01 と同じ `_evaluation_window` に関わるため、01 の直後に扱うと手戻りが少ない。
 
-を維持してください。
-
-Stage 4Cでは性能や保守性だけを改善してください。
-
----
-
-# Stage 4A / 4B の保護
-
-以下を現在のbaselineとして扱い、再設計しないでください。
-
-Stage 4A:
-
-- B05
-- B06
-- B10
-- Q06
-- Q10の外部通信禁止・境界テスト
-
-Stage 4B:
-
-- Q03 Forward PR / secret分離
-- Q04 Slack通知状態・明示再送
-- Q05 uv.lock / Action SHA / 最小権限
-- Q07 provider障害分類
-- Q09 atomic write
-
-また、第1〜第3段階で修正済みの、
-
-- C01〜C07
-- B01〜B04
-- B07
-- B08
-- Q01
-- Q02
-
-についても回帰させないでください。
+**対象外（誤りとして取り下げ）:** 「C04 のカレンダー欠落が forward・learning にもある」という Claude の初回指摘は誤り。両経路は 1306.T を `required` で取得し全 TSE 営業日の網羅を強制する（[forward_prices.py:233-235](../../src/data/forward_prices.py#L233-L235)）ため、本番では欠落が起きない。
 
 ---
 
-# Q08 — 重複取得・再計算の削減
+## ISSUE-01: historical の市場カレンダーがベンチマーク依存（C04）
 
-## 重要方針
+- **出典 / 重大度:** Codex 最終監査 / 高（最終判定 BLOCKED の要因）
+- **現象:** 全銘柄の市場日には存在する日が、対象銘柄とベンチマーク（TOPIX ETF）の両方で欠けていると、未評価になるべき取引が完了扱いになる。
+- **再現条件（Codex）:** 8 市場日の synthetic。対象銘柄と TOPIX に 1/22 が無く、別銘柄には有る。
+- **期待:** `incomplete_price_path` で未評価。**実際:** 完了・net −0.2%・1/27 退出（horizon が欠落分延びる）。
+- **根拠箇所:** `market_calendar=pd.DatetimeIndex(benchmark_history.index)` を渡している [inflection_historical.py:478](../../src/evaluation/inflection_historical.py#L478)、[同:622](../../src/evaluation/inflection_historical.py#L622)、[同:631](../../src/evaluation/inflection_historical.py#L631)、および `_build_group_report` 内 [inflection_report.py:325](../../src/evaluation/inflection_report.py#L325)（historical から呼ばれる場合）。`BarPanel.sessions` は全市場日を持つ。
+- **仮説と検証方法:**
+  1. historical 経路のカレンダーがベンチマーク依存（High）→ 上の synthetic を `_lag_report` 経由で実行し、`BarPanel.sessions` を渡した場合と結果を比較。
+  2. `_build_group_report` は forward と共有のため、カレンダー引数の追加が forward の結果を変える（Med）→ forward の既存テストが無変更で通るか確認。
+- **修正方針の候補（未確定）:** historical では `BarPanel.sessions`（または TSE カレンダー）を市場カレンダーとして渡す。forward・learning は現状のままでよい（上記「対象外」参照）。
+- **受入条件:** synthetic で `incomplete_price_path` になる。forward の既存テストが無変更で PASS。historical 評価の変化を baseline-changing として記録。
 
-**最適化する前に計測してください。**
+## ISSUE-02: 成熟した未評価取引が kill criterion から落ちる（C04）
 
-推測だけでcache・並列処理・大規模な共通化を導入しないでください。
+- **出典 / 重大度:** Codex 最終監査 / 高（最終判定 BLOCKED の要因）
+- **現象:** 集計には未評価 1 件が残るのに、kill criterion の判定は `pass` になる。
+- **再現条件（Codex）:** 完了 2 件と、十分古い価格終了 1 件。`min_independent=2` の bounded fixture（本番既定 100 は変えない）。
+- **期待:** 成熟した未評価がある間は判定を保留（learning と同じ扱い）。**実際:** `pass`。
+- **根拠箇所:** [h60_excess_pairs](../../src/evaluation/inflection_historical.py#L470-L487) → `select_non_overlapping_trades`（`exit_date` の無い取引を除外。[inflection_backtest.py:416-435](../../src/evaluation/inflection_backtest.py#L416-L435)）→ [kill_criterion](../../src/evaluation/inflection_historical.py#L494-L520)。learning は `unresolved_matured` で昇格を保留する（[inflection_learning.py:734-738](../../src/evaluation/inflection_learning.py#L734-L738)）。
+- **仮説と検証方法:**
+  1. kill criterion に成熟未評価の件数が渡っていない（High）→ 上の fixture で `kill_criterion` の入力件数と verdict を確認。
+  2. 成熟判定（`horizon_matured`）と未評価理由の組合せで、保留すべき条件の定義が曖昧（Med）→ learning の `_outcome_coverage` の条件と比較。
+- **修正方針の候補（未確定）:** 成熟済みで未評価の取引を数え、1 件以上なら verdict を保留（例: `incomplete`）にする。learning の扱いと揃える。
+- **受入条件:** 上の fixture で `pass` にならない。未評価ゼロの既存ケースは不変。
 
-まず現在の処理について、固定サイズのfake / syntheticデータで可能な範囲で以下を計測してください。
+## ISSUE-03: live scan で優先株が普通株のメタデータを上書き
 
-- provider call数
-- 同一tickerの価格取得回数
-- Sheets connection / read / write回数
-- 同じ価格系列の整形回数
-- 同一統計計算の重複回数
-- 実行時間
-- peak memory
+- **出典 / 重大度:** Claude 追加調査 / 中
+- **現象:** 普通株の ticker（例 `2593.T` 伊藤園）に、優先株の master 行（コード `25935`、社名「伊藤園（優先株式）」）が紐づく。財務は優先株コードで取得され、全欠損になる。
+- **再現条件:** 手元の J-Quants master（`.data/jquants/master/2026-07-01.json.gz`）で、プライム・スタンダード・グロースの 3,723 行中 6 件が衝突。伊藤園・インフロニア・ゼンショー・JAL・ANA・ソフトバンク。上書き後は全件が優先株コードになった。手元の fins キャッシュでは優先株コードの財務行は 0 件、普通株コードは有り。
+- **期待:** 普通株（コード末尾 0）のメタデータと財務を使う。**実際:** 後から来た優先株行が上書き。
+- **根拠箇所:** [_ticker_from_code](../../src/screening/inflection_live.py#L127-L129)（先頭 4 桁で ticker 化）、[ticker_meta の構築](../../src/screening/inflection_live.py#L781-L787)、[_evaluate_candidate のコード取得](../../src/screening/inflection_live.py#L546-L547)。historical は `_is_ordinary_code` で除外済み（[inflection_historical.py:70-73](../../src/evaluation/inflection_historical.py#L70-L73)、[同:231](../../src/evaluation/inflection_historical.py#L231)）。
+- **仮説と検証方法:**
+  1. live だけ普通株フィルタが無い（High）→ fake の `listed_issues` に普通株と優先株を並べ、`scan_japan_inflection` の `ticker_meta` と `financial_summary` の呼出しコードを確認。
+  2. 衝突は master の並び順に依存（Med）→ 並びを逆にした fake で結果が変わるか確認。
+- **修正方針の候補（未確定）:** live でも `_is_ordinary_code` 相当で普通株だけを残す（historical と共通化）。universe 件数は 6 件減る見込み。
+- **受入条件:** 衝突ケースで普通株コードの財務が使われる。universe 件数の変化を記録。
 
-実環境・実APIを使ったベンチマークは不要です。
+## ISSUE-04: Position Monitor が古い保有銘柄を永久に評価できない
 
----
+- **出典 / 重大度:** Claude 追加調査 / 中（Codex は「過去 1 分足の保持期間」を integration 未確認として扱い、C02 を FIXED とした）
+- **現象:** 前回の状態行が無い position（新規追加、または状況シートのリセット後）で、購入翌日〜前日のうち 1 日でも 1 分足が取れないと `incomplete` になり、チェックポイント（`as_of_at`）が空のまま進まない。次回も同じ全区間を再生して失敗し続ける。
+- **再現条件（Claude）:** fake。購入日 2026-07-01、評価 2026-10-09、2026-09-10 より前の 1 分足が取得不可。3 回連続で `incomplete`、`as_of_at=''`。provider の 1 分足保持が約 30 日という前提は未確認（integration）。
+- **期待:** 取得できない古い区間があっても、何らかの明示的な扱いで評価が先へ進む（または利用者がそれと分かる状態になる）。**実際:** 永久に `incomplete`。毎回「一部銘柄を評価できませんでした」の Slack 警告。全銘柄がこの状態なら毎回 workflow 失敗。
+- **根拠箇所:** [_recover_pending](../../scripts/run_position_monitor.py#L136-L184)（[行 167-168](../../scripts/run_position_monitor.py#L167-L168) で例外）、[_preserve_previous_state](../../scripts/run_position_monitor.py#L127-L133)（失敗時に前回 `as_of_at` を引き継ぐだけ）。
+- **仮説と検証方法:**
+  1. 再生できない日があるとチェックポイントが進まない（High）→ 上の fake を `run()` 全体で実行し、`write_status` に渡る行と Slack 警告を確認。
+  2. 実際の 1 分足保持期間（Med、integration）→ fake では確認不能。修正方針は保持期間に依存しない形にする。
+- **修正方針の候補（未確定）:** 1 分足の無い古い営業日は日足で保守的に判定する（安値が stop 以下なら接触として扱う等）、または「評価不能区間あり」を明示して以降の評価を進める。C02（stop 回収）・C03（incomplete）の保証を壊さないこと。
+- **受入条件:** 上の fake で、2 回目以降に評価が先へ進む、または明示的な状態になり警告が繰り返されない。既存の C02/C03 回帰テストが無変更で PASS。
 
-# Q08で優先して確認する箇所
+## ISSUE-05: 翌営業日の始値が欠けるとエントリー日が黙ってずれる
 
-精査レポートで指摘された以下を中心に確認してください。
+- **出典 / 重大度:** Claude 追加調査 / 中〜低
+- **現象:** シグナル翌営業日の始値が無いと、その次の始値がある日にエントリーし、欠損として記録されない。
+- **再現条件（Claude）:** synthetic。市場カレンダーは 2026-01-05 から 12 営業日、銘柄は 2026-01-06 だけ欠落。`simulate_signal(holding_days=5)` で entry 2026-01-07、net +18.8%、`missing_sessions=[]`、`unevaluated_reason=None`。
+- **期待:** 「翌営業日始値で entry」から外れた取引は未評価、または欠損として記録。**実際:** 黙って 1 営業日後にエントリーして完了扱い。
+- **根拠箇所:** [_evaluation_window](../../src/evaluation/inflection_backtest.py#L133-L136)（`after_open` の最初の日をエントリーにし、`required` をエントリー日から数える）。forward・learning・historical・exit rule のすべてが通る共通関数。
+- **仮説と検証方法:**
+  1. エントリー日を市場カレンダー上の翌営業日と照合していない（High）→ 上の synthetic を再実行。
+  2. 実データで頻度が低い（Med）→ historical キャッシュで「翌営業日に始値が無い EARLY_CANDIDATE」の件数を数える（読み取りのみ）。
+- **修正方針の候補（未確定）:** エントリー日が市場カレンダー上の翌営業日でない場合、`missing_sessions` に含めるか専用の未評価理由（例 `entry_session_missing`）にする。売買停止の扱い（`price_status` メタデータ）とも整合させる。ISSUE-01 と同じ関数のため続けて扱う。
+- **受入条件:** synthetic が未評価（または欠損記録あり）になる。欠損の無い既存ケースは不変。
 
-## 1. Position Monitor の同一ticker取得
+## ISSUE-06: 日次 scan の snapshot と通知状態の境界（Q04 の残り + 追加）
 
-同じtickerについて複数の保有行がある場合、同じrun内で当日価格を何度も取得している場合は共有してください。
+- **出典 / 重大度:** Codex（Q04）+ Claude 追加調査 / 中〜低
+- **現象 A（Codex）:** snapshot 保存後、`pending` 状態を作る前に latest 保存の失敗やプロセス停止が起きると、次の通常実行は新 snapshot を「旧 snapshot（状態なし）」として扱い、通知を `skipped:legacy-no-state` にする。明示再送でしか回復できない。
+- **現象 B（Claude）:** `_deliver_digest` は try の外で呼ばれ、通知状態ファイルの読み書き（JSON 不正、値不正、OSError）で例外が出ると scan ステップ全体が失敗する。Commit ステップに `if: always()` が無いため、作成済み snapshot が commit されない。状態ファイルが壊れたまま残ると毎日同じ失敗になり、snapshot が蓄積されない。「ダイジェストの失敗で scan を失敗させない」という docstring の契約に反する。
+- **再現条件:** A は Codex が実関数の fake で再現（snapshot 有り・state 無し・再試行 send 0 件）。B はコードと workflow で確認（未実行）。
+- **根拠箇所:** [persist_report](../../scripts/run_inflection_shadow.py#L191-L220)（snapshot → latest の順）、[_deliver_digest](../../scripts/run_inflection_shadow.py#L238-L259)、[main の呼出し](../../scripts/run_inflection_shadow.py#L278-L287)、[inflection_shadow.yml の Commit ステップ](../../.github/workflows/inflection_shadow.yml#L77-L86)。
+- **仮説と検証方法:**
+  1. A: `pending` の作成が snapshot 作成より後（High）→ `persist_report` の latest 書込みを失敗させる fake で、次回 `_deliver_digest` の結果を確認。
+  2. B: 状態ファイル不正で `main` が例外終了する（High）→ 不正な `digest_state.json` を置いた一時ディレクトリで `_deliver_digest` を呼び、例外の伝播を確認。
+  3. B: snapshot が commit されないのは workflow 側の条件（High）→ Commit ステップの `if` を静的確認。
+- **修正方針の候補（未確定）:** A は snapshot 作成と同時（前）に `pending` を確定する順序の見直し。B は通知状態の例外を scan の成否から切り離す（ステータスとして記録）、または Commit ステップを scan 失敗時も snapshot があれば実行する。exactly-once は保証しない前提を維持。
+- **受入条件:** A の fake で次回の通常実行が通知する。B の不正状態でも snapshot が保存・commit 対象になり、状態の異常はステータスで分かる。
 
-ただし、
+## ISSUE-07: learning の超過収益だけベンチマークコストが異なる
 
-- 購入日
-- entry price
-- stop
-- position固有状態
+- **出典 / 重大度:** Claude 追加調査 / 低〜中
+- **現象:** learning は `paired_benchmark_returns(..., round_trip_cost_pct=0.2)` でベンチマーク側にも 0.2% を課す。forward と historical は 0.05%（`BENCHMARK_ROUND_TRIP_COST_PCT`）で、文書（project-overview）にも 0.05% と記載。
+- **影響:** 同じ取引でも learning の超過収益が 0.15pt 高い。B06 の外れ率（超過収益 ≤ 0 を外れとする）と、昇格判定の「平均超過収益の符号」が楽観側にずれる。
+- **根拠箇所:** [inflection_learning.py:40](../../src/evaluation/inflection_learning.py#L40)、[同:340-344](../../src/evaluation/inflection_learning.py#L340-L344)、[inflection_report.py:45](../../src/evaluation/inflection_report.py#L45)、[inflection_historical.py:482](../../src/evaluation/inflection_historical.py#L482)。
+- **仮説と検証方法:**
+  1. 意図しない不一致（Med）→ git 履歴・過去の要件書（REQ の learning 移植時）で、ベンチマークコストを意図して分けた記録があるか確認。
+  2. 意図した差（Low）→ 記録があれば文書に明記するだけで済む。
+- **修正方針の候補（未確定）:** 意図しない差なら learning も `BENCHMARK_ROUND_TRIP_COST_PCT` を使う。意図した差なら文書化。
+- **受入条件:** 同一取引で learning と forward の超過収益の定義が一致する（または差が文書化されている）。learning 指標の変化を記録。
 
-などの取引固有計算は共有しないでください。
+## ISSUE-08: 失敗通知ジョブの依存前提（Q01）
 
-原則として、
+- **出典 / 重大度:** Codex 最終監査（Q01）/ 低〜中
+- **現象:** `check_workflow_health.py` は `provider_output.py` 経由で `requests` に依存するが、4 つの `notify-failure` ジョブは依存を導入しない。no-site の Python では起動前に `ModuleNotFoundError: requests` で exit 1。hosted runner に偶然入っている package に依存している。
+- **根拠箇所:** [check_workflow_health.py:19-20](../../scripts/check_workflow_health.py#L19-L20)、[provider_output.py:13](../../src/data/provider_output.py#L13)、各 workflow の `notify-failure` ジョブ。
+- **仮説と検証方法:** `python -B -S scripts/check_workflow_health.py --help` の終了コードを確認（Codex は exit 1）。
+- **修正方針の候補（未確定）:** 失敗通知の経路を標準ライブラリだけで動かす（`suppress_provider_output` の依存を切り離す）、またはジョブで依存を導入する。障害時に動く経路なので依存は少ない方がよい。
+- **受入条件:** no-site 実行で起動できる。実 Actions 上の確認は integration 未確認として残す。
 
-**市場データ取得はticker単位で共有  
-取引判定はposition単位で独立**
+## ISSUE-09: 障害分類の消失（Q07）
 
-という境界にしてください。
+- **出典 / 重大度:** Codex 最終監査（Q07）+ Claude 補足 / 低
+- **現象:**
+  - Monitor の `fetch_today_bars` / `fetch_session_bars` は既知の失敗（timeout・429・認証）を `None` にし、呼出し側が diagnostics を渡さないため区別できない（stale / incomplete に畳まれる）。
+  - forward の必須価格・coverage の終端は、蓄積した原因を返す前に汎用の `RuntimeError` になる。
+  - （Claude 補足）`classify_provider_failure` は `KeyError` / `ValueError` を一律 validation に分類するため、自前コードのバグも「データの問題」として握られ得る。
+- **根拠箇所:** [live_quote.py:209-264](../../src/data/live_quote.py#L209-L264)、[run_position_monitor.py:367-374](../../scripts/run_position_monitor.py#L367-L374)、[forward_prices.py:233-237](../../src/data/forward_prices.py#L233-L237)、[provider_output.py:30-48](../../src/data/provider_output.py#L30-L48)。
+- **仮説と検証方法:** fake provider で timeout / 429 / 認証失敗を起こし、Monitor の最終行・公開ログに分類が残るか確認。
+- **修正方針の候補（未確定）:** Monitor の呼出しで diagnostics を渡し、行の `error` に安全な分類だけを残す。forward の終端例外に分類件数を含める。公開ログの保護（Q02）を維持。
+- **受入条件:** 分類が最終結果または公開ログで区別できる。ticker・URL・本文は出ない。
 
-異なる購入日のpositionが同じtickerに存在しても結果が変わらないことをテストしてください。
+## ISSUE-10: 日次 scan workflow に main ブランチの限定が無い
 
----
+- **出典 / 重大度:** Claude 追加調査 / 低
+- **現象:** Monitor・Watchdog は `if: github.ref == 'refs/heads/main'` で限定しているが、日次 scan の `scan` ジョブには無い。別ブランチから手動実行すると、本番 secret で scan を回して Slack に通知し、そのブランチへ snapshot を push する。通知状態はブランチごとなので同日の通知が重複する。同じ日付の snapshot を後で main に取り込むと衝突する。
+- **根拠箇所:** [inflection_shadow.yml:14-28](../../.github/workflows/inflection_shadow.yml#L14-L28)。
+- **仮説と検証方法:** workflow の静的確認（既存の `tests/test_workflow_reliability.py` の仕組みで照合可能）。
+- **修正方針の候補（未確定）:** `scan` ジョブを main に限定する。ブランチでの動作確認が必要なら dry-run 相当の別経路を用意する。
+- **受入条件:** 静的テストで main 以外では scan ジョブが実行されない。
 
-## 2. Sheets接続
+## ISSUE-11: `test.yml` の token 権限が暗黙（Q05）
 
-同じrun内でread / writeごとに不要な再接続をしている場合は、安全に共有できる範囲で削減してください。
+- **出典 / 重大度:** Codex 最終監査（Q05）/ 低
+- **現象:** `test.yml` に workflow / job の `permissions` 指定が無く、実効権限がリポジトリ既定値に依存する。既存の静的テストは明示的な write 付与しか検出できない。
+- **根拠箇所:** [.github/workflows/test.yml](../../.github/workflows/test.yml)、`tests/test_workflow_reliability.py`。
+- **修正方針の候補（未確定）:** `permissions: contents: read` を明示し、静的テストで「全 workflow に明示的な permissions がある」ことを確認する。
+- **受入条件:** 静的テストが PASS。
 
-ただし、
+## ISSUE-12: 外部通信拒否 fixture の範囲（Q10）
 
-- retry境界
-- 認証エラー
-- batch更新
-- Q04通知状態
-- C07 writer排他
+- **出典 / 重大度:** Codex 最終監査（Q10）/ 低
+- **現象:** `tests/conftest.py` は Python の socket（connect / getaddrinfo）だけを止める。yfinance が使う curl_cffi のネイティブ通信（`Curl.perform`）は止まらない。今回、実通信は観測されていない。
+- **根拠箇所:** [tests/conftest.py](../../tests/conftest.py)。
+- **修正方針の候補（未確定）:** curl_cffi の送信関数（または yfinance のセッション生成）もテスト時に拒否する。拒否試行の計数は既存の仕組みに合わせる。
+- **受入条件:** curl_cffi 経由の送信試行がテストで拒否・計数される。全テストが PASS。
 
-を壊さないでください。
+## ISSUE-13: 価格キャッシュの直書き（Q09 の取り残し）
 
-長寿命なグローバルconnectionや新しいconnection pool基盤は導入しないでください。
+- **出典 / 重大度:** Claude 追加調査 / 低
+- **現象:** `artifacts/price_cache.pkl` を `path.write_bytes(pickle.dumps(...))` で直接書く。中断すると壊れたファイルが残る。読込側は例外時に全件取得へ戻るので安全側だが、Q09（atomic write）を FIXED とした記述とは食い違う。
+- **根拠箇所:** [forward_prices.py:138-142](../../src/data/forward_prices.py#L138-L142)。
+- **修正方針の候補（未確定）:** 既存の `atomic_write` を使う（バイナリ対応が必要なら最小限の拡張）。
+- **受入条件:** 書込み途中の失敗で旧ファイルが残る。
 
-原則として1 run内だけで共有してください。
+## ISSUE-14: レポート内の「up/down」の二重定義
 
----
-
-## 3. 評価系列・統計の再計算
-
-複数の、
-
-- horizon
-- cost
-- exit condition
-- benchmark
-- report
-
-で同じ価格系列の、
-
-- 正規化
-- index調整
-- 日付変換
-- 共通統計
-
-を繰り返している場合、安全に共有できるimmutableな中間結果だけ共有してください。
-
-可変DataFrame等を共有して、後続処理が相互に影響する設計にはしないでください。
-
-必要ならcopyやimmutable representationを使ってください。
-
----
-
-# Q08で禁止する最適化
-
-今回は以下を導入しないでください。
-
-- 永続cacheの新設
-- Redis等の外部cache
-- 新しいDB
-- multiprocessing
-- 大規模なasync化
-- providerへの並列大量アクセス
-- 複雑なmemoization framework
-- 新しい依存package
-- 全面アーキテクチャ変更
-
-Stage 4Cでは、
-
-**低リスクなrun内共有**
-
-に限定してください。
-
----
-
-# Q08の結果同等性
-
-最適化前後で、正常入力に対して最低限以下が完全一致することを確認してください。
-
-- candidate
-- EARLY_CANDIDATE
-- classification
-- score
-- feature値
-- stop判定
-- notification対象
-- outcome
-- portfolio
-- benchmark
-- learning入力
-- learning出力
-
-順序について既存仕様上保証されているものは順序も維持してください。
-
-浮動小数点計算順序を変えて結果が微妙に変化する最適化も避けてください。
-
----
-
-# Q08の性能比較
-
-可能な範囲で、修正前後を同一fakeデータで比較してください。
-
-最低限、
-
-- provider call数
-- Sheets connection数
-
-は具体的な数値を出してください。
-
-可能なら、
-
-- 実行時間
-- peak memory
-
-も比較してください。
-
-ただし、ローカル実行時間の小さな差を性能改善の根拠として過度に解釈しないでください。
-
-主な評価基準は、
-
-**重複処理回数が構造的に減ったか**
-
-としてください。
-
-最適化効果がほとんどない箇所は、無理に変更せず「変更不要」と判断して構いません。
+- **出典 / 重大度:** Claude 追加調査 / 低
+- **現象:** 同じ group report 内で、`regime_sample_counts` は 20 日騰落で up/down を判定し（[inflection_report.py:72-79](../../src/evaluation/inflection_report.py#L72-L79)）、`regime_breakdown.trend` は 200 日移動平均で判定する（[regime.py](../../src/evaluation/regime.py)）。同じラベルで意味が違う。
+- **修正方針の候補（未確定）:** 値は変えず、キー名または説明文で定義の違いを明示する（例 `regime_sample_counts` に定義を併記）。
+- **受入条件:** レポート上で定義の違いが分かる。数値は不変。
 
 ---
 
-# B09 — 現在の実装と文書の整合
+## 確認して問題が無かった主な領域（参考）
 
-Q08完了後、現在のコードを正としてドキュメントを確認してください。
-
-古い文書を機械的に全部書き換えるのではなく、
-
-**現行仕様を説明する文書だけを更新してください。**
-
-過去の、
-
-- audit report
-- analysis report
-- implementation report
-- research memo
-
-は、その時点の記録として基本的に変更しないでください。
-
----
-
-# B09で確認する項目
-
-最低限以下を現在実装と照合してください。
-
-## セットアップ
-
-- 必須環境変数
-- J-Quants関連設定
-- 暗号化snapshot用key
-- Slack
-- Google Sheets
-- その他secret
-
-特にStage 4Aで追加した、
-
-- `JQUANTS_PLAN`
-- `JQUANTS_DATA_DELAY_WEEKS`
-- 設定validation
-
-を反映してください。
-
----
-
-## GitHub Actions
-
-現在の、
-
-- workflow一覧
-- schedule
-- workflow_dispatch
-- concurrency
-- permissions
-- secret利用
-- uv.lock利用
-- Action SHA固定
-
-を反映してください。
-
-古い時刻・古い権限・古い依存導入方法を残さないでください。
-
----
-
-## Forward Validation
-
-Stage 4Bで変更した、
-
-- secret不要PR検証
-- secret必須評価の分離
-- fork PRの扱い
-
-を反映してください。
-
----
-
-## Position Monitor
-
-現在の、
-
-- 実行時間
-- stop回収
-- checkpoint
-- incomplete判定
-- branch / writer制限
-- concurrency
-- 通知状態
-
-を反映してください。
-
----
-
-## 通知
-
-Stage 4BのQ04について、
-
-- snapshot生成
-- 保存
-- Git反映
-- Slack通知
-- 通知状態
-- 明示再送
-
-が別状態であることを説明してください。
-
-**Exactly-onceを保証すると記載しないでください。**
-
-runner停止や、Slack受理後・状態保存前の停止などでは重複可能性が残ることを必要な範囲で明記してください。
-
----
-
-## Watchdog
-
-Q01で追加済みの、
-
-- workflow失敗
-- 未起動
-- snapshot欠落
-- 一般障害通知
-
-の現在仕様を反映してください。
-
----
-
-## provider障害
-
-Q07で導入した安全な障害分類、
-
-- timeout
-- 429
-- HTTP 5xx
-- protocol異常
-- empty
-- validation
-- authentication
-- unexpected error
-
-などについて、運用者が理解する必要がある範囲だけ記載してください。
-
-実装詳細を過剰にドキュメント化する必要はありません。
-
----
-
-## atomic write
-
-snapshotや評価成果物がatomic writeされることを必要な範囲で反映してください。
-
-ただし複数成果物全体がtransactionalであるとは記載しないでください。
-
----
-
-## EDINET
-
-現在のEDINETについて、
-
-- コード接続済み
-- test済み
-- live利用
-- historical利用
-- learning利用
-- 実API確認済み / 未確認
-
-を実装に基づいて正確に整理してください。
-
-「実装済み」と「本番で実証済み」を同一視しないでください。
-
----
-
-# 状態表記
-
-可能な場合、機能状態を以下のように区別してください。
-
-- implemented
-- tested with fake / unit test
-- integration not verified
-- production enabled
-- production unverified
-
-日本語文書なら自然な日本語表現にして構いません。
-
-重要なのは、
-
-**コードがあることと、実サービスで確認済みであることを区別すること**
-
-です。
-
----
-
-# B09で変更してはいけないもの
-
-過去時点の事実を記録している、
-
-- repository audit
-- Stage 1〜4実装報告
-- 過去の分析メモ
-- 過去のbacktest結果
-
-を現在仕様に合わせて書き換えないでください。
-
-現行仕様を説明する、
-
-- project overview
-- setup
-- operations
-- README相当
-
-の文書を中心に更新してください。
-
-判断に迷う文書は変更せず報告してください。
-
----
-
-# Harness関連
-
-現在、
-
-Harness正式入口が既存の `plan.md / proposal.md` の全面差替え判定で停止する問題があります。
-
-これはStage 4C本体とは別問題として扱ってください。
-
-Stage 4Cの「ついで修正」としてHarness infrastructureやinstallerを変更しないでください。
-
-ただし今回の変更について、
-
-- task対象minimal diff guard
-- `git diff --check`
-- review
-
-など、利用可能な既存検証は実施してください。
-
-Harness正式入口が同じ既存理由で停止する場合は、その事実だけ報告し、Stage 4C実装の失敗扱いにはしないでください。
-
-新しいBlocking原因が発生した場合は別途報告してください。
-
----
-
-# Q10 — Stage 4C分の境界テスト
-
-Stage 4Aで導入した外部通信禁止fixtureを維持してください。
-
-Stage 4Cでは特に以下を回帰テストとして固定してください。
-
-- 同一ticker複数positionでも価格取得1回
-- 異なる購入日のposition結果維持
-- 共有DataFrame等によるcross contaminationがない
-- provider失敗が他positionへ誤伝播しない
-- Sheets共有後も既存結果維持
-- 最適化前後の評価結果一致
-
-B09については、文書だけの値を固定する目的で大量のテストを追加する必要はありません。
-
-workflow時刻や重要設定など、自動照合が合理的な既存仕組みがあれば利用してください。
-
----
-
-# baseline条件
-
-Q08は原則として、
-
-**baseline-preserving**
-
-でなければなりません。
-
-正常入力に対する戦略結果が1件でも変化した場合は、その原因を調査してください。
-
-「性能改善のため」という理由だけで結果差を許容しないでください。
-
-B09は文書変更のみなので、runtime baselineは変化しないことを期待します。
-
----
-
-# 禁止事項
-
-Stage 4Cでは以下を行わないでください。
-
-- Growth Opportunity
-- G01〜G07
-- 新特徴量
-- スコア変更
-- 閾値変更
-- 重み変更
-- Q06の10件 / 5日 / 50%閾値変更
-- ML framework導入
-- 新provider
-- 自動売買
-- 自動発注
-- 永続cache追加
-- 大規模並列化
-- 無関係な依存更新
-- mypy既知31件のついで修正
-- archive変更
-- 過去snapshot変更
-- 過去レポートの歴史修正
-- Harness infrastructure修正
-- 全面リファクタリング
-
----
-
-# 最終検証
-
-Stage 4C完了後、以下を実行してください。
-
-- Q08対象テスト
-- Q10 Stage 4C境界テスト
-- Stage 4A回帰
-- Stage 4B回帰
-- 第1〜第3段階回帰
-- 全テスト
-- coverage
-- ruff
-- mypy
-- 外部通信試行数
-- `git diff --check`
-- task対象minimal diff guard
-- 保存済みsnapshot差分
-- archive差分
-- uv.lock差分
-
-mypyについては、
-
-- 既知baseline 31件
-- 新規0件
-
-を確認してください。
-
-Stage 4Cでは依存変更を想定していないため、`uv.lock` は原則差分なしを期待します。
-
----
-
-# Stage 4C完了報告
-
-完了後はGrowthへ進まず停止してください。
-
-以下を報告してください。
-
-## 1. Q08
-
-- 修正前の重複処理
-- 修正内容
-- 変更ファイル
-- 追加テスト
-- baseline一致結果
-
-## 2. 性能比較
-
-最低限、
-
-- provider call数 before / after
-- Sheets connection数 before / after
-
-可能なら、
-
-- 実行時間
-- peak memory
-
-も記載してください。
-
-変更しなかった最適化候補があれば、その理由も書いてください。
-
-## 3. B09
-
-更新した文書ごとに、
-
-- 何が古かったか
-- 現在何に合わせたか
-
-を整理してください。
-
-過去記録として意図的に変更しなかった文書も明記してください。
-
-## 4. baseline
-
-Q08:
-
-- baseline-preserving / changing
-
-B09:
-
-- runtime baselineへの影響
-
-を報告してください。
-
-正常入力の投資結果が完全一致したか明記してください。
-
-## 5. 検証結果
-
-- 全テスト件数
-- failed
-- coverage
-- ruff
-- mypy総件数
-- mypy新規件数
-- 最終対象回帰件数
-- 外部通信試行数
-- snapshot変更数
-- archive変更数
-- uv.lock差分
-- `git diff --check`
-- minimal diff guard
-
-## 6. 未確認事項
-
-以下をコード上の未解決問題と混同せず、integration / production未確認事項として整理してください。
-
-- 実GitHub Actions
-- 実Slack
-- 実provider
-- 実Google Sheets
-- 実Git push
-- runner強制停止
-- GitHub Actions基盤障害
-
-## 7. Harness
-
-正式入口のBlockingが、
-
-- 既存のplan.md / proposal.md問題と同一か
-- 今回新しく発生した問題か
-
-を区別してください。
-
-既存問題だけなら、Stage 4CのBlockingとは扱わないでください。
-
-## 8. 第4段階最終状態
-
-以下について完了 / 未完了を整理してください。
-
-- B05
-- B06
-- B09
-- B10
-- Q03
-- Q04
-- Q05
-- Q06
-- Q07
-- Q08
-- Q09
-- Q10
-
-そのうえで、監査で指摘されたCritical / Bug / Qualityについて、まだ未対応の項目が残っていないか確認してください。
-
-ただし未対応が見つかっても、この依頼の範囲を超えて勝手に実装しないでください。
-
-## 9. 次フェーズへの引き継ぎ
-
-Growthへ進む前に必要な、
-
-- 保守フェーズ最終baseline確定
-- integration / production smoke test
-- Growth候補評価
-
-について、実施すべき事項だけ整理してください。
-
-**Growth Opportunity自体の実装は開始しないでください。**
-
-詳細レポートを、
-
-`.harness/reports/reliability-stage4c-2026-10-12.md`
-
-へ作成してください。
+historical の as_of 時点の split 補正と財務の締切（look-ahead なし）、exit rule とポートフォリオの約定順序、atomic write と snapshot 暗号化、forward の snapshot 読込、Watchdog の期待実行判定、Sheets の run 内共有、市場別ベンチマーク名と実データ `MktNm` の一致。

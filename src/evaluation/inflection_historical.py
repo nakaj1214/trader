@@ -471,11 +471,12 @@ def h60_excess_pairs(
     signals: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
     benchmark_history: pd.DataFrame,
+    market_calendar: pd.DatetimeIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Independent (one open position per ticker), completed h60 trades with their TOPIX-ETF excess return."""
     trades = simulate_signals(
         signals, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
-        market_calendar=pd.DatetimeIndex(benchmark_history.index),
+        market_calendar=pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar),
     )
     independent = select_non_overlapping_trades(trades)
     paired = paired_benchmark_returns(
@@ -608,18 +609,21 @@ def _lag_report(
     benchmark_history: pd.DataFrame,
     *,
     min_independent: int,
+    market_calendar: pd.DatetimeIndex | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    calendar = pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar)
     groups: dict[str, Any] = {}
     for name in GROUPS:
         subset = [signal for signal in signals if signal["classification"] == name]
         groups[name.lower()] = _build_group_report(
-            subset, histories, histories, benchmark_history, [str(signal["signal_date"]) for signal in subset]
+            subset, histories, histories, benchmark_history, [str(signal["signal_date"]) for signal in subset],
+            market_calendar=calendar,
         )
     early = [signal for signal in signals if signal["classification"] == "EARLY_CANDIDATE"]
-    pairs = h60_excess_pairs(early, histories, benchmark_history)
+    pairs = h60_excess_pairs(early, histories, benchmark_history, calendar)
     early_trades = simulate_signals(
         early, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
-        market_calendar=pd.DatetimeIndex(benchmark_history.index),
+        market_calendar=calendar,
     )
     report = {
         "signal_count": len(signals),
@@ -628,7 +632,7 @@ def _lag_report(
             early,
             early_trades,
             histories,
-            pd.DatetimeIndex(benchmark_history.index),
+            calendar,
             initial_capital_jpy=PORTFOLIO_INITIAL_CAPITAL_JPY,
             max_positions=PORTFOLIO_MAX_POSITIONS,
             position_size_pct=PORTFOLIO_POSITION_SIZE_PCT,
@@ -661,6 +665,8 @@ def build_backtest_report(
     if BENCHMARK_TICKER not in histories:
         raise RuntimeError(f"benchmark {BENCHMARK_TICKER} is not in the cached daily bars")
     benchmark_history = histories[BENCHMARK_TICKER]
+    # Every cached market session, so a day the benchmark and a stock both lack still counts as missing.
+    market_calendar = pd.DatetimeIndex(pd.to_datetime(data.panel.sessions))
     collected = collect_signals(
         data,
         days,
@@ -679,6 +685,7 @@ def build_backtest_report(
             histories,
             benchmark_history,
             min_independent=min_independent,
+            market_calendar=market_calendar,
         )
         if not include_trades:
             lag_reports[lag] = _summary_only(lag_reports[lag])

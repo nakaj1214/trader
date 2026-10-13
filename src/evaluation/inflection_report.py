@@ -320,9 +320,12 @@ def _build_group_report(
     market_benchmarks: dict[str, pd.DataFrame] | None = None,
     ticker_markets: dict[tuple[str, str], str] | None = None,
     market_benchmark_error: str | None = None,
+    market_calendar: pd.DatetimeIndex | None = None,
 ) -> dict[str, Any]:
     horizons: dict[str, object] = {}
-    calendar = pd.DatetimeIndex(benchmark_history.index)
+    # Every market session when the caller knows them; otherwise the benchmark's own dates (forward / learning
+    # require the benchmark to cover all sessions, so there the two are the same).
+    calendar = pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar)
     prepared_calendar = prepare_calendar(calendar)
     tickers = dict.fromkeys(str(signal["ticker"]) for signal in signals)
     prepared_histories = {

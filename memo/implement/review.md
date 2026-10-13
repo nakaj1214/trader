@@ -220,3 +220,43 @@ VERDICT: PASS
 - 前回Blockingは解消済み。通知状態を `dashboard/data/inflection/digest_state.json` の `pending` / `succeeded` としてrun間で保持し、通常再実行、明示再送、旧snapshot、状態保存・Git push失敗の境界を実装した。
 - 最終差分を、権限・secret、通知消失／重複、atomic write、provider例外の伝播、テストの外部副作用の順に限定レビューした。追加のBlockingはない。
 - 全1016テストPASS、coverage 95.77%、ruff PASS、mypyは既知31件のみ（新規0）。対象回帰200件も最終のprovider診断接続後にPASSし、外部通信試行は0。Action 5リポジトリのタグSHAは公式 `git ls-remote --tags` で再確認した。
+
+## 現行 plan / proposal の整合レビュー（2026-10-12）
+
+VERDICT: CHANGES REQUIRED（今回の実装は未着手）
+
+### Blocking
+
+**指摘1: plan は実装済みの Stage 4B、proposal は未実装の Stage 4C を対象としており、実装範囲が一致しない。**
+
+- 対象: [plan.md](plan.md:1) のタイトル・スコープ・完了条件と、[proposal.md](proposal.md:1) の REQ-068〜070。
+- 根拠: plan は REQ-062〜067 の実装を指示し、Stage 4C（Q08/B09）を明示的に対象外としている。proposal は Q08 の重複処理削減、B09 の文書整合、REQ-070 の境界テストを要求している。Stage 4B は [完了報告](../../.harness/reports/reliability-stage4b-2026-10-12.md) に完了と記録され、現行コードでも `scripts/run_inflection_shadow.py` の通知状態・再送、`src/data/atomic_write.py`、workflow の SHA 固定・lockfile 導入・PR secret 分離を確認した。
+- 未実装側の証拠: `scripts/run_position_monitor.py:329,336` は保有行ループ内で価格履歴・当日足を取得し、`src/data/sheets_client.py:37-49` は `_worksheet()` 呼出しごとに認証・接続する。Stage 4C の計測・共有範囲・変更順序・同等性検証は現行 plan に含まれていない。
+- 影響: plan に従っても proposal の受入条件を満たせず、proposal に従えば plan が除外した別フェーズを実装することになる。
+- 必要な修正: plan を現在の proposal（REQ-068〜070）に合わせ、計測を先に行う順序、run 内だけの共有、position 固有処理の維持、文書更新範囲、baseline 完全一致と対象回帰の検証方針を示す。Stage 4B は完了済みの baseline として扱う。コードレベルの設計詳細は実装時に決めてよい。
+- Blocking Qualification Gate: 条件1=YES（対象フェーズと実装範囲が相反する）、2=NO、3=NO、4=YES（現行 plan では REQ-068〜070 を満たせない）、5=YES（性能改善・文書更新と CI・通知・保存では変更範囲と進め方が異なる）。分類根拠は条件1・4・5。
+
+### 今回の確認範囲
+
+- 現行 plan / proposal、Stage 4B 完了報告、上記の実装と既存テストを照合した。過去の PASS・テスト件数は既存報告の記録であり、今回の再実行結果ではない。
+- 今回の変更は本レビューへの追記のみ。計画・要件書・コード・workflow・テストは変更せず、実サービスへの接続・通知・永続データ更新も行っていない。
+
+### 第2回レビュー（Stage 4C、2026-10-12）
+
+VERDICT: READY（実装開始）
+
+- 前回のBlockingは解消済み。plan / proposal とも REQ-068〜070 を対象とし、計測先行、run 内だけの共有、position 固有処理の維持、現行文書だけの更新、baseline 完全一致・外部通信禁止の検証方針が揃っている。Stage 4A/4B は完了済みの baseline として扱われている。
+- 現行の取得・Sheets 接続・評価関数を照合し、追加の計画Blockingはない。実装詳細は対象コードと計測結果に基づいて決める。
+- Implementation note: Step 6 の通知順序の記述は現行コードに合わせて文書化する。実際の `run_inflection_shadow.main()` は snapshot/latest 保存→通知状態保存・Slack→workflow の commit/push。文書側の修正で解決できるため、計画Blockingではない。
+- Harness 正式入口は `verification commands are not initialized`、終了コード2で停止した。今回観測した原因は文書の全面差替え判定ではない。Harness設定は変更せず、CIの既存コマンドで本タスクを検証する。要件の実装・検証方法を変更する必要はないため非Blocking。
+
+### Stage 4C 実装・最終レビュー（2026-10-12）
+
+VERDICT: PASS（REQ-068〜070 実装完了）
+
+- fake/syntheticのbeforeを保存してから、Monitorのticker単位の生履歴・当日足、Sheetsのrun内接続、評価レポートの整形済み系列・カレンダーを共有した。position別の分割補正・回収・stop・通知と可変copy、失敗分離、scope終了時の破棄を維持した。
+- provider取得は4 position / 2 tickerで日次4→2・当日足4→2、Sheets認証／openは3→1。評価50 signalでは系列整形9,206→1,708、カレンダー正規化1,800→401。全report・portfolio・learningは値とキー順まで一致（learningの生成時計だけbefore時刻に固定）。準備済みデータ保持で計測peak memoryは約1.66MB増える。
+- 現行仕様文書の暗号鍵・設定・Monitor時刻・通知状態／再送／Git反映順序・EDINETの確認段階等を現行コードに合わせた。過去記録・workflow・設定値は変更していない。
+- 独立差分レビューはPASS。共有データの書換え、障害伝播、購入日別履歴、Sheetsの認証／retry／writer制限、文書の過剰主張を確認し、Blockingなし。最後に購入日前後の分割と独立取得の完全一致テストを強化し、同じreviewerの限定再確認もPASS。
+- 全1032テストPASS、coverage95.74%、外部通信試行0。対象回帰はMonitor78・評価112・Sheets13件、最後の分割同等性テスト再実行もPASS。ruff PASS、mypyはpath/message単位で既知31件と一致し新規0。snapshot・archive・uv.lockの今回差分0、diff-check／minimal diff guard PASS。
+- 詳細・変更不要候補・実環境未確認事項は [Stage 4C完了報告](../../.harness/reports/reliability-stage4c-2026-10-12.md) に記録した。Growthには進まず停止する。

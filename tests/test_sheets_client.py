@@ -4,7 +4,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.data.sheets_client import STATUS_COLUMNS, read_holdings, read_status, write_status
+from scripts import run_position_monitor as monitor
+from src.data.sheets_client import STATUS_COLUMNS, read_holdings, read_status, shared_spreadsheet, write_status
 
 
 def _environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,3 +148,95 @@ def test_a_row_without_a_warning_time_writes_an_empty_cell(monkeypatch: pytest.M
 
     rows = worksheet.spreadsheet.batch_update.call_args.args[0]["requests"][1]["updateCells"]["rows"]
     assert rows[1]["values"][list(STATUS_COLUMNS).index("last_warned_at")] == {}
+
+
+def test_shared_run_reuses_connection_with_identical_reads_and_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    worksheet = Mock(id=123, row_count=100, col_count=30)
+    worksheet.get_all_records.return_value = [{"ticker": "1111.T"}]
+    client = _client(worksheet)
+    with (
+        patch("src.data.sheets_client.Credentials.from_service_account_info", return_value=Mock()),
+        patch("src.data.sheets_client.gspread.authorize", return_value=client) as authorize,
+    ):
+        before = [read_status(), read_holdings()]
+        write_status(before[1])
+        batch = worksheet.spreadsheet.batch_update.call_args.args[0]
+        assert authorize.call_count == client.open_by_key.call_count == 3
+        authorize.reset_mock()
+        client.open_by_key.reset_mock()
+        with shared_spreadsheet():
+            assert [read_status(), read_holdings()] == before
+            write_status(before[1])
+        assert authorize.call_count == client.open_by_key.call_count == 1
+        assert worksheet.spreadsheet.batch_update.call_args.args[0] == batch
+        read_status()
+        assert authorize.call_count == client.open_by_key.call_count == 2
+
+
+def test_shared_connection_is_lazy_and_retries_failed_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    worksheet = Mock()
+    worksheet.get_all_records.return_value = []
+    client = _client(worksheet)
+    with (
+        patch("src.data.sheets_client.Credentials.from_service_account_info", return_value=Mock()),
+        patch("src.data.sheets_client.gspread.authorize", side_effect=[RuntimeError("auth failed"), client]) as authorize,
+        shared_spreadsheet(),
+    ):
+        authorize.assert_not_called()
+        with pytest.raises(RuntimeError, match="auth failed"):
+            read_status()
+        read_holdings()
+        read_status()
+        assert authorize.call_count == 2
+
+
+def test_failed_open_and_write_do_not_leak_a_connection_to_next_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    worksheet = Mock(id=123, row_count=100, col_count=30)
+    worksheet.get_all_records.return_value = []
+    client = _client(worksheet)
+    spreadsheet = client.open_by_key.return_value
+    client.open_by_key.side_effect = [RuntimeError("open failed"), spreadsheet, spreadsheet]
+    worksheet.spreadsheet.batch_update.side_effect = RuntimeError("batch failed")
+    with (
+        patch("src.data.sheets_client.Credentials.from_service_account_info", return_value=Mock()),
+        patch("src.data.sheets_client.gspread.authorize", return_value=client) as authorize,
+    ):
+        with pytest.raises(RuntimeError, match="batch failed"), shared_spreadsheet():
+            with pytest.raises(RuntimeError, match="open failed"):
+                read_status()
+            read_holdings()
+            write_status([])
+        with shared_spreadsheet():
+            read_status()
+        assert authorize.call_count == client.open_by_key.call_count == 3
+        worksheet.clear.assert_not_called()
+        worksheet.update.assert_not_called()
+
+
+def test_shared_scope_preserves_production_writer_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/feature")
+    with patch("src.data.sheets_client.gspread.authorize") as authorize, shared_spreadsheet():
+        with pytest.raises(RuntimeError, match="production writer"):
+            write_status([])
+        authorize.assert_not_called()
+
+
+def test_empty_monitor_uses_one_connection_per_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    _environment(monkeypatch)
+    worksheet = Mock(id=123, row_count=100, col_count=30)
+    worksheet.get_all_records.return_value = []
+    client = _client(worksheet)
+    with (
+        patch("src.data.sheets_client.Credentials.from_service_account_info", return_value=Mock()),
+        patch("src.data.sheets_client.gspread.authorize", return_value=client) as authorize,
+    ):
+        assert monitor.run(dry_run=True) == 0
+        assert authorize.call_count == client.open_by_key.call_count == 1
+        assert worksheet.get_all_records.call_count == 2
+        assert worksheet.spreadsheet.batch_update.call_count == 1
+        assert monitor.run(dry_run=True) == 0
+        assert authorize.call_count == client.open_by_key.call_count == 2

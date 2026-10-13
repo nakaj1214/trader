@@ -1,8 +1,8 @@
-# 実装要件書（REQ-068〜069: Stage 4C — 重複処理の削減と文書整合）
+# 実装要件書（REQ-068〜070: Stage 4C — 重複処理の削減と文書整合）
 
 > このファイルは create-plan の入力です。
 > 出典: [memo/local/tmp.md](../local/tmp.md)（Stage 4C 依頼文）、`.harness/reports/repository-audit-2026-10-08.md` の Q08/B09、`.harness/reports/reliability-stage4a-2026-10-09.md`、Stage 4B 報告（`.harness/reports/reliability-stage4b-2026-10-12.md` があれば参照）。
-> 以前の要件書: REQ-001〜067 → それぞれ `proposal_req*.md`（直前の Stage 4B は `proposal_req062-067.md`）
+> 以前の要件書: REQ-001〜067 → 実装済みのため退避ファイルは削除済み。必要なら git 履歴（直前の Stage 4B は dev5 コミットの `proposal.md` / `plan.md`）から復元できる。
 
 ## 背景・スコープ
 

@@ -66,6 +66,24 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
     return result.sort_index()
 
 
+def prepare_price_series(
+    history: pd.DataFrame, columns: tuple[str, ...] = ("Open", "Close", "High", "Low"),
+) -> tuple[pd.Series, ...]:
+    """Normalize once per report; consumers receive independent copies."""
+    return tuple(_series(history, column) for column in columns)
+
+
+def copy_price_series(prepared: tuple[pd.Series, ...]) -> tuple[pd.Series, ...]:
+    copies = tuple(series.copy(deep=True) for series in prepared)
+    for series in copies:
+        series.index = series.index.copy(deep=True)
+    return copies
+
+
+def prepare_calendar(calendar: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    return pd.DatetimeIndex(calendar).tz_localize(None).normalize().drop_duplicates().sort_values()
+
+
 def _price_diagnostics(
     closes: pd.Series, calendar: pd.DatetimeIndex, required: pd.DatetimeIndex,
     metadata: Any = None,
@@ -107,9 +125,10 @@ def _price_diagnostics(
 def _evaluation_window(
     history: pd.DataFrame, opens: pd.Series, closes: pd.Series, signal_date: pd.Timestamp,
     holding_days: int, market_calendar: pd.DatetimeIndex | None,
+    prepared_calendar: pd.DatetimeIndex | None = None,
 ) -> tuple[pd.Timestamp | None, pd.Series, bool, dict[str, Any]]:
-    calendar = pd.DatetimeIndex(history.index if market_calendar is None else market_calendar)
-    calendar = calendar.tz_localize(None).normalize().drop_duplicates().sort_values()
+    calendar = (prepare_calendar(pd.DatetimeIndex(history.index if market_calendar is None else market_calendar))
+                if prepared_calendar is None else prepared_calendar.copy(deep=True))
     cutoff = calendar[-1] if len(calendar) else signal_date
     after_open = opens[(opens.index > signal_date) & (opens.index <= cutoff)] if not opens.empty else opens
     entry = pd.Timestamp(after_open.index[0]) if len(after_open) else None
@@ -246,6 +265,8 @@ def simulate_signal(
     apply_tax: bool = False,
     trailing_stop_pct: float | None = None,
     market_calendar: pd.DatetimeIndex | None = None,
+    prepared_series: tuple[pd.Series, ...] | None = None,
+    prepared_calendar: pd.DatetimeIndex | None = None,
 ) -> TradeResult:
     """Buy at next open and exit at the horizon or an optional trailing stop."""
     if holding_days < 1:
@@ -259,12 +280,10 @@ def simulate_signal(
     ticker = str(signal["ticker"])
     signal_date = pd.Timestamp(str(signal["signal_date"]))
     score = float(signal.get("score", 0.0))
-    opens = _series(history, "Open")
-    closes = _series(history, "Close")
-    highs = _series(history, "High")
-    lows = _series(history, "Low")
+    opens, closes, highs, lows = (prepare_price_series(history) if prepared_series is None
+                                 else copy_price_series(prepared_series))
     entry_date, window, has_full_horizon, diagnostics = _evaluation_window(
-        history, opens, closes, signal_date, holding_days, market_calendar
+        history, opens, closes, signal_date, holding_days, market_calendar, prepared_calendar=prepared_calendar,
     )
     entry_price = float(opens.loc[entry_date]) if entry_date is not None else None
     if entry_date is None or window.empty or (trailing_stop_pct is None and diagnostics["unevaluated_reason"]):
@@ -381,10 +400,15 @@ def simulate_signal(
 def simulate_signals(
     signals: Iterable[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
+    prepared_histories: dict[str, tuple[pd.Series, ...]] | None = None,
     **kwargs: Any,
 ) -> list[TradeResult]:
     return [
-        simulate_signal(signal, histories.get(str(signal["ticker"]), pd.DataFrame()), **kwargs)
+        simulate_signal(
+            signal, histories.get(str(signal["ticker"]), pd.DataFrame()),
+            prepared_series=prepared_histories.get(str(signal["ticker"])) if prepared_histories is not None else None,
+            **kwargs,
+        )
         for signal in signals
     ]
 

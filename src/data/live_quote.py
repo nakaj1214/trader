@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -24,6 +27,17 @@ JST = ZoneInfo("Asia/Tokyo")
 # yfinance TSE 1m bars lag ~15 min (measured 2026-10-01); 20 leaves one bar of slack.
 STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION = 20
 STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION = 60
+
+
+@dataclass
+class _SharedHistoryFrames:
+    earliest_dates: dict[str, str] = field(default_factory=dict)
+    frames: dict[str, pd.DataFrame | Exception] = field(default_factory=dict)
+
+
+_SHARED_HISTORY_FRAMES: ContextVar[_SharedHistoryFrames | None] = ContextVar(
+    "shared_history_frames", default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +103,32 @@ def _later_split_factor(ratios: dict[date, float], value_date: date, as_of: date
     return _positive(factor)
 
 
+@contextmanager
+def shared_split_history_frames() -> Iterator[None]:
+    """Share raw provider frames within one monitor run and discard them on exit."""
+    token = _SHARED_HISTORY_FRAMES.set(_SharedHistoryFrames())
+    try:
+        yield
+    finally:
+        _SHARED_HISTORY_FRAMES.reset(token)
+
+
+def configure_split_history_sharing(earliest_dates: dict[str, str]) -> None:
+    shared = _SHARED_HISTORY_FRAMES.get()
+    if shared is not None:
+        shared.earliest_dates = dict(earliest_dates)
+
+
+def _fetch_daily_history_frame(ticker: str, start: str) -> pd.DataFrame:
+    try:
+        with suppress_provider_output():
+            return yf.Ticker(ticker).history(
+                start=start, auto_adjust=False, actions=True, keepna=True, timeout=15,
+            )
+    except Exception as exc:  # noqa: BLE001 - retain causal type/status without exposing the provider body
+        raise ProviderFailure("daily_history", exc) from None
+
+
 def fetch_split_adjusted_history(
     ticker: str,
     entry_date: str,
@@ -98,13 +138,21 @@ def fetch_split_adjusted_history(
     purchase_date = date.fromisoformat(entry_date)
     current_date = _now_jst().date()
     adjusted_entry = _positive(entry_price)
-    try:
-        with suppress_provider_output():
-            history = yf.Ticker(ticker).history(
-                start=entry_date, auto_adjust=False, actions=True, keepna=True, timeout=15,
-            )
-    except Exception as exc:  # noqa: BLE001 - retain causal type/status without exposing the provider body
-        raise ProviderFailure("daily_history", exc) from None
+    shared = _SHARED_HISTORY_FRAMES.get()
+    provider_start = shared.earliest_dates.get(ticker, entry_date) if shared is not None else entry_date
+    if shared is not None and ticker in shared.earliest_dates:
+        cached = shared.frames.get(ticker)
+        if cached is None:
+            try:
+                cached = _fetch_daily_history_frame(ticker, provider_start)
+            except ProviderFailure as exc:
+                cached = exc
+            shared.frames[ticker] = cached
+        if isinstance(cached, Exception):
+            raise cached
+        history = cached
+    else:
+        history = _fetch_daily_history_frame(ticker, provider_start)
     if history.empty:
         if purchase_date < current_date:
             raise ValueError("daily history is missing for an existing position")
@@ -120,6 +168,16 @@ def fetch_split_adjusted_history(
     # only the user's raw entry price needs the later split ratios.
     frame = history.copy()
     frame.index = _jst_index(frame.index)
+    if provider_start != entry_date:
+        frame = frame.loc[frame.index.date >= purchase_date].copy()
+        if frame.empty:
+            if purchase_date < current_date:
+                raise ValueError("daily history is missing for an existing position")
+            return SplitAdjustedHistory(
+                adjusted_entry,
+                pd.Series(dtype=float),
+                pd.Series(dtype=float),
+            )
     if pd.Index(frame.index.date).has_duplicates:
         raise ValueError("daily history contains duplicate dates")
     row_dates = pd.Series(frame.index.date, index=frame.index)

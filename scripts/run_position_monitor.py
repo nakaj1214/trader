@@ -18,13 +18,21 @@ import requests
 from src.data.live_quote import (
     SplitAdjustedHistory,
     build_today_quote,
+    configure_split_history_sharing,
     fetch_session_bars,
     fetch_split_adjusted_history,
     fetch_today_bars,
+    shared_split_history_frames,
 )
 from src.data.market_calendar import TSE_CALENDAR
 from src.data.provider_output import safe_error_details, suppress_provider_output
-from src.data.sheets_client import assert_production_writer, read_holdings, read_status, write_status
+from src.data.sheets_client import (
+    assert_production_writer,
+    read_holdings,
+    read_status,
+    shared_spreadsheet,
+    write_status,
+)
 from src.data.validation import is_finite_number
 from src.monitoring.position_exit import (
     DEFAULT_TRAILING_STOP_PCT,
@@ -278,6 +286,8 @@ def is_in_session(calendar: Any, when: datetime) -> bool:
     return timedelta(0) <= when - close <= timedelta(minutes=CLOSE_GRACE_MINUTES)
 
 
+@shared_spreadsheet()
+@shared_split_history_frames()
 def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
     assert_production_writer()
     webhook = os.getenv("SLACK_WEBHOOK_URL", "")
@@ -302,6 +312,27 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
         print(f"position monitor skipped: non-TSE-session date={current.date().isoformat()}")
         return 0
     in_market_window = is_in_session(calendar, current)
+
+    history_starts: dict[str, str] = {}
+    for holding in holdings:
+        try:
+            candidate_ticker = str(holding.get("ticker") or "").strip()
+            candidate_date = date.fromisoformat(str(holding.get("entry_date", "")))
+            candidate_stop = holding.get("trailing_stop_pct", "")
+            candidate_stop = DEFAULT_TRAILING_STOP_PCT if candidate_stop in (None, "") else candidate_stop
+            if (not candidate_ticker or candidate_date > current.date()
+                    or not bool(calendar.is_session(candidate_date.isoformat()))):
+                continue
+            _number(holding.get("entry_price", ""), "entry_price")
+            if _number(candidate_stop, "trailing_stop_pct") >= 100:
+                continue
+        except (TypeError, ValueError):
+            continue
+        history_starts[candidate_ticker] = min(
+            history_starts.get(candidate_ticker, candidate_date.isoformat()), candidate_date.isoformat(),
+        )
+    configure_split_history_sharing(history_starts)
+    today_cache: dict[str, Any] = {}
 
     rows: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
@@ -333,7 +364,15 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 if not recovered.get("last_notified_at"):
                     notifications.append(recovered)
                 continue
-            bars = _private_call(fetch_today_bars, ticker)
+            if ticker not in today_cache:
+                try:
+                    today_cache[ticker] = _private_call(fetch_today_bars, ticker)
+                except Exception as exc:  # noqa: BLE001 - cache the same acquisition failure for this ticker
+                    today_cache[ticker] = exc
+            cached_bars = today_cache[ticker]
+            if isinstance(cached_bars, Exception):
+                raise cached_bars
+            bars = None if cached_bars is None else cached_bars.copy(deep=True)
             daily = _daily_reference(history, current.date())
             if bars is not None and daily is not None:
                 bars.attrs["daily_bar"] = daily

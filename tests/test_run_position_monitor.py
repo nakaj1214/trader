@@ -416,6 +416,45 @@ def test_two_positions_of_one_ticker_close_to_the_stop_are_warned_as_one(monkeyp
     (text,) = _warning_posts(deps)
     assert text.count("1111.T") == 1  # listed once in the message
     assert [row["last_warned_at"] for row in _written(deps)] == [NOW.isoformat()] * 2
+    deps["fetch_bars"].assert_called_once_with("1111.T")
+
+
+def test_shared_today_bars_are_copied_for_each_position() -> None:
+    contaminated: list[bool] = []
+
+    def build_quote(bars: pd.DataFrame) -> TodayQuote:
+        contaminated.append("position_marker" in bars.attrs)
+        bars.attrs["position_marker"] = True
+        return QUOTE
+
+    with _dependencies([HOLDING, OTHER_ENTRY]) as deps:
+        deps["build_quote"].side_effect = build_quote
+        run(dry_run=True, evaluated_at=NOW)
+
+    assert contaminated == [False, False]
+    deps["fetch_bars"].assert_called_once_with("1111.T")
+
+
+def test_shared_today_bar_failure_is_ticker_scoped() -> None:
+    holdings = [HOLDING, OTHER_ENTRY, {**HOLDING, "ticker": "2222.T"}]
+    good_bars = BARS.copy()
+    good_bars["Volume"] = 1.0
+    good_bars.attrs = {
+        "requested_date": NOW.date().isoformat(),
+        "daily_bar": {"Open": 100.0, "High": 120.0, "Low": 95.0, "Close": 109.0, "Volume": 2.0},
+    }
+
+    def fetch_bars(ticker: str) -> pd.DataFrame:
+        if ticker == "1111.T":
+            raise TypeError("provider bug")
+        return good_bars
+
+    with _dependencies(holdings) as deps:
+        deps["fetch_bars"].side_effect = fetch_bars
+        run(dry_run=True, evaluated_at=NOW)
+
+    assert [row["status"] for row in _written(deps)] == ["error", "error", "ok"]
+    assert [call.args[0] for call in deps["fetch_bars"].call_args_list] == ["1111.T", "2222.T"]
 
 
 def test_replacing_a_warned_position_the_same_day_keeps_the_ticker_warned(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,125 +1,109 @@
-## 実装計画: Stage 4B — CI・通知・保存・障害診断（REQ-062〜067）
+## 実装計画: Stage 4C — 重複処理の削減と文書整合（REQ-068〜070）
 
 ### 目的
-Q03/Q04/Q05/Q07/Q09 を、投資判定の数値を変えずに実装し（CI信頼性・secret/権限・通知状態・provider障害診断・保存耐障害性）、境界を回帰テストで固定する。Stage 4A は確定済み baseline で、再設計しない。
+Q08 を「計測 → 重複が確認できた箇所だけ 1 run 内で共有」で実施し、B09 で現行仕様を説明する文書を現在の実装に合わせる。正常入力に対する投資結果・スコア・通知対象は 1 件も変えない（baseline-preserving）。Stage 4A/4B は完了済みの baseline として扱い、再設計しない。
 
 ### スコープ
-- 含むもの: REQ-062（Forward PR 検証範囲と secret 分離）、REQ-063（ダイジェストの状態分離と再送）、REQ-064（uv.lock・Action SHA・最小権限）、REQ-065（provider 失敗分類・Retry-After 上限）、REQ-066（atomic write）、REQ-067（境界テスト）
-- 含まないもの: Stage 4C（Q08/B09）、Growth、Q06 閾値の変更、mypy 既知 31件の解消、新特徴量・スコア・閾値・重み、過去 snapshot 書換え、archive 変更、無関係な依存更新、全面リファクタリング
+- 含むもの: REQ-068（Position Monitor の ticker 単位の取得共有、Sheets 接続の run 内共有、評価系列の run 内共有）、REQ-069（現行仕様文書の更新）、REQ-070（Stage 4C 境界テスト）
+- 含まないもの: Growth、Stage 4A/4B の再設計、Q06 閾値、スコア・閾値・重み、永続 cache・外部 cache・DB・multiprocessing・async・並列取得・memoization framework・新依存、過去レポートの書換え、Harness infrastructure、mypy 既知 31件の解消、archive・過去 snapshot の変更
 
 ### 調査結果（実装の前提）
-- **[確認済]** `uv.lock` は存在し `uv lock --check --offline` が通る（53 packages、pyproject と同期）。pyproject は直接依存を `==` で固定済み。CI は全 workflow で `pip install -e .` / `".[dev]"`（`uv.lock` 未使用）。ローカル uv は 0.9.21。Python は CI で 3.11。
-- **[確認済]** 使用中の Action は 6 種: `checkout@v7`（11箇所）、`setup-python@v7`（6）、`cache/restore@v4`（5）、`cache/save@v4`（5）、`upload-artifact@v7`（3）、`download-artifact@v7`（1）。`gh` コマンドは未インストールのため、タグ→SHA は `git ls-remote --tags`（読み取り専用）で解決できる。解決済み（2026-10-12 時点、いずれも軽量タグで `^{}` なし）:
-  - checkout v7 = `3d3c42e5aac5ba805825da76410c181273ba90b1`（v7.0.1 と同一）
-  - setup-python v7 = `5fda3b95a4ea91299a34e894583c3862153e4b97`
-  - cache v4 = `0057852bfaa89a56745cba8c7296529d2fc39830`
-  - upload-artifact v7 = `cf430e030ddbb5b0abf93d22962f4752f3646cd9`
-  - download-artifact v7 = `37930b1c2abaa49bbe596cd826c3c89aef350131`
-  実装時に再度 ls-remote で同値を確認してから置換する（浮動タグなので日付を記録）。
-- **[確認済]** `forward_validation.yml` の `pull_request.paths` は 28 個の手列挙（`src/screening/**`・`inflection_historical.py`・`inflection_report.py`・`pyproject.toml`・`uv.lock` を含まない）。`validate` ジョブは PR でも `SNAPSHOT_ENCRYPTION_KEY` を使う `rebuild_inflection_forward_validation.py` を実行する。workflow 全体 `contents: read`、`persist-price-hashes` のみ `contents: write`（schedule 限定）。
-- **[確認済]** `inflection_shadow.yml` は workflow 全体が `contents: write`、`scan` ジョブに `SLACK_WEBHOOK_URL`・`SNAPSHOT_ENCRYPTION_KEY` が job env、`JQUANTS_API_KEY`/`EDINET_API_KEY` が scan ステップ env。push は同ジョブ内の Commit ステップ。
-- **[確認済]** `test.yml` は PR で lint/mypy/pytest を回す（secret 不要）。`pull_request_target` は全 workflow で未使用 [未確認: 実装時に grep で再確認]。
-- **[確認済]** ダイジェスト: `_deliver_digest` は `snapshot_created=False` だと `skipped:snapshot-existed`。`send_daily_digest` は webhook 無し→`skipped:no-webhook`、例外→`failed:<型名>`、成功→`sent`。結果は stdout のステータス文字列のみで、永続状態は無い。送信は Git push より前に行われる。
-- **[確認済]** 保存: `persist_report` は `snapshot.exists()` で immutable を守るが、書込みは `write_text` 直書き（snapshot と `latest_path`）。snapshot 列挙は `^YYYY-MM-DD.enc` 完全一致（`snapshot_dates`）と `glob("????-??-??.enc")` のため、`*.tmp` 名の一時ファイルは読込・欠損判定に混入しない。直書きは他に `rebuild_inflection_forward_validation.py:145,373,375`、`rebuild_inflection_learning.py:88,92`、`run_inflection_historical_backtest.py:146,152`。既存の安全パターンは `jquants_history.py:99-101,135-136`、`edinet.py:310-312`、`check_workflow_health.py:49-50`。
-- **[確認済]** 広い except: `yfinance_prices.py:112`、`forward_prices.py:133,158`、`live_quote.py:101,166,188,207`。Retry-After: `jquants_v2_client.py:86-90`（非負のみ）、`edinet.py:139-141`（有限のみ、負数・上限なし）。
-- **[未確認]** `yfinance_prices.py` の retry 内部構造と、`live_quote.py:101` が既に保持している分類情報の範囲（実装 Step 4 の冒頭で読む）。`run_position_monitor.py` の取得失敗の扱い。
+- **[確認済]** Stage 4B は完了済み。完了報告 `.harness/reports/reliability-stage4b-2026-10-12.md` が存在し、通知状態・再送（`scripts/run_inflection_shadow.py`）、atomic write（`src/data/atomic_write.py`）、workflow の SHA 固定・lockfile 導入・PR secret 分離は dev5 コミットに含まれる。baseline はこの状態。
+- **[確認済]** Position Monitor（[run_position_monitor.py](../../scripts/run_position_monitor.py) `run`）の保有行ループは、行ごとに `fetch_split_adjusted_history(ticker, purchase_date, entry_price)`（行 329）と `fetch_today_bars(ticker)`（行 336）を `_private_call` 経由で呼ぶ。行ごとに `_recover_pending`（履歴・checkpoint 依存、取引固有）と `evaluate_position`（entry・stop・購入日依存）を実行する。同一 ticker の複数 position は取得が重複する。
+- **[確認済]** `fetch_split_adjusted_history`（[live_quote.py:92](../../src/data/live_quote.py)）は `yf.Ticker(ticker).history(start=entry_date, …)` を 1 回呼び、その frame から (a) 購入日以降の確定足 `prior`、(b) 購入日の split 補正済み entry、(c) `daily_bars=frame` を作る。provider 呼出しは `start` に依存するが、取引固有なのは entry 補正（`_later_split_factor`）と `prior` の切り出し・欠損判定（`purchase_date` 依存）で、frame 取得自体は ticker 単位。
+- **[確認済]** `fetch_today_bars(ticker)` は `_now_jst()` を内部で取り、ticker ごとに独立した 1 分足を返す。呼出し側は `bars.attrs["daily_bar"] = daily` で**共有した DataFrame を書き換える**ため、共有する場合は position ごとに copy が必須。`fetch_today_bars` は想定外例外を再 raise する（Q07）。
+- **[確認済]** Sheets（[sheets_client.py:37-49](../../src/data/sheets_client.py)）は `read_status`・`read_holdings`・`write_status` が呼出しごとに `_worksheet()`（認証＋`open_by_key`＋`worksheet`）を行う。`run()` は通常 3 回（holdings 0 件の早期終了時は `read_status`＋`read_holdings`＋`write_status([])`）。呼出し元は `run_position_monitor.py` のみ。既存テスト（`test_run_position_monitor.py`、`test_sheets_client.py`）は `scripts.run_position_monitor.read_status` などを patch しており、関数名・戻り値・失敗注入（`test_run_position_monitor.py:694`）は変えられない。
+- **[確認済]** 評価（[inflection_report.py](../../src/evaluation/inflection_report.py) の horizon ループ）は 5 horizon × 通常/ストレス cost で `simulate_signals` と `_paired_trade_rows` を呼ぶ。`simulate_signal`（[inflection_backtest.py:240](../../src/evaluation/inflection_backtest.py)）は signal ごとに `_series(history, "Open"/"Close"/"High"/"Low")` を 4 回呼び（`pd.to_numeric`・tz 除去・重複/非正値検査・sort）、`_evaluation_window` でカレンダーの `normalize().drop_duplicates().sort_values()` も行う。同じ history に対して 10 回（5×2）繰り返される。`paired_benchmark_returns`（[inflection_forward.py:176](../../src/evaluation/inflection_forward.py)）も呼出しごとに benchmark の `_series` を 2 回作る。
+- **[未確認]** 上記の重複回数・時間・メモリの実測（Step 1 で計測する）。ほか `inflection_forward.py`・`inflection_learning.py` に同種の再計算があるか（Step 1 で呼出し回数を計数して判断）。
+- **[確認済]** B09 の対象文書: 現行仕様を説明する文書は [memo/project-overview.md](../project-overview.md)・[docs/playbooks.md](../../docs/playbooks.md)（Stage 4B 追記済み）・[.env.example](../../.env.example)（17 行）。`README` は存在しない。`project-overview.md` に既知の古い記述: 「専用鍵未設定時は `JQUANTS_API_KEY` を鍵素材に利用」（行 63）、「最低限の secret は `JQUANTS_API_KEY`」（行 93）、「標準セットアップ `pip install -e ".[dev]"`」（`uv.lock` 利用に未対応）、`position_monitor.yml` の時刻「9:03/12:35/15:35」（行 102、現行 9:20/12:50）。過去記録（`memo/analysis/`・`memo/research/`・`.harness/reports/` 過去分・`proposal_req*.md`・`plan_req*.md`）は変更しない。これらは現行 workflow・`.env.example`・コードと突き合わせて Step 6 で最終確定する。
 
 ### 影響範囲（変更/追加予定ファイル）
-- `.github/workflows/forward_validation.yml`: path filter 見直し、secret 不要/必要の分離（REQ-062）、Action SHA 固定・lockfile install・権限（REQ-064）
-- `.github/workflows/test.yml`, `inflection_shadow.yml`, `position_monitor.yml`, `reliability_watchdog.yml`: Action SHA 固定、lockfile install、権限最小化（REQ-064）
-- `dashboard/data/inflection/digest_state.json`（新規、小さな状態ファイル。日付→`pending`/`succeeded`）: 通知状態の永続化（REQ-063）。実 repo のファイルは作らず、テストは一時ディレクトリのみ
-- `scripts/run_inflection_shadow.py`: ダイジェスト状態の分離・再送（REQ-063）、snapshot/latest の atomic write（REQ-066）
-- `src/notify/inflection_digest.py`、`src/notify/slack.py`: 送信結果の分類（REQ-063）
-- `src/data/yfinance_prices.py`、`forward_prices.py`、`live_quote.py`、`provider_output.py`、`jquants_v2_client.py`、`edinet.py`: 失敗分類・Retry-After 上限（REQ-065）
-- `scripts/rebuild_inflection_forward_validation.py`、`rebuild_inflection_learning.py`、`run_inflection_historical_backtest.py`: atomic write（REQ-066）
-- 共通の atomic write helper: 既存の `os.replace` パターンを 1 箇所に寄せる場合のみ新規（候補 `src/data/atomic_write.py`）。既存 3 箇所の流儀と重複するため、**新設は最小限**（既存関数で足りれば再利用）。
-- `docs/playbooks.md`: 通知の保証境界（REQ-063）と、障害分類の読み方（REQ-065）を短く追記
-- `tests/test_workflow_reliability.py`、`tests/test_inflection_digest.py`、`tests/test_yfinance_prices.py`、`tests/test_forward_prices.py`、`tests/test_live_quote.py`、`tests/test_jquants_v2_client.py`、`tests/test_edinet.py`、`tests/test_inflection_forward.py`、`tests/test_inflection_learning.py`: 既存ファイルを拡張（新規ファイルは、既存で検証できない場合のみ）
-- `tests/conftest.py`: 変更しない（Stage 4A の外部通信拒否を維持）
+計測で重複が確認できた項目のみ変更する。効果が小さい項目は「変更不要」と報告する。
+- [scripts/run_position_monitor.py](../../scripts/run_position_monitor.py): ticker 単位の市場データ取得の run 内共有（取引固有計算は position ごとに独立）
+- [src/data/live_quote.py](../../src/data/live_quote.py): 履歴 frame の取得と購入日固有の切り出し・entry 補正の分離（必要な場合のみ。公開関数のシグネチャと戻り値は維持）
+- [src/data/sheets_client.py](../../src/data/sheets_client.py): 1 run 内の spreadsheet 共有（context manager。外では従来どおり呼出しごとに接続）
+- [src/evaluation/inflection_backtest.py](../../src/evaluation/inflection_backtest.py)・[inflection_report.py](../../src/evaluation/inflection_report.py)・[inflection_forward.py](../../src/evaluation/inflection_forward.py): 正規化済み系列の run 内共有（immutable）。計測で効果が小さければ変更しない
+- [memo/project-overview.md](../project-overview.md)、[docs/playbooks.md](../../docs/playbooks.md): B09 の文書更新（`.env.example` は照合のみ。不一致は報告し、値は変更しない）
+- テスト: `tests/test_run_position_monitor.py`、`tests/test_live_quote.py`、`tests/test_sheets_client.py`、`tests/test_inflection_backtest.py`、`tests/test_inflection_forward.py` を拡張。`tests/conftest.py` は変更しない
+- 計測用の一時スクリプトと before/after の結果 JSON は `.harness/runtime/stage4c/`（transient）に置く。リポジトリに恒久的な計測ツールは追加しない
 
 ### 実装ステップ
 
-実装順は「リスクが低く独立 → 依存あり」: Q09 → Q07 → Q04 → Q05 → Q03 → Q10 まとめ。Q04 の状態表現が Q09 の書込みに依存するため Q09 を先に行う。各 Step 完了時に対象テスト＋直前までの回帰を実行する。
+実装順: 計測（before 固定）→ Monitor 取得共有 → Sheets 共有 → 評価系列共有 → 境界テスト整理 → B09 → 検証・報告。各 Step は「対象テスト → 直前までの回帰」を通してから次へ進む。
 
-#### Step 1: Q09 — atomic write（REQ-066）
-- [ ] 既存パターン（`jquants_history.py`/`edinet.py`/`check_workflow_health.py`）を比較し、再利用する関数または 1 つの小さな helper（temp 書込み→flush→fsync→`os.replace`、同一ディレクトリの `.tmp` サフィックス、失敗時の temp 削除）を決める
-- [ ] 失敗再現テストを先に書き、現行の直書きで旧ファイルが破損することを示す（`write_text` を途中で例外にする fake で確認）
-- [ ] `persist_report` の snapshot と latest を atomic 化。snapshot は「存在しない場合のみ作成」を維持（`os.link`/排他作成で二重実行競合も防ぐ。`FileExistsError` は既存扱い）
-- [ ] rebuild 系 3 スクリプトの JSON/summary/hash 書込みを atomic 化（親ディレクトリは `mkdir(parents=True, exist_ok=True)`）
-- [ ] 複数ファイル間（snapshot と latest）は transaction にしない。順序（snapshot→latest）と「どちらかだけ残り得る」境界を docstring に明記
-**検証**: write 途中失敗 / flush 失敗 / replace 前停止 / replace 失敗で旧ファイルが無傷、二重実行、既存 immutable snapshot 不変、新規 output directory、temp が snapshot 列挙に出ない。保存バイト列が従来と同一。
+#### Step 1: 計測と before の固定（REQ-068）
+- [ ] fixed-size synthetic/fake の計測ハーネス（一時スクリプト）を `.harness/runtime/stage4c/` に作る。外部通信は `tests/conftest.py` 相当の遮断を前提に、全 provider/Sheets を fake にする
+- [ ] Monitor: N ticker × M position（同一 ticker に複数購入日を含む。例: 20 position、うち 6 ticker が 2〜4 位置）で、`fetch_split_adjusted_history`・`fetch_today_bars` の呼出し数（総数／ticker 別）、`gspread.authorize` と `open_by_key` の回数、read/write 回数を計数する
+- [ ] 評価: 固定サイズ synthetic（例: 50 signal × 5 horizon × 2 cost）で `_series`、`_evaluation_window` のカレンダー正規化、`paired_benchmark_returns` の benchmark 正規化の呼出し回数を計数（`mock.patch` のラッパで計数。実行ロジックは変えない）。実行時間（`time.perf_counter`）と peak memory（`tracemalloc`）も記録
+- [ ] **before の出力そのもの**を保存する: Monitor の全 rows・通知対象・書込み内容、評価レポート dict（JSON 化）、portfolio/learning 入力。Step 2 以降の完全一致比較の基準にする
+- [ ] 計測結果から、変更する項目と「変更不要」とする項目を決め、以降の Step に反映する（効果が小さい項目は無理に変更しない）
+**検証**: before の呼出し回数が具体的な数値で記録され、before 出力が保存されている。コード変更なし。
 
-#### Step 2: Q07 — provider 失敗の安全な分類（REQ-065）
-- [ ] `yfinance_prices.py`・`forward_prices.py`・`live_quote.py` の現行 except を読み、既に分類している箇所（`live_quote.py:101`）を基準に、安全な分類 enum/文字列（timeout / rate_limit / server_error / protocol / empty / invalid_ohlcv / validation / auth / unexpected）を 1 箇所（`provider_output.py` を拡張）に定義
-- [ ] 例外→分類の純関数（HTTP status・例外型のみ参照。メッセージ本文・URL は見ない）。想定外（TypeError 等）は `unexpected` とし、**再 raise する経路と「ログして継続」する経路を区別**（握り潰さない）
-- [ ] 「データなし」へ畳む箇所に分類結果（件数・分類別カウント・retry 回数）を付与。公開出力は分類名と件数のみ（ticker・URL・response body・生例外本文は出さない。Q02 の保護を維持）
-- [ ] `Retry-After` の共通パース関数（有限・非負・上限 N 秒）を 1 つ作り、J-Quants と EDINET の両方で利用（上限値は既存の最大待機設定に合わせ実装時に決定）
-- [ ] 修正前に失敗するテスト: `inf`/`nan`/負/巨大 Retry-After、TypeError が「データなし」に変わること
-**検証**: fake provider で timeout/429/500/malformed/empty/invalid price/TypeError を各 1 ケース。公開出力に ticker/URL/秘密が無い。正常入力の取得結果は不変（既存テスト無変更で通る）。
+#### Step 2: Position Monitor の ticker 単位の取得共有（REQ-068 / 受入: 同一 ticker で取得 1 回）
+- [ ] `run` 内にだけ存在する ticker 単位の共有（run のローカル dict。モジュールグローバルにしない）を作る。`fetch_today_bars(ticker)` は ticker ごとに 1 回。**成功値と失敗（例外）の両方を保存**し、同一 ticker の各 position は同じ結果を受ける（例外は同じ種類を再 raise。想定外例外は従来どおり行ごとの error 行になり、他 ticker の position に伝播しない）
+- [ ] 共有した `bars` は position ごとに `copy()` して `attrs["daily_bar"]` などの書込みを各 position に閉じる（cross contamination 防止）
+- [ ] 履歴 frame: `yf.Ticker(...).history(start=…)` は ticker ごとに 1 回（同一 ticker の最も早い購入日から）。購入日固有の切り出し（`prior_mask`）、`expected_dates` 欠損判定、split 補正済み entry（`_later_split_factor`）、`SplitAdjustedHistory` の組立は position ごとに独立して実行する。frame は共有 DataFrame を直接渡さず、position ごとに切り出して copy する。**同一入力で `fetch_split_adjusted_history` を単体で呼んだ場合と結果が一致すること**を保つ（Step 1 の before 出力と比較）
+- [ ] 取得を共有できない条件（購入日が異なると結果が変わり得る箇所）が見つかった場合は、その箇所は共有せず報告する
+- [ ] 気配時刻: 共有により同一 ticker の position が同じ `bars`（同一時刻）を使うことを、結果への影響（現状は position ごとに異なり得る）として報告。正常入力の結果が変わる場合は原因を調査して差を許容しない
+**検証**: 同一 ticker 複数 position で provider 呼出しが 1 回。異なる購入日の rows が before と完全一致。ある ticker の失敗は同一 ticker の position だけに及び、他 ticker は影響なし。共有 DataFrame への書込みが他 position に波及しない。
 
-#### Step 3: Q04 — ダイジェスト状態分離と再送（REQ-063）
-- [ ] `send_daily_digest` の戻りを維持しつつ、状態語彙を定義: `snapshot_created` / `persisted`（保存成功）/ `notification_attempted` / `notification_succeeded` / `published`（Git 反映は workflow ステップの outcome で表現）
-- [ ] 状態の置き場所（run をまたいで残す）: `dashboard/data/inflection/digest_state.json` に日付ごとの `{"<market_date>": "pending" | "succeeded"}` を持つ小さな状態ファイルを新設する（理由: `GITHUB_OUTPUT`/stdout は同一 run 内の情報で、次の通常実行へ通知成功・失敗を渡せないため。Actions 出力だけの案は採用しない）。ファイルは Step 1 の atomic write で書く。既存の Commit ステップが `git add dashboard/data/inflection/` を行うため、snapshot と同じコミットで反映される。`snapshot_dates`/`glob("????-??-??.enc")` に一致しない名前なので欠損判定・learning には影響しない。直近 30 日分のみ保持する。
-- [ ] `_deliver_digest` の判定（通常実行。読むのは checkout 済みのリポジトリ上の状態）: ① 状態ファイルに当日エントリが無く snapshot も無い → snapshot 作成と同時に `pending` を書き、Slack 送信。② 当日 `pending` → 送信（snapshot が既存でも送る。Slack 失敗後の通常再実行が該当）。③ 当日 `succeeded` → `skipped:already-succeeded`。④ snapshot が既存で状態エントリが無い（状態ファイル導入前の旧 snapshot）→ 従来どおり送らず `skipped:legacy-no-state`。書込み順は「状態 `pending`（atomic）→ snapshot（atomic）→ Slack 送信 → 成功時のみ `succeeded`（atomic）→ workflow が Commit/push」。webhook 未設定は `skipped:no-webhook` として `pending` のまま。
-- [ ] 再送: `workflow_dispatch` 入力 `resend_digest`（既定 false、schedule では無効）。true のとき状態に関係なく送信し、成功時に `succeeded` を書く。再送は scan を再実行して得た新しい report から作るため、元の snapshot（immutable、再書込みしない）とは内容が異なり得る。復号は `SNAPSHOT_ENCRYPTION_KEY` を持つ scan ジョブ内でのみ行い、再送のために snapshot を復号しない。
-- [ ] 保証できない境界を `docs/playbooks.md` に明記し、「Exactly once を保証しない（at-least-once を目指す）」と書く: Slack 受理後に状態保存が失敗、または状態保存後に Git push が失敗 → コミットされていないため次の run は `pending`（または snapshot 未作成）から再実行され、重複通知し得る。Slack が受理しても配信されなかった場合は `succeeded` になるため、手動再送で補う。
-**検証**: fake Slack と一時ディレクトリで、障害境界を状態ファイルの内容で検証する。(1) Slack 送信前に停止（状態は `pending`、または未コミット）→ 通常再実行で送られる／(2) Slack 成功後に状態保存失敗 → 状態は `pending` のまま、通常再実行で重複し得ることを分類・文書化／(3) 状態保存後に Git push 失敗（push 前の状態を再現）→ 再実行で重複し得ることを確認／(4) 同日通常再実行（`succeeded`）は送らない／(5) 手動再送は `succeeded` でも送られ、状態が更新される／(6) 再送後の通常実行は `succeeded` のため送らない／(7) 旧 snapshot（状態エントリ無し）は送らない。ステータス文字列・公開ログに候補情報が無い。
+#### Step 3: Sheets 接続の run 内共有（REQ-068）
+- [ ] `sheets_client` に context manager（例: `shared_spreadsheet()`）を追加。内部で認証と `open_by_key` を最大 1 回行い、`with` ブロック内の `_worksheet(name)` はその spreadsheet から worksheet を取得する。ブロック外・未使用の呼出しは従来どおり（既存テスト・他の呼出しに影響なし）
+- [ ] `run_position_monitor.run` は `with shared_spreadsheet():` で read/write を囲む。公開関数 `read_holdings`・`read_status`・`write_status` のシグネチャ・戻り値・`assert_production_writer`・batch 更新（`batch_update` の requests）・失敗時の例外種別は変更しない
+- [ ] 接続の失敗はキャッシュしない（失敗後の再試行・認証エラーは従来どおり各呼出しに伝わる）。長寿命グローバル接続・pool は作らない
+**検証**: 1 run の `gspread.authorize`／`open_by_key` が 3 → 1（holdings 0 件の経路も確認）。`test_sheets_client.py` の既存ケース無変更で PASS。認証エラー・書込み失敗・C07 writer 排他（`assert_production_writer`）の挙動が変わらない。書込み内容が before と一致。
 
-#### Step 4: Q05 — lockfile・Action SHA・最小権限（REQ-064）
-- [ ] 依存導入: 新しい Action を追加せず、`python -m pip install uv==0.9.21`（現行ローカルと同一、固定）→ `uv sync --frozen`（または `uv export --frozen` を `pip install -r`）に置換。dev 依存は `--extra dev`。`uv.lock` と現行環境の差があれば更新せず報告
-- [ ] 全 `uses:` を Step の調査結果の SHA に置換し、`# actions/checkout v7` 形式のコメントで元タグを残す。置換前に `git ls-remote` を再実行して同値を確認
-- [ ] 権限棚卸し表を作る（workflow/job/step × contents/pull-requests/actions/secret/push）。`inflection_shadow.yml` は workflow 全体を `contents: read` にし、Commit ステップを持つジョブ（または分離ジョブ）のみ `contents: write`。secret は必要ステップの env にのみ置く（job env の `SLACK_WEBHOOK_URL`/`SNAPSHOT_ENCRYPTION_KEY` を必要ステップへ移動できるか確認）
-- [ ] checkout の `persist-credentials: false` を push 不要ジョブで検討（変更する場合は影響を確認）
-- [ ] 静的テスト（`tests/test_workflow_reliability.py`）を追加: 全 `uses:` が 40 桁 SHA、write 権限は push ジョブのみ、`pull_request_target` 不使用、不要権限なし、依存導入が lockfile ベース
-**検証**: 静的テスト PASS。`uv.lock` に差分なし（または説明済み）。CI の実環境で解決されるパッケージが現行ローカル環境と同一であることを `uv sync --frozen` の dry-run/`uv pip list` で比較。
+#### Step 4: 評価系列・統計の run 内共有（REQ-068）
+- [ ] Step 1 の計測で重複が有意な場合のみ実施。共有対象は正規化済みの**読み取り専用**の中間結果（例: 履歴ごとの `_series` 4 本、正規化済みカレンダー、benchmark の Open/Close）。`pd.Series` をそのまま共有せず、書込み不可（copy-on-use または `values` の read-only 化）にして後続の相互影響を防ぐ。浮動小数点の演算順序は変えない（同じ関数を同じ順序で呼ぶだけで、結果の再利用に限る）
+- [ ] 共有の単位は 1 つのレポート構築（`inflection_report` の horizon ループ）内に限る。呼出し側で一度だけ準備し、既存関数にはオプション引数で渡す（既存の呼出し・シグネチャは後方互換のまま。引数省略時は従来動作）。モジュールレベルの cache や `lru_cache` は使わない
+- [ ] 効果が小さい（呼出し削減が構造的に意味を持たない、またはメモリ増が上回る）場合は変更せず「変更不要」と報告する
+**検証**: 共有後も `simulate_signals`・`paired_benchmark_returns` の出力（trade rows、benchmark 列、レポート dict）が before と完全一致（キー順・値）。`_series` の呼出し回数が構造的に減る。共有物を変更しようとしても例外になる／元の history が変化しない。
 
-#### Step 5: Q03 — Forward PR 検証範囲と secret 条件（REQ-062）
-- [ ] `forward_validation.yml` の `pull_request` トリガーを再設計: 軽量・secret 不要ジョブ（pytest の Forward/評価関連、lint、型検査相当）は広い path（`src/**`、`scripts/**`、`tests/**`、`pyproject.toml`、`uv.lock`、workflow 自身）で起動
-- [ ] 復号を伴う `validate` の snapshot 検証は `schedule`/`workflow_dispatch`（secret あり）に限定し、PR では実行しない。PR で secret が無い場合の skip を条件式（`github.event_name != 'pull_request'`）で明示。fork 由来（`github.event.pull_request.head.repo.fork`）でも secret 参照ステップが走らない構造にする
-- [ ] `pull_request_target` は使わない。secret は `schedule`/`workflow_dispatch`/push のジョブにのみ渡す
-- [ ] 失敗通知ジョブ（`notify-failure`、既存）が PR で動かないことを確認（既存の `github.ref == 'refs/heads/main'` 条件）
-- [ ] 静的テスト: 変更カテゴリ別（screening/evaluation/report/historical/forward/共有コード/data validation/依存定義/workflow）に対して該当 path が filter に含まれること、event × secret の組合せごとに secret 参照ステップの実行条件を検証
-**検証**: 静的テスト PASS（same-repo PR / fork PR / push / schedule / workflow_dispatch × secret あり/なし）。実 Actions 上の挙動は未確認として報告。
+#### Step 5: Stage 4C 境界テスト（REQ-070）
+- [ ] Step 2〜4 で追加した境界テストを一覧化し、受入条件の各項目に対応を付ける: 同一 ticker 複数 position で価格取得 1 回／異なる購入日の結果維持／cross contamination なし／provider 失敗の非伝播／Sheets 共有後の結果維持／最適化前後の評価結果一致
+- [ ] before 出力との比較は、保存した期待値または「共有を使わない経路」との比較で durable なテストにする（`.harness/runtime/` のファイルに依存しない）
+- [ ] B09 のために文書値を固定する大量テストは追加しない。workflow 時刻・secret 名などは、既存の `tests/test_workflow_reliability.py` の仕組みで自動照合が合理的な項目のみ
+**検証**: 外部通信試行数 0、保存済み snapshot・archive 変更 0。
 
-#### Step 6: Q10 — Stage 4B 境界テストの整理（REQ-067）
-- [ ] Step 1〜5 で追加した境界テストを一覧化し、REQ-062〜066 の受入条件が全て 1 つ以上のテストに対応することを確認
-- [ ] 不足分のみ追加（secret なし PR、Slack 失敗と再送、通知成功・保存失敗、provider timeout/429/500、生ログ漏洩防止、atomic write 失敗、immutable、permissions）
-- [ ] coverage 目的だけのテストは追加しない。`tests/conftest.py` の外部通信拒否を維持
-**検証**: 外部通信試行数 0。
+#### Step 6: B09 — 現行仕様文書の整合（REQ-069）
+- [ ] 現行 workflow・`.env.example`・コードを正として、`memo/project-overview.md` と `docs/playbooks.md` を項目ごとに照合する: セットアップ（必須環境変数、`JQUANTS_PLAN`/`JQUANTS_DATA_DELAY_WEEKS` と validation、`SNAPSHOT_ENCRYPTION_KEY` の扱い、Slack、Google Sheets、EDINET key）、Actions（一覧・schedule・dispatch・concurrency・permissions・secret・`uv.lock`・Action SHA）、Forward Validation（PR の secret 分離・fork）、Position Monitor（実行時刻・stop 回収・checkpoint・incomplete・writer 制限・concurrency・通知状態）、通知（snapshot 生成→保存→Git 反映→Slack→通知状態→再送。exactly-once を保証しない）、Watchdog、provider 障害分類、atomic write（単一ファイルのみ。複数成果物の transaction ではない）、EDINET（コード接続済み／test 済み／live・historical・learning 利用／実 API 確認の有無）
+- [ ] 各事実は `grep`／workflow・コードの Read で確認してから書く（推測を事実として書かない。確認できないものは「未確認」と書く）。機能状態は implemented／tested with fake・unit test／integration not verified／production enabled／production unverified を自然な日本語で区別する
+- [ ] 更新は現行仕様を説明する文書の該当箇所に限り、最小 diff で行う（全面書換えしない）。過去記録は変更しない。判断に迷う文書は変更せず報告する
+- [ ] 更新した各文書について「何が古かったか」「何に合わせたか」を表にまとめる（レポート用）。`.env.example` との不一致は報告のみ
+**検証**: `git diff --stat` が現行仕様文書だけであること、過去記録（`memo/analysis/`・`memo/research/`・`.harness/reports/` の既存ファイル・`proposal_req*`・`plan_req*`）に今回の差分がないこと（作業開始前にユーザーが削除済みの `proposal_req*` / `plan_req*` の退避ファイルは今回の差分に含めない。git 履歴から復元可能）。文書記載の時刻・secret 名・環境変数が workflow・`.env.example` と一致。
 
 #### Step 7: 全体検証と報告
-- [ ] 対象テスト → Stage 4A 回帰 → 第1〜第3段階回帰 → 全テスト（約7分）→ coverage → ruff → mypy（31 件のエラー内容を変更前とファイル/メッセージ単位で比較）
-- [ ] 保存済み snapshot（`dashboard/data/inflection/`）・archive の `git status` 差分が 0、外部通信試行数 0
-- [ ] baseline 確認: 候補・EARLY_CANDIDATE・スコア・outcome・portfolio・learning 入力が有効入力で不変（既存の回帰テストと同一入力の before/after 比較）
-- [ ] 独立レビュー（secret 漏洩・ログ漏洩・二重通知・通知消失・ファイル破損・PR 検証漏れ・provider 障害の握り潰し・回帰）。重大な問題のみ修正
-- [ ] `.harness/reports/reliability-stage4b-2026-10-12.md` に報告（形式は proposal の「完了報告」）。Stage 4C へ進まず停止
+- [ ] Q08 対象テスト → Stage 4C 境界テスト → Stage 4A 回帰 → Stage 4B 回帰 → 第1〜第3段階回帰 → 全テスト（約7分）→ coverage → ruff → mypy（既知 31件を内容で比較し新規 0）
+- [ ] 外部通信試行数、`git diff --check`、task 対象の minimal diff guard、保存済み snapshot 差分、archive 差分、`uv.lock` 差分（なし）を確認
+- [ ] Step 1 の before 出力と after を比較し、candidate／EARLY_CANDIDATE／classification／score／feature 値／stop 判定／notification 対象／outcome／portfolio／benchmark／learning 入力・出力が完全一致であることを確認。1 件でも差があれば原因を調査（結果差を許容しない）
+- [ ] Harness 正式入口は、既存の `plan.md`/`proposal.md` 全面差替えによる停止かどうかを区別して報告（Harness infrastructure は変更しない）
+- [ ] 独立レビュー（結果同等性、cross contamination、失敗の誤伝播、Sheets 排他・retry、文書の誤記・過剰主張）。重大な問題のみ修正して再検証
+- [ ] `.harness/reports/reliability-stage4c-2026-10-12.md` に報告（形式は proposal の「完了報告」1〜9）。Growth へ進まず停止
 
 ### 例外・エラーハンドリング方針
-- 失敗は「分類して残す」。正常系の戻り値を変えない（空 DataFrame/None を返す既存契約は維持し、分類は付随情報で渡す）。想定外例外は握り潰さず上位へ伝える。
-- 公開ログ・Slack・stdout には分類名・件数・HTTP status・retry 回数のみ。ticker・URL・response body・生例外本文・secret は出さない。
-- 保存は「旧ファイル維持」を最優先。temp は同一ディレクトリ、失敗時に削除。immutable snapshot は上書きしない。
-- 通知は best-effort のまま（スキャンを失敗させない）。「少なくとも 1 回送る」を目指すが exactly-once は保証しない。
+- 共有は「取得結果（成功値または例外）を ticker ごとに run 内で 1 回だけ作り、position ごとに独立に消費する」。失敗は同一 ticker の position に一貫して伝え、他 ticker・他 position の固有計算には伝播させない。想定外例外（Q07）を握り潰さない。
+- Sheets は共有に失敗しても従来の挙動（呼出しごとに接続）に戻れる構造にし、接続失敗をキャッシュしない。
+- 共有する中間結果は読み取り専用（copy または書込み不可）。可変 DataFrame を position・horizon 間で共有しない。
+- 公開ログに ticker・保有明細・URL・秘密情報を出さない（Q02/Q07 を維持）。
 
 ### テスト/検証方針
-- 自動テスト: `uv run --offline pytest -q -p no:cacheprovider tests/<対象>`（対象別）→ 全テスト `uv run --offline pytest -q -p no:cacheprovider` → `uv run --offline ruff check src scripts tests` → `uv run --offline mypy src scripts`
-- 手動確認観点: workflow YAML の権限・条件式を目視（`pull_request_target` 無し、fork で secret 参照ステップが走らない）。実 Actions・実 Slack は確認不能（報告で分離）。
-- baseline: 有効入力での戦略数値不変を、既存テストの無変更通過と代表入力の before/after 比較で確認。
+- 自動テスト: `uv run --offline pytest -q -p no:cacheprovider tests/<対象>` → 全テスト `uv run --offline pytest -q -p no:cacheprovider` → `uv run --offline ruff check src scripts tests` → `uv run --offline mypy src scripts`
+- 結果同等性: Step 1 の before 出力と after の完全一致（`==`、キー順を含む JSON 比較）。構造指標（provider call 数・Sheets connection 数・`_series` 呼出し数）を before/after の数値で報告。実行時間・peak memory は参考値（小さな差を根拠にしない）。
+- 手動確認観点: 文書の各事実が workflow・`.env.example`・コードと一致していること、過去記録が無変更であること。実 GitHub Actions・実 Slack・実 provider・実 Google Sheets は確認不能（報告で分離）。
 
 ### リスクと対策
-1. リスク: `uv sync --frozen` への置換で CI の解決結果が変わり、既存テストが CI でだけ落ちる → 対策: ローカルで `uv sync --frozen` した環境で全テストを実行。差があれば lockfile を機械更新せず内容を報告。
-2. リスク: Action SHA 固定が浮動タグ（v7）の現在位置とずれる、または非公式 fork の SHA を指す → 対策: 公式リポジトリへの `git ls-remote` のみ使用し、置換前に再確認、コメントに日付と元タグを記録。
-3. リスク: path filter 単純化で PR のたびに重い処理が走る → 対策: 重い復号処理は PR で走らせず、軽量検証のみ全 PR。
-4. リスク: ダイジェスト状態ファイルの導入で設計が過剰になる／状態の書込みと Git push の順序で重複・消失が起きる → 対策: 状態は `pending`/`succeeded` の 2 値と日付のみ、atomic write で書き、snapshot と同一コミットで push する。旧 snapshot は送らない（`skipped:legacy-no-state`）。完全な exactly-once は目標にせず、重複し得る境界を文書化する。
-5. リスク: atomic write 化で書込み先 FS の挙動（Windows/WSL の replace）が変わる → 対策: 同一ディレクトリ temp + `os.replace`、既存パターンと同じ流儀。保存バイト列の同一性テスト。
-6. リスク: Q07 の分類追加が公開ログに情報を漏らす → 対策: 分類は列挙型のみ、例外本文を見る処理を作らない。Q02 の漏洩テストを再実行。
-7. リスク: 既存テストが旧挙動（広い except による握り潰し）を固定している → 対策: 該当テストは意図を確認し、新仕様（分類して残す・想定外は伝播）に合わせる場合は理由を報告。単なる合わせ込みはしない。
+1. リスク: 履歴 frame を ticker 単位で共有すると、`start` が異なる従来の取得と微妙に結果が変わる（欠損判定・`daily_bars` の範囲） → 対策: 共有 frame を購入日で切り出して同一にし、単体呼出しとの完全一致を比較テストで固定。一致しない箇所は共有しない。
+2. リスク: 共有 `bars` の `attrs` や DataFrame を一方が書き換える → 対策: position ごとに copy。cross contamination テストを追加。
+3. リスク: Sheets の spreadsheet 共有で retry・認証エラー・writer 排他の挙動が変わる → 対策: context manager 内に限定、失敗はキャッシュしない、公開関数のシグネチャ・batch 内容を変えない。既存テスト無変更で PASS。
+4. リスク: 評価系列の共有で浮動小数点順序や dtype が変わり結果が微小に変わる → 対策: 同じ演算を同じ順序で行い、結果の再利用に限定。before 出力との完全一致比較。差が出れば採用しない。
+5. リスク: 計測の結果、重複が小さく最適化の効果が薄い → 対策: 無理に変更せず「変更不要」と報告（依頼文が許容）。
+6. リスク: 文書更新で未確認の事実を断定する、または過去記録を誤って書き換える → 対策: 各事実を workflow・コードで確認してから書く。差分を現行仕様文書に限定し、過去記録の差分 0 を確認。
+7. リスク: 作業ツリーに過去ファイルの削除などの未コミット差分があり、task 対象の差分ガードが判定しにくい → 対策: 変更ファイルを列挙して task 対象を指定。Harness の既存停止理由は区別して報告。
 
 ### 完了条件
-- [ ] REQ-062: 変更カテゴリごとの検証起動と、secret あり/なし × イベント別の静的テストが PASS。fork PR に secret を渡す構成が無い
-- [ ] REQ-063: 通知状態（`pending`/`succeeded`）が run をまたいで保存され、通常実行の判定規則（①〜④）と障害境界 7 ケースが fake Slack でテスト済み。保証できない境界が `docs/playbooks.md` に明記
-- [ ] REQ-064: 全 Action が SHA 固定（元タグコメント付き）、依存は `uv.lock` から導入、権限・secret が最小化され静的テスト PASS
-- [ ] REQ-065: 分類 9 種が fake provider で区別され、公開出力に機微情報なし、Retry-After が有限・非負・上限付き。想定外例外は握り潰されない
-- [ ] REQ-066: 該当書込みが atomic、旧ファイル維持・immutable・二重実行・新規 dir・temp 非混入のテスト PASS
-- [ ] REQ-067: 境界テストが各 REQ に対応。外部通信試行数 0
-- [ ] 全テスト PASS、ruff PASS、mypy 新規エラー 0（31 件の内容差分なし）、保存済み snapshot・archive 変更 0、戦略数値 baseline 不変
-- [ ] Stage 4B レポート作成後に停止（Stage 4C 未着手）
+- [ ] REQ-068: before/after の provider call 数・Sheets connection 数が具体的な数値で報告され、重複が構造的に減った（または「変更不要」の根拠が示された）。正常入力の全指標が完全一致。禁止された最適化（永続 cache・並列・新依存等）を導入していない
+- [ ] REQ-069: 現行仕様文書が現行コード・workflow・`.env.example` と一致し、機能状態が区別されている。exactly-once・複数成果物の transaction を主張していない。過去記録は無変更。更新した文書ごとの「古かった点／合わせた先」と、変更しなかった文書が報告されている
+- [ ] REQ-070: 境界テストが受入条件に対応。外部通信試行数 0、保存済み snapshot・archive 変更 0
+- [ ] 全テスト PASS、ruff PASS、mypy 新規エラー 0（既知 31件の内容差分なし）、`uv.lock` 差分なし、`git diff --check` と task 対象 minimal diff guard の結果が報告されている
+- [ ] Stage 4A/4B・第1〜第3段階の回帰 PASS
+- [ ] Stage 4C レポート作成後に停止（Growth 未着手）

@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from numbers import Real
 from typing import Any
 
@@ -12,6 +15,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+_shared_spreadsheet: ContextVar[dict[str, Any] | None] = ContextVar("shared_spreadsheet", default=None)
 STATUS_COLUMNS = (
     "ticker",
     "entry_date",
@@ -34,7 +38,20 @@ STATUS_COLUMNS = (
 )
 
 
+@contextmanager
+def shared_spreadsheet() -> Iterator[None]:
+    """Reuse one lazily opened spreadsheet within a monitor run; discard it on exit."""
+    token = _shared_spreadsheet.set({})
+    try:
+        yield
+    finally:
+        _shared_spreadsheet.reset(token)
+
+
 def _worksheet(name: str) -> Any:
+    shared = _shared_spreadsheet.get()
+    if shared is not None and "spreadsheet" in shared:
+        return shared["spreadsheet"].worksheet(name)
     raw_credentials = os.getenv("GOOGLE_CREDENTIALS_JSON")
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
     if not raw_credentials or not sheet_id:
@@ -46,7 +63,10 @@ def _worksheet(name: str) -> Any:
     if not isinstance(info, dict):
         raise TypeError("GOOGLE_CREDENTIALS_JSON must be a JSON object")
     credentials = Credentials.from_service_account_info(info, scopes=SCOPES)  # type: ignore[no-untyped-call]
-    return gspread.authorize(credentials).open_by_key(sheet_id).worksheet(name)
+    spreadsheet = gspread.authorize(credentials).open_by_key(sheet_id)
+    if shared is not None:
+        shared["spreadsheet"] = spreadsheet
+    return spreadsheet.worksheet(name)
 
 
 def read_holdings(worksheet_name: str = "保有銘柄") -> list[dict[str, Any]]:

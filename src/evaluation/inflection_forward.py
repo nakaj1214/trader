@@ -13,6 +13,7 @@ from src.evaluation.inflection_backtest import (
     TradeResult,
     _series,
     cluster_bootstrap_ci,
+    copy_price_series,
     simulate_signal,
 )
 
@@ -179,10 +180,11 @@ def paired_benchmark_returns(
     *,
     round_trip_cost_pct: float,
     benchmark_ticker: str = BENCHMARK_TICKER,
+    prepared_series: tuple[pd.Series, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Attach a benchmark return over each trade's actual entry/exit dates."""
-    opens = _series(benchmark_history, "Open")
-    closes = _series(benchmark_history, "Close")
+    opens, closes = ((_series(benchmark_history, "Open"), _series(benchmark_history, "Close"))
+                     if prepared_series is None else copy_price_series(prepared_series))
     rows: list[dict[str, Any]] = []
     for trade in trades:
         empty = {

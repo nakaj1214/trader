@@ -603,6 +603,59 @@ def test_group_report_has_all_horizons_stops_and_aligned_breakdowns() -> None:
     assert report["deflated_sharpe"]["trial_count"] == 0
 
 
+def test_group_report_preparation_sharing_matches_uncached_report_and_key_order(monkeypatch) -> None:
+    import src.evaluation.inflection_backtest as backtest
+    import src.evaluation.inflection_forward as forward
+    import src.evaluation.inflection_report as report_module
+
+    index = pd.bdate_range("2024-01-01", periods=310)
+    close = [100 + day * 0.08 + (day % 9) * 0.1 for day in range(len(index))]
+    history = pd.DataFrame({"Open": close, "Close": close,
+                            "High": [price + 2 for price in close],
+                            "Low": [price - 1 for price in close]}, index=index)
+    split = history * 1.1
+    signals = [{"ticker": ticker, "signal_date": str(index[day].date()), "score": score}
+               for ticker, day, score in [("A.T", 25, 70), ("B.T", 30, 90), ("A.T", 35, 80)]]
+    args = (signals, {"A.T": history, "B.T": history}, {"A.T": split, "B.T": split}, history,
+            [row["signal_date"] for row in signals])
+    with monkeypatch.context() as uncached:
+        uncached.setattr(report_module, "prepare_price_series", lambda *_args: None)
+        uncached.setattr(report_module, "prepare_calendar", lambda *_args: None)
+        before = _build_group_report(*args)
+    calls = []
+    original = backtest._series
+
+    def counted(frame, column):
+        calls.append(column)
+        return original(frame, column)
+
+    monkeypatch.setattr(backtest, "_series", counted)
+    monkeypatch.setattr(forward, "_series", counted)
+    monkeypatch.setattr(report_module, "_series", counted)
+    after = _build_group_report(*args)
+    # Four prices per ticker per price adjustment, plus benchmark Open/Close; candidate exit rules stay independent.
+    assert len(calls) == 2 * 2 * 4 + 2
+    assert after == before
+    assert json.dumps(after, allow_nan=False) == json.dumps(before, allow_nan=False)
+    history.loc[index[50], "Close"] += 1
+    assert _build_group_report(*args) != after  # No data survives into the next report.
+
+
+def test_prepared_benchmark_preserves_actual_date_pairing_and_isolated_inputs() -> None:
+    from src.evaluation.inflection_backtest import prepare_price_series
+
+    history = _history(100.0, [110.0, 120.0, 130.0])
+    trade = simulate_signal({"ticker": "A.T", "signal_date": "2026-01-05", "score": 80},
+                            history, holding_days=1)
+    prepared = prepare_price_series(history, ("Open", "Close"))
+    before = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05)
+    after = paired_benchmark_returns([trade], history, round_trip_cost_pct=0.05, prepared_series=prepared)
+    assert before == after
+    assert json.dumps(before) == json.dumps(after)
+    prepared[0].iloc[0] = 1.0
+    assert history["Open"].iloc[0] == 100.0
+
+
 def test_return_moments_and_dsr_match_a_hand_calculated_reference() -> None:
     # [0, 1, 2]: mean=1, sample variance=1, m2=2/3, m3=0, m4=2/3.
     assert _return_moments([0.0, 1.0, 2.0]) == pytest.approx({"sharpe": 1.0, "skew": 0.0, "kurt": 1.5})

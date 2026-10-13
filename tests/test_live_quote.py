@@ -10,10 +10,12 @@ import pytest
 
 from src.data.live_quote import (
     build_today_quote,
+    configure_split_history_sharing,
     fetch_session_bars,
     fetch_split_adjusted_history,
     fetch_today_bars,
     fetch_today_quote,
+    shared_split_history_frames,
 )
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -50,6 +52,57 @@ def test_split_history_excludes_entry_and_current_dates() -> None:
     assert result.entry_price == pytest.approx(100.0 / 6.0)
     assert [timestamp.date().isoformat() for timestamp in result.daily_highs.index] == dates[1:-1]
     assert result.daily_highs.tolist() == pytest.approx([21.0, 22.0, 23.0, 24.0])
+
+
+def test_split_history_shares_one_raw_frame_but_keeps_position_ranges() -> None:
+    full = _daily_history(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"])
+    full.loc[pd.Timestamp("2026-09-03", tz=JST), "Stock Splits"] = 2.0
+    full.loc[pd.Timestamp("2026-09-08", tz=JST), "Stock Splits"] = 3.0
+    full.attrs["position"] = {"marker": "clean"}
+    ticker = Mock()
+    ticker.history.side_effect = lambda **kwargs: full.loc[full.index.date >= datetime.fromisoformat(
+        str(kwargs["start"])
+    ).date()]
+    with (
+        patch("src.data.live_quote.yf.Ticker", return_value=ticker),
+        patch("src.data.live_quote._now_jst", return_value=NOW),
+    ):
+        expected = [fetch_split_adjusted_history("1111.T", entry_date, price)
+                    for entry_date, price in (("2026-09-01", 100.0), ("2026-09-04", 90.0))]
+        ticker.history.reset_mock()
+        with shared_split_history_frames():
+            configure_split_history_sharing({"1111.T": "2026-09-01"})
+            early = fetch_split_adjusted_history("1111.T", "2026-09-01", 100.0)
+            late = fetch_split_adjusted_history("1111.T", "2026-09-04", 90.0)
+
+    ticker.history.assert_called_once_with(
+        start="2026-09-01", auto_adjust=False, actions=True, keepna=True, timeout=15,
+    )
+    assert early.daily_bars.index[0].date().isoformat() == "2026-09-01"
+    assert late.daily_bars.index[0].date().isoformat() == "2026-09-04"
+    for actual, standalone in zip((early, late), expected, strict=True):
+        assert actual.entry_price == standalone.entry_price
+        pd.testing.assert_series_equal(actual.daily_highs, standalone.daily_highs)
+        pd.testing.assert_series_equal(actual.daily_closes, standalone.daily_closes)
+        pd.testing.assert_frame_equal(actual.daily_bars, standalone.daily_bars)
+        assert actual.daily_bars.attrs == standalone.daily_bars.attrs
+    assert early.entry_price == 100.0 / 6.0
+    assert late.entry_price == 90.0 / 3.0
+    assert late.daily_highs.index.map(lambda value: value.date().isoformat()).tolist() == ["2026-09-07"]
+    early.daily_bars.attrs["position"]["marker"] = "changed"
+    assert late.daily_bars.attrs["position"] == {"marker": "clean"}
+
+
+def test_split_history_sharing_caches_only_provider_failure() -> None:
+    ticker = Mock()
+    ticker.history.side_effect = RuntimeError("provider unavailable")
+    with patch("src.data.live_quote.yf.Ticker", return_value=ticker), shared_split_history_frames():
+        configure_split_history_sharing({"1111.T": "2026-09-01"})
+        for entry_date in ("2026-09-01", "2026-09-04"):
+            with pytest.raises(RuntimeError):
+                fetch_split_adjusted_history("1111.T", entry_date, 100.0)
+
+    assert ticker.history.call_count == 1
 
 
 def test_entry_day_allows_empty_raw_history() -> None:

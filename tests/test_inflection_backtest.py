@@ -145,6 +145,49 @@ def test_evaluation_rejects_duplicate_daily_prices() -> None:
         simulate_signal({"ticker": "A.T", "signal_date": "2026-01-01", "score": 80}, history, holding_days=2)
 
 
+@pytest.mark.parametrize("holding_days", [2, 5])
+@pytest.mark.parametrize("trailing_stop_pct", [None, 15.0])
+def test_prepared_prices_and_calendar_preserve_trades_and_missing_price_diagnostics(
+    holding_days, trailing_stop_pct,
+) -> None:
+    from src.evaluation.inflection_backtest import prepare_calendar, prepare_price_series
+
+    calendar = pd.bdate_range("2026-01-01", periods=8, tz="Asia/Tokyo")
+    history = pd.DataFrame(
+        {"Open": [100, 110, 112, 113, 90, 100, 102, 103],
+         "Close": [102, 112, 113, 115, 91, 102, 103, 104],
+         "High": [104, 115, 118, 119, 94, 104, 105, 106],
+         "Low": [98, 109, 111, 111, 87, 98, 100, 101]},
+        index=calendar,
+    ).drop(calendar[5]).iloc[::-1]
+    signal = {"ticker": "A.T", "signal_date": "2026-01-01", "score": 80}
+    kwargs = {"holding_days": holding_days, "trailing_stop_pct": trailing_stop_pct,
+              "market_calendar": calendar}
+    before = simulate_signal(signal, history, **kwargs)
+    after = simulate_signal(signal, history, **kwargs, prepared_series=prepare_price_series(history),
+                            prepared_calendar=prepare_calendar(calendar))
+    assert before.as_dict() == after.as_dict()
+
+
+def test_prepared_price_copies_isolate_values_and_index_from_consumers_and_history() -> None:
+    from src.evaluation.inflection_backtest import copy_price_series, prepare_price_series
+
+    history = _history([100.0, 110.0, 120.0], [105.0, 115.0, 125.0])
+    original = history.copy(deep=True)
+    original.index = history.index.copy(deep=True)
+    prepared = prepare_price_series(history)
+    first = copy_price_series(prepared)
+    second = copy_price_series(prepared)
+    first[0].iloc[0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        first[0].index.values[0] = pd.Timestamp("2000-01-01").to_datetime64()
+    first[0].index = pd.bdate_range("2000-01-01", periods=len(first[0]))
+    pd.testing.assert_series_equal(prepared[0], second[0])
+    assert second[0].iloc[0] == 100.0
+    assert second[0].index[0] == original.index[0]
+    pd.testing.assert_frame_equal(history, original)
+
+
 def test_tax_applies_only_to_positive_net_profit() -> None:
     history = _history([100, 100, 100], [100, 110, 120])
     untaxed = simulate_signal(

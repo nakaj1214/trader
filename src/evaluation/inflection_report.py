@@ -24,7 +24,10 @@ from src.evaluation.exit_rules import (
 from src.evaluation.inflection_backtest import (
     TradeResult,
     _series,
+    copy_price_series,
     filter_matured,
+    prepare_calendar,
+    prepare_price_series,
     score_band,
     select_non_overlapping_trades,
     simulate_signals,
@@ -66,8 +69,10 @@ def _summary_only(value: Any) -> Any:
     return value
 
 
-def regime_label(benchmark_history: pd.DataFrame, signal_date: str) -> str:
-    closes = _series(benchmark_history, "Close")
+def regime_label(
+    benchmark_history: pd.DataFrame, signal_date: str, prepared_closes: pd.Series | None = None,
+) -> str:
+    closes = _series(benchmark_history, "Close") if prepared_closes is None else prepared_closes.copy(deep=True)
     available = closes[closes.index <= pd.Timestamp(signal_date)]
     if len(available) < 21:
         return "unknown"
@@ -77,11 +82,16 @@ def regime_label(benchmark_history: pd.DataFrame, signal_date: str) -> str:
 REGIME_KINDS = {"trend": ("up", "down", "unknown"), "volatility": ("high", "normal", "unknown")}
 
 
-def _regime_breakdown(completed: list[TradeResult], benchmark_history: pd.DataFrame) -> dict[str, Any]:
+def _regime_breakdown(
+    completed: list[TradeResult], benchmark_history: pd.DataFrame,
+    prepared_benchmark: tuple[pd.Series, ...] | None = None,
+) -> dict[str, Any]:
     """Results split by the benchmark's trend and volatility regime on each signal date."""
-    closes = _series(benchmark_history, "Close")
+    closes = (_series(benchmark_history, "Close") if prepared_benchmark is None
+              else copy_price_series(prepared_benchmark)[1])
     pairs = paired_benchmark_returns(
-        completed, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT
+        completed, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
+        prepared_series=prepared_benchmark,
     )
     labels_by_date: dict[str, dict[str, str]] = {}
     groups: dict[str, dict[str, list[tuple[float, float | None]]]] = {
@@ -112,28 +122,33 @@ def _regime_breakdown(completed: list[TradeResult], benchmark_history: pd.DataFr
 def _report_breakdowns(
     trades: list[TradeResult],
     benchmark_history: pd.DataFrame,
+    prepared_benchmark: tuple[pd.Series, ...] | None = None,
 ) -> dict[str, Any]:
     completed = [trade for trade in trades if trade.net_return_pct is not None]
     score_counts = {**{f"{value}-{value + 9}": 0 for value in range(0, 100, 10)}, "100": 0}
     regime_counts = {"up": 0, "down": 0, "unknown": 0}
     for trade in completed:
         score_counts[score_band(trade.score)] += 1
-        regime_counts[regime_label(benchmark_history, trade.signal_date)] += 1
+        regime_counts[regime_label(
+            benchmark_history, trade.signal_date, prepared_benchmark[1] if prepared_benchmark is not None else None,
+        )] += 1
     return {
         "score_band_sample_counts": score_counts,
         "regime_sample_counts": regime_counts,
-        "regime_breakdown": _regime_breakdown(completed, benchmark_history),
+        "regime_breakdown": _regime_breakdown(completed, benchmark_history, prepared_benchmark),
     }
 
 
 def _paired_trade_rows(
     trades: list[TradeResult],
     benchmark_history: pd.DataFrame,
+    prepared_benchmark: tuple[pd.Series, ...] | None = None,
 ) -> list[dict[str, Any]]:
     benchmarks = paired_benchmark_returns(
         trades,
         benchmark_history,
         round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
+        prepared_series=prepared_benchmark,
     )
     return [trade.as_dict() | benchmark for trade, benchmark in zip(trades, benchmarks, strict=True)]
 
@@ -175,12 +190,13 @@ def _exit_strategy_report(
     market_benchmarks: dict[str, pd.DataFrame] | None = None,
     ticker_markets: dict[tuple[str, str], str] | None = None,
     market_benchmark_error: str | None = None,
+    prepared_benchmark: tuple[pd.Series, ...] | None = None,
 ) -> dict[str, Any]:
     """The per-exit-rule block of a group report (same shape for every rule)."""
     matured_trades = filter_matured(trades)
     matured_stress_trades = filter_matured(stress_trades)
-    trade_rows = _paired_trade_rows(trades, benchmark_history)
-    stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
+    trade_rows = _paired_trade_rows(trades, benchmark_history, prepared_benchmark)
+    stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history, prepared_benchmark)
     matured_rows = [row for trade, row in zip(trades, trade_rows, strict=True) if trade.horizon_matured is True]
     matured_stress_rows = [
         row for trade, row in zip(stress_trades, stress_trade_rows, strict=True) if trade.horizon_matured is True
@@ -190,7 +206,7 @@ def _exit_strategy_report(
         "raw_summary": summarize_trades(stress_trades),
         "position_summary": summarize_trades(select_non_overlapping_trades(matured_stress_trades)),
         "benchmark_excess": summarize_benchmark_excess(matured_stress_rows),
-        **_report_breakdowns(matured_stress_trades, benchmark_history),
+        **_report_breakdowns(matured_stress_trades, benchmark_history, prepared_benchmark),
         "trades": stress_trade_rows,
     }
     report = {
@@ -202,7 +218,7 @@ def _exit_strategy_report(
         "raw_summary": summarize_trades(trades),
         "position_summary": summarize_trades(select_non_overlapping_trades(matured_trades)),
         "benchmark_excess": summarize_benchmark_excess(matured_rows),
-        **_report_breakdowns(matured_trades, benchmark_history),
+        **_report_breakdowns(matured_trades, benchmark_history, prepared_benchmark),
         "trades": trade_rows,
         "stress": stress_report,
     }
@@ -307,39 +323,52 @@ def _build_group_report(
 ) -> dict[str, Any]:
     horizons: dict[str, object] = {}
     calendar = pd.DatetimeIndex(benchmark_history.index)
+    prepared_calendar = prepare_calendar(calendar)
+    tickers = dict.fromkeys(str(signal["ticker"]) for signal in signals)
+    prepared_histories = {
+        ticker: prepare_price_series(histories.get(ticker, pd.DataFrame())) for ticker in tickers
+    }
+    prepared_split_histories = {
+        ticker: prepare_price_series(split_histories.get(ticker, pd.DataFrame())) for ticker in tickers
+    }
+    prepared_benchmark = prepare_price_series(benchmark_history, ("Open", "Close"))
     for holding_days in (5, 20, 60, 126, 252):
         trades = simulate_signals(
             signals,
             histories,
             holding_days=holding_days,
             market_calendar=calendar,
+            prepared_histories=prepared_histories,
+            prepared_calendar=prepared_calendar,
             round_trip_cost_pct=ROUND_TRIP_COST_PCT,
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
         )
-        trade_rows = _paired_trade_rows(trades, benchmark_history)
+        trade_rows = _paired_trade_rows(trades, benchmark_history, prepared_benchmark)
         stress_trades = simulate_signals(
             signals,
             histories,
             holding_days=holding_days,
             market_calendar=calendar,
+            prepared_histories=prepared_histories,
+            prepared_calendar=prepared_calendar,
             round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
             tax_rate_pct=TAX_RATE_PCT,
             apply_tax=False,
         )
-        stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history)
+        stress_trade_rows = _paired_trade_rows(stress_trades, benchmark_history, prepared_benchmark)
         stress_report: dict[str, Any] = {
             "summary": summarize_trades(stress_trades),
             "position_summary": summarize_trades(select_non_overlapping_trades(stress_trades)),
             "benchmark_excess": summarize_benchmark_excess(stress_trade_rows),
-            **_report_breakdowns(stress_trades, benchmark_history),
+            **_report_breakdowns(stress_trades, benchmark_history, prepared_benchmark),
             "trades": stress_trade_rows,
         }
         horizons[f"h{holding_days}"] = {
             "summary": summarize_trades(trades),
             "position_summary": summarize_trades(select_non_overlapping_trades(trades)),
             "benchmark_excess": summarize_benchmark_excess(trade_rows),
-            **_report_breakdowns(trades, benchmark_history),
+            **_report_breakdowns(trades, benchmark_history, prepared_benchmark),
             "trades": trade_rows,
             "stress": stress_report,
         }
@@ -353,6 +382,8 @@ def _build_group_report(
                 split_histories,
                 holding_days=holding_days,
                 market_calendar=calendar,
+                prepared_histories=prepared_split_histories,
+                prepared_calendar=prepared_calendar,
                 round_trip_cost_pct=ROUND_TRIP_COST_PCT,
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
@@ -362,6 +393,8 @@ def _build_group_report(
                 split_histories,
                 holding_days=holding_days,
                 market_calendar=calendar,
+                prepared_histories=prepared_split_histories,
+                prepared_calendar=prepared_calendar,
                 round_trip_cost_pct=STRESS_ROUND_TRIP_COST_PCT,
                 apply_tax=False,
                 trailing_stop_pct=trailing_stop_pct,
@@ -374,6 +407,7 @@ def _build_group_report(
                 rule="prior_confirmed_high_water_mark",
                 max_holding_days=holding_days,
                 benchmark_history=benchmark_history,
+                prepared_benchmark=prepared_benchmark,
                 market_benchmarks=market_benchmarks,
                 ticker_markets=ticker_markets,
                 market_benchmark_error=market_benchmark_error,
@@ -407,6 +441,7 @@ def _build_group_report(
             rule=describe_rule(exit_rule),
             max_holding_days=NEW_EXIT_HOLDING_DAYS,
             benchmark_history=benchmark_history,
+            prepared_benchmark=prepared_benchmark,
             market_benchmarks=market_benchmarks,
             ticker_markets=ticker_markets,
             market_benchmark_error=market_benchmark_error,

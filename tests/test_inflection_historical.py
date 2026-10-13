@@ -517,6 +517,54 @@ def test_kill_criterion_ignores_non_finite_excess_values(bad: object) -> None:
     assert kill_criterion(pairs, min_independent=1)["valid_pairs"] == 7
 
 
+def _kill_criterion_via_lag_report(histories_end: dict[str, int], signal_days: dict[str, int]) -> dict[str, Any]:
+    """Run ``_lag_report`` on synthetic EARLY signals; ``histories_end`` is each ticker's last session index."""
+    from src.evaluation.inflection_historical import _lag_report
+
+    sessions = pd.bdate_range("2026-01-05", periods=140)
+
+    def frame(count: int, step: float) -> pd.DataFrame:
+        values = [100.0 + step * i for i in range(count)]
+        return pd.DataFrame({"Open": values, "High": values, "Low": values, "Close": values}, index=sessions[:count])
+
+    histories = {ticker: frame(end, 1.0) for ticker, end in histories_end.items()}
+    signals = [
+        {"ticker": ticker, "signal_date": str(sessions[day].date()), "score": 80.0, "classification": "EARLY_CANDIDATE",
+         "market": "プライム", "avg_turnover_20d_jpy": 1e9}
+        for ticker, day in signal_days.items()
+    ]
+    report, _ = _lag_report(
+        signals, {}, histories, frame(140, 0.05), min_independent=2, market_calendar=pd.DatetimeIndex(sessions),
+    )
+    return report["kill_criterion"]  # type: ignore[no-any-return]
+
+
+def test_kill_criterion_holds_while_a_matured_outcome_is_unresolved() -> None:
+    # 3333.T's prices stop after 25 sessions: its h60 has matured but cannot be evaluated.
+    result = _kill_criterion_via_lag_report(
+        {"1111.T": 140, "2222.T": 140, "3333.T": 25}, {"1111.T": 0, "2222.T": 1, "3333.T": 2}
+    )
+
+    assert result["verdict"] == "incomplete" and result["reason"] == "matured_unresolved_outcomes"
+    assert result["unresolved_matured"] == 1 and result["valid_pairs"] == 2
+
+
+def test_kill_criterion_does_not_hold_for_a_right_censored_outcome() -> None:
+    # 3333.T's signal is too recent for h60 to mature: it is excluded, not unresolved.
+    result = _kill_criterion_via_lag_report(
+        {"1111.T": 140, "2222.T": 140, "3333.T": 140}, {"1111.T": 0, "2222.T": 1, "3333.T": 120}
+    )
+
+    assert result["unresolved_matured"] == 0
+    assert result["verdict"] == "pass" and result["valid_pairs"] == 2
+
+
+def test_kill_criterion_reports_zero_unresolved_when_every_outcome_is_complete() -> None:
+    result = _kill_criterion_via_lag_report({"1111.T": 140, "2222.T": 140}, {"1111.T": 0, "2222.T": 1})
+
+    assert (result["verdict"], result["unresolved_matured"]) == ("pass", 0)
+
+
 # --- lag comparison ---------------------------------------------------------------------------
 
 

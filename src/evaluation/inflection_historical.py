@@ -30,6 +30,7 @@ from src.data.jquants_v2_client import financial_disclosure_at, financial_rows_a
 from src.data.validation import is_finite_number, validate_ohlcv
 from src.evaluation.inflection_backtest import (
     BOOTSTRAP_SEED,
+    TradeResult,
     cluster_bootstrap_ci,
     select_non_overlapping_trades,
     simulate_signals,
@@ -467,6 +468,31 @@ def collect_signals(
     return collected
 
 
+def _h60_trades(
+    signals: list[dict[str, Any]],
+    histories: dict[str, pd.DataFrame],
+    benchmark_history: pd.DataFrame,
+    market_calendar: pd.DatetimeIndex | None,
+) -> list[TradeResult]:
+    return simulate_signals(
+        signals, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
+        market_calendar=pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar),
+    )
+
+
+def unresolved_matured_h60(
+    signals: list[dict[str, Any]],
+    histories: dict[str, pd.DataFrame],
+    benchmark_history: pd.DataFrame,
+    market_calendar: pd.DatetimeIndex | None = None,
+) -> int:
+    """h60 trades whose horizon has matured but that cannot be evaluated (same rule as learning's coverage)."""
+    return sum(
+        trade.horizon_matured is True and trade.net_return_pct is None
+        for trade in _h60_trades(signals, histories, benchmark_history, market_calendar)
+    )
+
+
 def h60_excess_pairs(
     signals: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
@@ -474,10 +500,7 @@ def h60_excess_pairs(
     market_calendar: pd.DatetimeIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Independent (one open position per ticker), completed h60 trades with their TOPIX-ETF excess return."""
-    trades = simulate_signals(
-        signals, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
-        market_calendar=pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar),
-    )
+    trades = _h60_trades(signals, histories, benchmark_history, market_calendar)
     independent = select_non_overlapping_trades(trades)
     paired = paired_benchmark_returns(
         independent, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT
@@ -492,9 +515,16 @@ def _valid_pairs(pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [pair for pair in pairs if is_finite_number(pair.get("excess_return_pct"))]
 
 
-def kill_criterion(pairs: list[dict[str, Any]], *, min_independent: int = DEFAULT_MIN_INDEPENDENT) -> dict[str, Any]:
+def kill_criterion(
+    pairs: list[dict[str, Any]],
+    *,
+    min_independent: int = DEFAULT_MIN_INDEPENDENT,
+    unresolved_matured: int = 0,
+) -> dict[str, Any]:
     """Provisional stop rule on the h60 excess return over TOPIX (signal_date-cluster bootstrap).
 
+    ``incomplete`` while any matured h60 outcome is unresolved: the pairs hold only completed trades, so a
+    pass or fail would silently ignore them (learning holds its promotions in the same situation).
     ``insufficient_sample`` when there are fewer valid pairs than ``min_independent`` or no CI can be built;
     otherwise ``pass`` iff the CI lower bound is above zero.
     """
@@ -510,9 +540,12 @@ def kill_criterion(pairs: list[dict[str, Any]], *, min_independent: int = DEFAUL
         "signal_date_clusters": len(set(dates)),
         "mean_excess_return_pct": round(mean(values), 6) if values else None,
         "ci95": list(ci) if ci is not None else None,
+        "unresolved_matured": unresolved_matured,
         "reason": None,
     }
-    if len(valid) < min_independent:
+    if unresolved_matured > 0:
+        result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
+    elif len(valid) < min_independent:
         result |= {"verdict": "insufficient_sample", "reason": "below_min_independent"}
     elif ci is None:
         result |= {"verdict": "insufficient_sample", "reason": "ci_unavailable"}
@@ -642,7 +675,11 @@ def _lag_report(
             [signal for signal in signals if signal["classification"] != "CONTROL"], histories
         ),
         "yoy_coverage_by_month": yoy,
-        "kill_criterion": kill_criterion(pairs, min_independent=min_independent),
+        "kill_criterion": kill_criterion(
+            pairs,
+            min_independent=min_independent,
+            unresolved_matured=unresolved_matured_h60(early, histories, benchmark_history, calendar),
+        ),
     }
     return report, pairs
 

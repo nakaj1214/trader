@@ -541,3 +541,54 @@ def test_cluster_bootstrap_is_deterministic_and_requires_two_clusters() -> None:
 )
 def test_score_band_covers_valid_score_range(value: float, expected: str) -> None:
     assert score_band(value) == expected
+
+
+# --- entry delay: a stock without a bar at the next market session enters later, and says so ---------------
+
+
+def _delay_history(calendar: pd.DatetimeIndex, missing: list[int]) -> pd.DataFrame:
+    values = [100.0 + 5.0 * i for i in range(len(calendar))]
+    frame = pd.DataFrame({"Open": values, "High": values, "Low": values, "Close": values}, index=calendar)
+    return frame.drop(calendar[missing])
+
+
+def _delay_trade(missing: list[int], **kwargs: object):  # type: ignore[no-untyped-def]
+    calendar = pd.bdate_range("2026-01-05", periods=12)
+    return simulate_signal(
+        {"ticker": "A.T", "signal_date": "2026-01-05", "score": 80}, _delay_history(calendar, missing),
+        holding_days=5, **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_a_delayed_entry_keeps_its_result_and_records_the_delay() -> None:
+    calendar = pd.bdate_range("2026-01-05", periods=12)
+    trade = _delay_trade([1], market_calendar=calendar)
+
+    # The established behaviour (Stage 1 / C05): the position is entered at the next open the stock has.
+    assert trade.entry_date == "2026-01-07" and trade.entry_price == 110.0
+    assert trade.net_return_pct is not None and trade.horizon_matured is True
+    assert trade.price_diagnostics["entry_delay_sessions"] == 1
+    assert trade.price_diagnostics["unevaluated_reason"] is None
+
+
+def test_consecutive_missing_sessions_are_counted_as_the_delay() -> None:
+    calendar = pd.bdate_range("2026-01-05", periods=12)
+    trade = _delay_trade([1, 2], market_calendar=calendar)
+
+    assert trade.entry_date == "2026-01-08" and trade.price_diagnostics["entry_delay_sessions"] == 2
+
+
+def test_an_entry_on_the_next_market_session_records_no_delay() -> None:
+    calendar = pd.bdate_range("2026-01-05", periods=12)
+    trade = _delay_trade([], market_calendar=calendar)
+
+    assert trade.entry_date == "2026-01-06"
+    assert "entry_delay_sessions" not in trade.price_diagnostics
+
+
+def test_without_a_market_calendar_no_entry_delay_is_recorded() -> None:
+    trade = _delay_trade([1])  # price_history_only: the stock's own dates are the calendar, nothing to compare
+
+    assert trade.entry_date == "2026-01-07"
+    assert trade.price_diagnostics["calendar_source"] == "price_history_only"
+    assert "entry_delay_sessions" not in trade.price_diagnostics

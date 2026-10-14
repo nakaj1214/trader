@@ -336,3 +336,15 @@ def test_synthetic_walk_generator_is_pinned() -> None:
 
     assert hashlib.sha256(blob.encode()).hexdigest()[:16] == "22a8bbee485f6d5b"
     assert not synthetic_history(7).equals(synthetic_history(8))
+
+
+def test_exit_rule_records_an_entry_delay_without_changing_the_trade() -> None:
+    calendar = pd.bdate_range("2026-01-05", periods=30)
+    prices = history([(100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i) for i in range(30)], start="2026-01-05")
+    signal = {"ticker": "A.T", "signal_date": "2026-01-05", "score": 80}
+    delayed = simulate_exit_rule(signal, prices.drop(calendar[1]), TrailingRule(15.0), holding_days=10,
+                                 market_calendar=calendar)
+    on_time = simulate_exit_rule(signal, prices, TrailingRule(15.0), holding_days=10, market_calendar=calendar)
+
+    assert delayed.entry_date == "2026-01-07" and delayed.price_diagnostics["entry_delay_sessions"] == 1
+    assert "entry_delay_sessions" not in on_time.price_diagnostics

@@ -138,6 +138,11 @@ def _evaluation_window(
     diagnostics = _price_diagnostics(closes, calendar, required, history.attrs.get("price_status"))
     diagnostics["calendar_source"] = "market" if market_calendar is not None else "price_history_only"
     diagnostics["expected_exit_date"] = str(required[-1].date()) if matured else None
+    if market_calendar is not None and entry is not None:
+        # A stock without a bar at the next market session enters at its next open (Stage 1 / C05); say so.
+        delay = int(((calendar > signal_date) & (calendar < entry)).sum())
+        if delay:
+            diagnostics["entry_delay_sessions"] = delay
     window = closes.reindex(required).dropna()
     reason = None
     if entry is None:

@@ -52,6 +52,7 @@ from src.screening.inflection_live import (
     JP_MARKET_CODES,
     REPORT_SCHEMA_VERSION,
     STRATEGY_VERSION,
+    _is_ordinary_code,
     _ticker_from_code,
     select_and_evaluate,
 )
@@ -66,12 +67,6 @@ FINS_FIELDS = (
     "Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "CurPerType", "CurFYEn", "CurFYSt", "CurPerSt", "CurPerEn",
     "Sales", "OP", "FOP", "CFO",
 )
-
-
-def _is_ordinary_code(code: object) -> bool:
-    """Five-digit codes ending in 0 are ordinary shares (and ETFs); they map 1:1 to ``NNNN.T``."""
-    text = str(code or "")
-    return len(text) == 5 and text.endswith("0")
 
 
 # ---------------------------------------------------------------------------

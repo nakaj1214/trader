@@ -1360,3 +1360,57 @@ def test_data_policy_rejects_invalid_settings_without_coercion(env) -> None:
         _data_policy()
     assert "JQUANTS_" in str(error.value)
     assert env.get("JQUANTS_DATA_DELAY_WEEKS", "x") not in str(error.value) or env.get("JQUANTS_DATA_DELAY_WEEKS") in ("", None)
+
+
+def _scan_with_master(rows: list[dict[str, str]]) -> tuple[dict[str, object], list[str]]:
+    """Run the live scan on a fake master; return the report and the codes whose financials were requested."""
+    requested: list[str] = []
+
+    class MasterClient:
+        def is_available(self) -> bool:
+            return True
+
+        def listed_issues(self) -> list[dict[str, str]]:
+            return rows
+
+        def financial_summary(self, code: str) -> list[dict[str, object]]:
+            requested.append(code)
+            return []
+
+    expected_date = str(_price_frame().index[-1].date())
+
+    def fetch(tickers: list[str], lookback_days: int, diagnostics: object = None) -> dict[str, pd.DataFrame]:
+        return {ticker: _price_frame() for ticker in tickers}  # full coverage for whatever is asked: no retry wait
+
+    with (
+        patch("src.screening.inflection_live.fetch_price_data", side_effect=fetch),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=expected_date),
+        patch.dict("os.environ", {"JQUANTS_PLAN": "free"}),
+    ):
+        report = scan_japan_inflection(
+            client=MasterClient(), deep_candidates=1, min_turnover_jpy=0, control_sample_size=0,  # type: ignore[arg-type]
+        )
+    return report, requested
+
+
+@pytest.mark.parametrize("preferred_first", [False, True], ids=["ordinary_first", "preferred_first"])
+def test_a_preferred_share_never_replaces_the_ordinary_share_in_the_universe(preferred_first: bool) -> None:
+    ordinary = {"Code": "11110", "Mkt": "0111", "MktNm": "Prime", "CoName": "Test Corp"}
+    preferred = {"Code": "11115", "Mkt": "0111", "MktNm": "Prime", "CoName": "Test Corp (preferred)"}
+    report, requested = _scan_with_master([preferred, ordinary] if preferred_first else [ordinary, preferred])
+
+    assert report["universe_count"] == 1  # type: ignore[comparison-overlap]
+    assert report["candidates"][0]["company_name"] == "Test Corp"  # type: ignore[index]
+    assert requested == ["11110"]  # the financials of the ordinary share, never the preferred code
+
+
+def test_codes_that_are_not_five_digit_ordinary_shares_are_left_out_of_the_universe() -> None:
+    rows = [
+        {"Code": "11110", "Mkt": "0111", "MktNm": "Prime", "CoName": "Test Corp"},
+        {"Code": "1113", "Mkt": "0111", "MktNm": "Prime", "CoName": "Four-digit code"},
+        {"Code": "11131", "Mkt": "0111", "MktNm": "Prime", "CoName": "Not ending in zero"},
+    ]
+    report, requested = _scan_with_master(rows)
+
+    assert report["universe_count"] == 1  # type: ignore[comparison-overlap]
+    assert requested == ["11110"]

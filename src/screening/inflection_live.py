@@ -124,6 +124,16 @@ class LiveCandidate:
         return result
 
 
+def _is_ordinary_code(code: object) -> bool:
+    """Five-digit codes ending in 0 are ordinary shares (and ETFs); they map 1:1 to ``NNNN.T``.
+
+    A preferred share shares the first four digits with its ordinary share (``25930`` / ``25935``), so
+    keeping other codes would let one overwrite the other.
+    """
+    text = str(code or "")
+    return len(text) == 5 and text.endswith("0")
+
+
 def _ticker_from_code(code: str) -> str:
     code = str(code).strip()
     return f"{code[:4]}.T"
@@ -782,7 +792,7 @@ def scan_japan_inflection(
     ticker_meta: dict[str, dict[str, Any]] = {}
     for row in master:
         code = str(row.get("Code") or "")
-        if len(code) < 4:
+        if not _is_ordinary_code(code):
             continue
         ticker_meta[_ticker_from_code(code)] = row
 

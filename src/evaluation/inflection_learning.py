@@ -33,6 +33,7 @@ from src.evaluation.inflection_forward import (
     SnapshotLoadError,
     paired_benchmark_returns,
 )
+from src.evaluation.inflection_report import BENCHMARK_ROUND_TRIP_COST_PCT
 from src.evaluation.regime import regime_labels
 
 LEARNING_HORIZONS = (5, 20, 60, 120)
@@ -340,7 +341,8 @@ def evaluate_learning_observations(
         horizon: paired_benchmark_returns(
             trades_by_horizon[horizon],
             benchmark_history,
-            round_trip_cost_pct=round_trip_cost_pct,
+            # The ETF's own fixed cost (as in forward validation), not the trade's: the two are different costs.
+            round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT,
         )
         for horizon in horizons
     }
@@ -798,7 +800,7 @@ def build_learning_report(
             "Cumulative factor statistics may span multiple strategy versions; promotion decisions use only the explicitly configured promotion strategy version.",
             "Statuses in the cumulative factor_statistics are uncorrected and informational; only promotion_factor_statistics is gated by the BH q-value.",
             "News/TDnet/EDINET catalyst evidence is not yet connected point-in-time, so true event-cause attribution is unavailable.",
-            f"Benchmark is {BENCHMARK_TICKER}; order-book depth, halts and price-limit fill probability remain unmodeled.",
+            f"Benchmark is {BENCHMARK_TICKER} at a fixed {BENCHMARK_ROUND_TRIP_COST_PCT}% round-trip cost (as in forward validation); order-book depth, halts and price-limit fill probability remain unmodeled.",
         ],
     }
 

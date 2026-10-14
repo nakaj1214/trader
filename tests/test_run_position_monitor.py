@@ -773,3 +773,143 @@ def test_duplicate_position_failure_contains_row_numbers_without_the_private_key
     message = str(error.value)
     assert "9999.T" not in message and "2026-08-04" not in message
     assert "rows 2 and 3" in message
+
+
+# --- sessions older than the provider's 1-minute retention are judged on the daily bar (ISSUE-04) ----------------
+
+
+def _old_history(
+    sessions: list[str], today: str, *, low_by_session: dict[str, float] | None = None, with_daily: bool = True,
+) -> SplitAdjustedHistory:
+    """Flat 100/100/100/100 days (volume 30) unless a session's low is lowered; today's bar is flat too."""
+    low_by_session = low_by_session or {}
+    index = pd.DatetimeIndex([*sessions, today], tz=JST)
+    daily = pd.DataFrame(
+        {"Open": 100.0, "High": 100.0, "Low": [low_by_session.get(s, 100.0) for s in [*sessions, today]],
+         "Close": 100.0, "Volume": 30.0},
+        index=index,
+    )
+    prior = daily.iloc[:-1]
+    return SplitAdjustedHistory(
+        100.0, prior["High"], prior["Close"], daily if with_daily else pd.DataFrame(),
+    )
+
+
+def _flat_today(at: datetime) -> tuple[pd.DataFrame, TodayQuote]:
+    day = at.date().isoformat()
+    frame = _close_bars(day, touched=False)
+    frame.index = pd.DatetimeIndex([f"{day} 09:00", f"{day} 11:00", f"{day} 12:30"], tz=JST)  # inside TSE hours
+    return frame, TodayQuote(100.0, 100.0, 100.0, 100.0, frame.index[-1].isoformat())
+
+
+def _run_old_sessions(
+    sessions: list[str], at: datetime, *, previous: list[dict[str, Any]] | None = None,
+    low_by_session: dict[str, float] | None = None, with_daily: bool = True,
+) -> tuple[dict[str, Mock], Mock, list[dict[str, Any]] | None]:
+    """Run once with 1-minute bars unavailable for every pending session; return deps, the recovery mock, rows."""
+    from src.data.live_quote import build_today_quote
+
+    today = at.date().isoformat()
+    history = _old_history(sessions, today, low_by_session=low_by_session, with_daily=with_daily)
+    bars, quote = _flat_today(at)
+    holding = {**HOLDING, "entry_date": "2026-06-01"}
+    with (
+        patch.dict("os.environ", {"SLACK_WEBHOOK_URL": "https://example.test/hook"}),
+        _dependencies([holding], previous=previous, bars=bars, quote=quote) as deps,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=None) as recovery,
+    ):
+        deps["fetch_history"].return_value = history
+        deps["build_quote"].side_effect = build_today_quote
+        try:
+            run(dry_run=False, evaluated_at=at)
+        except RuntimeError:
+            pass
+        rows = list(deps["write"].call_args.args[0]) if deps["write"].called else None
+    return deps, recovery, rows
+
+
+OLD_SESSIONS = ["2026-06-02", "2026-07-15", "2026-08-03"]  # all more than 30 days before NOW (2026-09-08)
+
+
+def test_old_sessions_without_one_minute_bars_no_longer_block_the_evaluation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    deps, recovery, rows = _run_old_sessions(OLD_SESSIONS, NOW)
+
+    assert rows is not None and rows[0]["status"] == "ok" and rows[0]["triggered"] is False
+    assert rows[0]["as_of_at"]  # the checkpoint advanced to the current quote
+    deps["post"].assert_not_called()
+    assert recovery.call_count == len(OLD_SESSIONS)
+
+    # The second run starts from the checkpoint: the old sessions are not replayed again.
+    _, second_recovery, second_rows = _run_old_sessions(OLD_SESSIONS, NOW, previous=rows)
+    assert second_rows is not None and second_rows[0]["status"] == "ok"
+    second_recovery.assert_not_called()
+
+
+def test_an_old_session_whose_daily_low_could_have_touched_the_stop_is_reported_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    deps, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, low_by_session={"2026-07-15": 85.0})  # stop is 90
+
+    assert rows is not None
+    assert (rows[0]["status"], rows[0]["triggered"]) == ("recovered", True)
+    assert rows[0]["exit_reason"] == "recovered_daily_possible_touch"
+    assert rows[0]["triggered_at"].startswith("2026-07-15")
+    assert rows[0]["quote_source"] == "daily_bar_conservative"
+    texts = [call.kwargs["json"]["text"] for call in deps["post"].call_args_list]
+    assert len(texts) == 1 and "recovered_daily_possible_touch" in texts[0]
+
+    again, _, _ = _run_old_sessions(OLD_SESSIONS, NOW, previous=rows, low_by_session={"2026-07-15": 85.0})
+    again["post"].assert_not_called()  # the notified, latched recovery is not announced again
+
+
+@pytest.mark.parametrize(("evaluated_day", "age", "judged_on_daily"), [("2026-09-09", 30, False), ("2026-09-10", 31, True)])
+def test_the_retention_boundary_is_thirty_days(evaluated_day: str, age: int, judged_on_daily: bool) -> None:
+    at = datetime.fromisoformat(f"{evaluated_day}T12:35:00+09:00")
+    _, _, rows = _run_old_sessions(["2026-08-10"], at)  # 30 / 31 days before the evaluation
+
+    assert (at.date() - datetime.fromisoformat("2026-08-10").date()).days == age
+    assert rows is not None
+    assert (rows[0]["status"] == "ok") is judged_on_daily
+    if not judged_on_daily:  # within the retention a missing minute path stays incomplete (C02)
+        assert rows[0]["status"] == "incomplete"
+
+
+def test_an_old_session_without_any_daily_bar_stays_incomplete() -> None:
+    _, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, with_daily=False)
+
+    assert rows is not None and rows[0]["status"] == "incomplete"
+
+
+def test_the_daily_test_never_misses_a_touch_the_minute_path_would_report() -> None:
+    import random
+
+    from scripts.run_position_monitor import _daily_could_touch
+
+    rng = random.Random(20261014)
+    possible = impossible = 0
+    for _ in range(400):
+        stop_pct = rng.choice([5.0, 10.0, 15.0, 20.0])
+        prior_high_water = 100.0 + rng.uniform(0.0, 30.0)
+        price, minutes = prior_high_water * rng.uniform(0.85, 1.0), []
+        for _ in range(rng.randint(2, 40)):
+            opened = price * (1.0 + rng.uniform(-0.01, 0.01))
+            closed = opened * (1.0 + rng.uniform(-0.02, 0.02))
+            high = max(opened, closed) * (1.0 + rng.uniform(0.0, 0.015))
+            low = min(opened, closed) * (1.0 - rng.uniform(0.0, 0.015))
+            minutes.append((opened, high, low, closed))
+            price = closed
+        high_water, touched = prior_high_water, False
+        for opened, high, low, _ in minutes:  # the monitor's rule, minute by minute
+            stop = high_water * (1.0 - stop_pct / 100.0)
+            if opened <= stop or low <= stop:
+                touched = True
+                break
+            high_water = max(high_water, high)
+        daily = {"High": max(m[1] for m in minutes), "Low": min(m[2] for m in minutes)}
+        could = _daily_could_touch(prior_high_water, daily, stop_pct)
+        assert could or not touched  # a real touch always implies the daily test is true
+        possible += could
+        impossible += not could
+    assert possible > 0 and impossible > 0  # the check is not trivially always true or always false

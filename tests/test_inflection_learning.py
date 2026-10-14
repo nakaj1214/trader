@@ -1109,3 +1109,49 @@ def test_sector_concentration_and_unknown_sector_are_reported_distinctly() -> No
     assert spread["independence_status"] == "sufficient" and spread["top_sector_share_pct"] is None
     assert _independence_evidence("f", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "insufficient"
     assert _independence_evidence("sector33:A", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "sufficient"
+
+
+# --- the benchmark's round-trip cost is the fixed 0.05% used by forward validation, whatever the trade cost ------
+
+
+def _benchmark_cost_case(trade_cost: float | None = None) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    from src.evaluation.inflection_backtest import simulate_signal
+    from src.evaluation.inflection_forward import paired_benchmark_returns
+    from src.evaluation.inflection_report import BENCHMARK_ROUND_TRIP_COST_PCT
+
+    days = pd.bdate_range("2026-01-05", periods=40)
+
+    def frame(step: float) -> pd.DataFrame:
+        values = [100.0 * (1 + step) ** i for i in range(len(days))]
+        return pd.DataFrame({"Open": values, "High": values, "Low": values, "Close": values}, index=days)
+
+    stock, benchmark = frame(0.0100), frame(0.0098)  # the stock barely beats the benchmark
+    signal = {"ticker": "1111.T", "signal_date": str(days[0].date()), "score": 80.0, "date": str(days[0].date()),
+              "classification": "EARLY_CANDIDATE", "strategy_version": "v3", "market": "プライム", "reasons": [],
+              "features": {}}
+    kwargs = {} if trade_cost is None else {"round_trip_cost_pct": trade_cost}
+    learned = evaluate_learning_observations([signal], {"1111.T": stock}, benchmark, horizons=(5,), **kwargs)[0]
+    outcome = learned["horizons"]["h5"]
+    trade = simulate_signal(
+        signal, stock, holding_days=5, market_calendar=pd.DatetimeIndex(benchmark.index),
+        round_trip_cost_pct=trade_cost if trade_cost is not None else 0.2,
+    )
+    forward = paired_benchmark_returns([trade], benchmark, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT)[0]
+    return outcome, forward, {"net": trade.net_return_pct}
+
+
+def test_learning_and_forward_agree_on_the_benchmark_return_and_the_excess() -> None:
+    outcome, forward, _ = _benchmark_cost_case()
+
+    assert outcome["benchmark_net_return_pct"] == pytest.approx(forward["benchmark_net_return_pct"])
+    assert outcome["excess_return_pct"] == pytest.approx(forward["excess_return_pct"])
+    assert outcome["excess_return_pct"] < 0  # at the fixed 0.05% this stock does not beat the benchmark
+
+
+@pytest.mark.parametrize("trade_cost", [0.0, 0.2, 1.2])
+def test_the_benchmark_cost_does_not_follow_the_trade_cost(trade_cost: float) -> None:
+    outcome, forward, trade = _benchmark_cost_case(trade_cost)
+
+    assert outcome["benchmark_net_return_pct"] == pytest.approx(forward["benchmark_net_return_pct"])
+    assert outcome["net_return_pct"] == pytest.approx(trade["net"])  # only the benchmark side is fixed
+    assert outcome["excess_return_pct"] == pytest.approx(trade["net"] - forward["benchmark_net_return_pct"])

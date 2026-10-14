@@ -344,3 +344,207 @@ def test_atomic_write_cleans_up_after_writer_failure(tmp_path: Path) -> None:
         atomic_write(target, fail)
     assert target.read_text(encoding="utf-8") == "old"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# --- the digest state is settled before the snapshot exists, and its faults never stop the scan (ISSUE-06) --------
+
+
+def _latest_write_fails_once(real: Any) -> Any:
+    failed = {"done": False}
+
+    def write(path: Path, text: str, **kwargs: Any) -> bool:
+        if path.name == "latest.enc" and not failed["done"]:
+            failed["done"] = True
+            raise OSError("disk full")  # the latest file, written right after the snapshot
+        return real(path, text, **kwargs)
+
+    return write
+
+
+def test_a_failed_latest_write_after_the_snapshot_still_leaves_the_digest_pending(tmp_path: Path) -> None:
+    from tests.test_shadow_health import SECRET, _healthy_report
+
+    out_dir, latest, state = tmp_path / "v3", tmp_path / "latest.enc", tmp_path / "digest_state.json"
+    report = _healthy_report()
+    with (
+        patch.object(shadow, "atomic_write_text", _latest_write_fails_once(shadow.atomic_write_text)),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        shadow.persist_report(
+            report, encryption_secret=SECRET, out_dir=out_dir, latest_path=latest, digest_state=state,
+        )
+    assert (out_dir / "2026-09-07.enc").exists() and '"2026-09-07": "pending"' in state.read_text(encoding="utf-8")
+
+    snapshot, created = shadow.persist_report(
+        report, encryption_secret=SECRET, out_dir=out_dir, latest_path=latest, digest_state=state,
+    )
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        status = shadow._deliver_digest(report, snapshot_created=created, state_path=state)
+
+    assert created is False and snapshot.exists()
+    assert status == "sent" and send.call_count == 1  # not "skipped:legacy-no-state"
+    assert '"2026-09-07": "succeeded"' in state.read_text(encoding="utf-8")
+
+
+def test_an_existing_snapshot_without_state_stays_a_legacy_snapshot(tmp_path: Path) -> None:
+    from tests.test_shadow_health import SECRET, _healthy_report
+
+    out_dir, latest, state = tmp_path / "v3", tmp_path / "latest.enc", tmp_path / "digest_state.json"
+    shadow.persist_report(_healthy_report(), encryption_secret=SECRET, out_dir=out_dir, latest_path=latest)
+    assert not state.exists()  # written before the state file existed
+
+    shadow.persist_report(
+        _healthy_report(), encryption_secret=SECRET, out_dir=out_dir, latest_path=latest, digest_state=state,
+    )
+
+    assert not state.exists()  # no "pending" is invented for a snapshot that was already there
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        assert shadow._deliver_digest(_healthy_report(), snapshot_created=False, state_path=state) == (
+            "skipped:legacy-no-state"
+        )
+    send.assert_not_called()
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"2026-09-30": "weird"}', "[]"], ids=["bad_json", "bad_value", "list"])
+def test_a_corrupt_digest_state_is_reported_not_raised_and_never_rewritten(tmp_path: Path, content: str) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text(content, encoding="utf-8")
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+
+    assert status == "failed:digest-state-invalid"
+    send.assert_not_called()  # an untracked send could be repeated tomorrow
+    assert state.read_text(encoding="utf-8") == content
+
+
+def test_an_unwritable_pending_state_blocks_the_send_without_raising(tmp_path: Path) -> None:
+    state = tmp_path / "digest_state.json"
+    with (
+        patch.object(shadow, "_write_digest_state", side_effect=OSError("read-only")),
+        patch.object(shadow, "send_daily_digest", return_value="sent") as send,
+    ):
+        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+
+    assert status == "failed:digest-state-unwritable"
+    send.assert_not_called()
+
+
+def test_main_completes_and_reports_a_corrupt_digest_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = snapshot_dir(tmp_path, ["2026-09-29", "2026-09-30"])
+    (directory.parent / "digest_state.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", WEBHOOK)
+    persist = Mock(return_value=(directory / "2026-09-30.enc", True))
+    with (
+        patch.object(shadow, "snapshot_encryption_secret", return_value="secret"),
+        patch.object(shadow, "scan_japan_inflection", return_value=make_report()),
+        patch.object(shadow, "persist_report", persist),
+        patch.object(shadow, "OUT_DIR", directory),
+        patch("src.notify.slack.requests.post") as post,
+    ):
+        shadow.main()  # must not raise: the snapshot is already saved and has to be committed
+
+    persist.assert_called_once()
+    post.assert_called_once()  # only the state alert (the digest itself is withheld); see the alert tests below
+    assert "日次ダイジェストを送れませんでした" in post.call_args.kwargs["json"]["text"]
+    assert "digest=failed:digest-state-invalid" in capsys.readouterr().out
+
+
+def test_main_turns_an_unexpected_digest_error_into_a_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = snapshot_dir(tmp_path, ["2026-09-29", "2026-09-30"])
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", WEBHOOK)
+    with (
+        patch.object(shadow, "snapshot_encryption_secret", return_value="secret"),
+        patch.object(shadow, "scan_japan_inflection", return_value=make_report()),
+        patch.object(shadow, "persist_report", Mock(return_value=(directory / "2026-09-30.enc", True))),
+        patch.object(shadow, "_deliver_digest", side_effect=RuntimeError("boom")),
+        patch.object(shadow, "OUT_DIR", directory),
+    ):
+        shadow.main()
+
+    assert "digest=failed:RuntimeError" in capsys.readouterr().out
+
+
+# --- a digest that cannot be tracked is surfaced, not just logged ------------------------------------------------
+
+
+def _main_with_digest_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, content: str | None, webhook: str | None = WEBHOOK,
+    alert_effect: Any = None,
+) -> tuple[Mock, str, str]:
+    directory = snapshot_dir(tmp_path, ["2026-09-29", "2026-09-30"])
+    if content is not None:
+        (directory.parent / "digest_state.json").write_text(content, encoding="utf-8")
+    if webhook:
+        monkeypatch.setenv("SLACK_WEBHOOK_URL", webhook)
+    else:
+        monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    post = Mock(side_effect=alert_effect)
+    with (
+        patch.object(shadow, "snapshot_encryption_secret", return_value="secret"),
+        patch.object(shadow, "scan_japan_inflection", return_value=make_report()),
+        patch.object(shadow, "persist_report", Mock(return_value=(directory / "2026-09-30.enc", True))),
+        patch.object(shadow, "OUT_DIR", directory),
+        patch("src.notify.slack.requests.post", post),
+    ):
+        shadow.main()
+    return post, "", ""
+
+
+def test_a_corrupt_digest_state_raises_a_slack_alert_and_a_github_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    post, _, _ = _main_with_digest_state(monkeypatch, tmp_path, content="{not json")
+
+    out = capsys.readouterr().out
+    post.assert_called_once()  # the digest itself is not sent; only the alert is
+    text = post.call_args.kwargs["json"]["text"]
+    assert "digest_state.json" in text and "日次ダイジェスト" in text
+    for hidden in (WEBHOOK, "SECRETTOKEN", "1111.T", "Company"):
+        assert hidden not in text and hidden not in out
+    assert "digest=failed:digest-state-invalid" in out and "digest_alert=sent" in out
+    assert "::warning" in out  # visible on the run page without opening the log
+
+
+def test_the_alert_is_skipped_without_a_webhook_but_the_annotation_remains(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    post, _, _ = _main_with_digest_state(monkeypatch, tmp_path, content="[]", webhook=None)
+
+    out = capsys.readouterr().out
+    post.assert_not_called()
+    assert "digest_alert=skipped:no-webhook" in out and "::warning" in out
+
+
+def test_a_failing_alert_never_fails_the_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _main_with_digest_state(monkeypatch, tmp_path, content="{not json", alert_effect=requests.ConnectionError("down"))
+
+    out = capsys.readouterr().out
+    assert "digest_alert=failed:ConnectionError" in out and "SECRETTOKEN" not in out
+
+
+def test_a_healthy_digest_state_raises_no_alert_and_no_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    post, _, _ = _main_with_digest_state(monkeypatch, tmp_path, content='{"2026-09-30": "pending"}\n')
+
+    out = capsys.readouterr().out
+    post.assert_called_once()  # the digest itself
+    assert "digest=sent" in out and "digest_alert" not in out and "::warning" not in out
+
+
+def test_a_slack_failure_is_annotated_but_does_not_trigger_a_second_slack_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    post, _, _ = _main_with_digest_state(
+        monkeypatch, tmp_path, content=None, alert_effect=requests.ConnectionError("down"),
+    )
+
+    out = capsys.readouterr().out
+    assert post.call_count == 1  # only the digest attempt: the same channel is not used to report its own failure
+    assert "digest=failed:ConnectionError" in out and "::warning" in out and "digest_alert" not in out

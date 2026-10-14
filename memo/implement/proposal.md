@@ -2,9 +2,9 @@
 
 > verify-before-fix スキルで生成。証拠に基づく診断結果と修正方針。
 > 日時: 2026-10-14
-> 対象: ISSUE-03（live scan で優先株が普通株のメタデータを上書き）
+> 対象: ISSUE-07（learning の超過収益だけ、ベンチマークのコストが 0.2% で他は 0.05%）
 > 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）
-> 前の要件書: ISSUE-01（REQ-071）、ISSUE-02（REQ-072）は実装済み。ISSUE-05（REQ-073、遅延エントリーの記録）は実装済み・未コミット。
+> 前の要件書: ISSUE-01〜06（REQ-071〜076）は実装済み。ISSUE-04・06 と通知の警告は未コミット。
 
 ---
 
@@ -12,54 +12,53 @@
 
 ### 確認した現象
 
-- 普通株の ticker に、優先株の master 行が紐づくことがある。
-- fake（普通株 `25930` 伊藤園と優先株 `25935` 伊藤園（優先株式）、いずれもプライム）で `scan_japan_inflection` を実行:
-  - 普通株を先に並べた場合: 社名「伊藤園」、`financial_summary` は `25930`。
-  - 優先株を先に並べた場合: 社名「伊藤園（優先株式）」、`financial_summary` は `25935`。
-  - いずれも universe は 1（同じ ticker に畳まれる）。並び順で結果が変わる。
-- 実 master（`.data/jquants/master/2026-07-01.json.gz`）: 対象 3 市場の 3,723 行のうち、普通株 3,716、非普通株 7。優先株が後に来るため、伊藤園・インフロニア・ゼンショー・JAL・ANA・ソフトバンクの 6 銘柄で優先株が勝つ。
+- learning の超過収益は、ベンチマーク（1306.T）の往復コストを 0.2% で計算する。forward・historical は 0.05%（`BENCHMARK_ROUND_TRIP_COST_PCT`）で、文書（project-overview）にも 0.05% と記載されている。
+- 同じ取引で結論が逆になる実測（synthetic。株が 1.00%/日、ベンチマークが 0.98%/日で 5 営業日保有）:
+  - 取引の純損益: 3.8604%。
+  - learning: ベンチマーク 3.778%、超過 **+0.0824**（勝ち）。
+  - forward: ベンチマーク 3.928%、超過 **−0.0676**（負け）。
 
 ### 根本原因
 
-[scan_japan_inflection](../../src/screening/inflection_live.py#L781-L787) が、コードの先頭 4 桁だけで ticker を作る（[_ticker_from_code](../../src/screening/inflection_live.py#L127-L129)）。優先株の行（コード末尾が 0 以外）が、同じ ticker の普通株の行を上書きし、`ticker_meta` に優先株の社名・コードが入る。財務は `ticker_meta` のコード（[_evaluate_candidate](../../src/screening/inflection_live.py#L546-L547)）で取得されるため、優先株コードには財務行が無く、ファンダメンタルが全欠損になる。
-
-historical は `_is_ordinary_code`（5 桁で末尾 0）で普通株だけを対象にしており（[inflection_historical.py:71-73](../../src/evaluation/inflection_historical.py#L71-L73)、[同:232](../../src/evaluation/inflection_historical.py#L232)）、live だけに無い。
+[evaluate_learning_observations](../../src/evaluation/inflection_learning.py#L340-L344) が、取引用の `round_trip_cost_pct`（既定 0.2%）を、ベンチマークの比較（`paired_benchmark_returns`）にもそのまま渡している。forward は 9/10 の時点でベンチマーク専用の定数（0.05%）を持ち、レポートにも `"benchmark": 0.05` を出力していた。learning は 9/14 の最初のコミットから取引用のコストを流用しており、別にした理由の記録は履歴にも文書にも無い。
 
 ### 証拠
 
 | 仮説 | 判定 | 証拠 |
 |------|------|------|
-| 1. live だけ普通株のフィルタが無い | 確認 | 上記 fake。historical は除外済み。 |
-| 2. 衝突は master の並び順に依存する | 確認 | 並びを逆にすると結果が変わる。実 master では優先株が後に来て、6 銘柄で優先株が勝つ。 |
-| 3. 修正で ticker が消える | 棄却 | 実 master で、ticker は修正前後とも 3,716 個。普通株が無く優先株だけの ticker は 0 件。universe 件数は変わらない（初期の「6 件減る」という見込みは誤り）。 |
+| 1. 意図しない不一致 | 確認 | git 履歴（forward は専用定数が先、learning は流用で導入）。意図を示す記録なし。 |
+| 2. 意図した差 | 棄却 | 同上。文書は 0.05% と明記。 |
+| 3. 影響の大きさ | 確認 | 同じ取引で超過収益が 0.15pt ずれ、境界付近では勝ち/負けが逆になる。超過収益は外れ率（[inflection_learning.py:443](../../src/evaluation/inflection_learning.py#L443)）、`prediction_miss_reasons`（[同:288](../../src/evaluation/inflection_learning.py#L288)）、昇格判定の平均超過収益の符号に使われる。 |
 
 ---
 
 ## 修正要件
 
-### REQ-074: live scan は普通株の master 行だけを universe にする（ISSUE-03）
+### REQ-077: learning のベンチマーク往復コストを、forward・historical と同じ定数にする（ISSUE-07）
 
-- **画面**: 日次 scan（`scripts/run_inflection_shadow.py`、`scan_japan_inflection`）
-- **対象ファイル**: [src/screening/inflection_live.py](../../src/screening/inflection_live.py)（`scan_japan_inflection`）、[src/evaluation/inflection_historical.py](../../src/evaluation/inflection_historical.py)（`_is_ordinary_code` の参照元を共通化する場合のみ）、`tests/test_inflection_live.py`
-- **Before（現状）**: master の行を先頭 4 桁で ticker 化して、後から来た行で上書きする。優先株（末尾 0 以外）が普通株の社名・コード・財務取得を置き換える。
+- **画面**: 自己学習（`scripts/rebuild_inflection_learning.py`、`evaluate_learning_observations`）
+- **対象ファイル**: [src/evaluation/inflection_learning.py](../../src/evaluation/inflection_learning.py)（`evaluate_learning_observations`）、`tests/test_inflection_learning.py`
+- **Before（現状）**: ベンチマーク側のコストに、取引用の `round_trip_cost_pct`（既定 0.2%）を使う。
 - **After（期待）**:
-  - live の universe は、コードが 5 桁で末尾 0 の行（普通株）だけで作る。historical と同じ規則にする。
-  - 優先株の行があっても、普通株の `ticker_meta`（社名・市場・業種）と普通株コードの財務が使われる。master の並び順に依存しない。
-  - 普通株の行は従来どおり ticker 化され、これまでの結果（universe 件数、候補、スコア）は、優先株が絡まない銘柄では不変。
+  - ベンチマーク側の往復コストは、`BENCHMARK_ROUND_TRIP_COST_PCT`（0.05%）を常に使う。取引側のコスト（`round_trip_cost_pct`、既定 0.2%）は変えない。
+  - forward のレポートと同様に、「ベンチマークのコストは取引のコスト設定によらず固定」とする。
+  - 同じ取引は、learning と forward で超過収益の定義が一致する。
 - **修正方針**:
-  - `scan_japan_inflection` の master 絞り込み（`JP_MARKET_CODES` の判定）に、普通株の判定を加える。判定関数は `_is_ordinary_code` を live 側へ移して historical から参照する形にするか、live に同じ小関数を置く（import の循環を避ける。historical は live を import している）。
-  - `FEATURE_DEFAULTS` やスコア・分類・閾値は変更しない。
-  - 優先株の価格は取得しない（ticker が普通株のものなので、従来から価格は普通株の ticker で取得済み）。
+  - `inflection_learning.py` で `BENCHMARK_ROUND_TRIP_COST_PCT` を `src.evaluation.inflection_report` から import する（循環なし。report は learning を import しない）。
+  - `paired_benchmark_returns(..., round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT)` に変更する。
+  - 取引側の計算、`ROUND_TRIP_COST_PCT`（0.2%）、爆発判定、昇格の閾値・統計は変更しない。
+  - 学習レポートの `limitations` に、ベンチマークのコスト（0.05%）を 1 行で明記する。
 - **受入条件**:
-  1. 上記 fake で、普通株を先に並べても優先株を先に並べても、社名は普通株、`financial_summary` は普通株コード、universe は 1 になる。修正前に失敗する回帰テストとして追加する。
-  2. 優先株が絡まない既存ケースは、結果が完全に不変（既存テストが無変更で PASS）。
-  3. 実 master で、修正前後の universe 件数（3,716）が変わらないことを記録する。6 銘柄（伊藤園・インフロニア・ゼンショー・JAL・ANA・ソフトバンク）の `ticker_meta` が普通株になることを確認する。
-  4. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
-- **baseline への影響**: 6 銘柄（上記）の社名・財務由来の特徴量が変わる（優先株コード由来の全欠損 → 普通株の実財務）。スコア・分類が変わり得るため、baseline-changing として記録する。
+  1. 上記 synthetic で、learning の超過収益が forward と一致する（ベンチマーク 3.928%、超過 −0.0676）。修正前に失敗する回帰テストとして追加する。
+  2. 取引側のコスト（引数 `round_trip_cost_pct`）を変えても、ベンチマーク側は 0.05% のまま。
+  3. 取引の純損益、爆発判定、`explosive` は不変。
+  4. 既存テストが無変更で PASS（超過収益を固定していたテストが無い想定。ある場合は意図を確認して報告する）。
+  5. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
+- **baseline への影響**: baseline-changing。learning の超過収益が一律に 0.15pt 下がる（ベンチマーク側が 0.15pt 増える）。外れ率（超過 ≤ 0）、`prediction_miss_reasons`、昇格判定の平均超過収益が変わり得る。実 snapshot は暗号化されており検証できない（鍵なし）ため、影響は synthetic で示す。
 
 ---
 
 ## 次の手順
 
 - 修正は Phase 5 で実施する。原因は確定済み。
-- 続けて ISSUE-04（Position Monitor が古い保有銘柄を永久に評価できない）に進む。
+- 続けて ISSUE-08（失敗通知ジョブの依存前提）に進む。

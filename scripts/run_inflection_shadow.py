@@ -15,6 +15,7 @@ from src.data.provider_output import safe_error_details
 from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
 from src.data.validation import is_finite_number
 from src.notify.inflection_digest import send_daily_digest
+from src.notify.slack import post_text
 from src.screening.inflection_live import (
     MIN_LATEST_DATE_COVERAGE,
     MIN_PRICE_COVERAGE,
@@ -195,8 +196,13 @@ def persist_report(
     out_dir: Path = OUT_DIR,
     latest_path: Path = LATEST,
     date: str | None = None,
+    digest_state: Path | None = None,
 ) -> tuple[Path, bool]:
-    """Persist encrypted latest output and create one immutable snapshot per market-data date."""
+    """Persist encrypted latest output and create one immutable snapshot per market-data date.
+
+    With ``digest_state`` a brand-new market day is marked ``pending`` BEFORE its snapshot is written, so a stop
+    anywhere after that still leaves a snapshot whose digest is owed (not one mistaken for a legacy snapshot).
+    """
     validate_report(report)
     market_date = str(report["latest_price_date"])
     snapshot_key = date or market_date
@@ -214,6 +220,8 @@ def persist_report(
     }
     payload = encrypt_json(stored_report, encryption_secret)
 
+    if digest_state is not None and not snapshot.exists():
+        _mark_digest_pending(digest_state, market_date)
     snapshot_created = atomic_write_text(snapshot, payload, overwrite=False)
 
     atomic_write_text(latest_path, payload)
@@ -235,20 +243,45 @@ def _write_digest_state(path: Path, states: dict[str, str]) -> None:
     atomic_write_text(path, json.dumps(dict(sorted(states.items())[-30:]), sort_keys=True) + "\n")
 
 
+def _digest_state_path() -> Path:
+    return OUT_DIR.parent / DIGEST_STATE.name
+
+
+def _mark_digest_pending(path: Path, market_date: str) -> None:
+    """Best effort: a missing or damaged state file must never stop the snapshot from being saved."""
+    try:
+        states = _digest_states(path)
+        if market_date not in states:
+            states[market_date] = "pending"
+            _write_digest_state(path, states)
+    except (OSError, ValueError):
+        pass  # _deliver_digest reports the state problem; it will not send what it cannot track
+
+
 def _deliver_digest(
     report: dict[str, Any], *, snapshot_created: bool, state_path: Path | None = None, resend: bool = False
 ) -> str:
-    """Persist pending/succeeded around best-effort delivery; Git publication is a later step."""
-    state_path = state_path or OUT_DIR.parent / DIGEST_STATE.name
+    """Persist pending/succeeded around best-effort delivery; Git publication is a later step.
+
+    A state file that cannot be read or written is reported, never raised: the scan and its snapshot are
+    already saved, and sending without a record of it could repeat the digest tomorrow.
+    """
+    state_path = state_path or _digest_state_path()
     market_date = str(report["latest_price_date"])
-    states = _digest_states(state_path)
+    try:
+        states = _digest_states(state_path)
+    except (OSError, ValueError):
+        return "failed:digest-state-invalid"
     state = states.get(market_date)
     if not resend and state == "succeeded":
         return "skipped:already-succeeded"
     if not resend and state is None and not snapshot_created:
         return "skipped:legacy-no-state"
     states[market_date] = "pending"
-    _write_digest_state(state_path, states)
+    try:
+        _write_digest_state(state_path, states)
+    except OSError:
+        return "failed:digest-state-unwritable"
     status = send_daily_digest(report, snapshot_dir=OUT_DIR, webhook=os.getenv("SLACK_WEBHOOK_URL"))
     if status == "sent":
         states[market_date] = "succeeded"
@@ -257,6 +290,23 @@ def _deliver_digest(
         except OSError:
             return "sent:state-save-failed"
     return status
+
+
+DIGEST_STATE_ALERT = (
+    "[JP Inflection] 日次ダイジェストを送れませんでした。通知状態ファイル（digest_state.json）が読めない・書けない状態です。"
+    "snapshot は保存済みです。ファイルの内容を確認して修正（または削除）してください。"
+)
+
+
+def _alert_digest_state(webhook: str | None) -> str:
+    """Tell the operator, on the same channel, that the digest cannot be tracked; fixed text, nothing sensitive."""
+    if not webhook:
+        return "skipped:no-webhook"
+    try:
+        post_text(webhook, DIGEST_STATE_ALERT)
+    except Exception as exc:  # noqa: BLE001 - an alert must never fail the scan; log only the type
+        return f"failed:{type(exc).__name__}"
+    return "sent"
 
 
 def main() -> None:
@@ -276,15 +326,26 @@ def main() -> None:
         _publish_failure_stage("configuration" if isinstance(exc, DataPolicyConfigError) else "data_acquisition", exc)
         raise
     try:
-        snapshot, snapshot_created = persist_report(report, encryption_secret=encryption_secret)
+        snapshot, snapshot_created = persist_report(
+            report, encryption_secret=encryption_secret, digest_state=_digest_state_path(),
+        )
     except Exception as exc:
         _publish_failure_stage("snapshot_save", exc)
         raise
-    digest_status = _deliver_digest(
-        report,
-        snapshot_created=snapshot_created,
-        resend=os.getenv("RESEND_DIGEST", "false").lower() == "true",
-    )
+    try:
+        digest_status = _deliver_digest(
+            report,
+            snapshot_created=snapshot_created,
+            resend=os.getenv("RESEND_DIGEST", "false").lower() == "true",
+        )
+    except Exception as exc:  # noqa: BLE001 - the snapshot is saved; the digest must never fail the scan
+        digest_status = f"failed:{type(exc).__name__}"
+    digest_alert = ""
+    if digest_status.startswith("failed:"):
+        # Visible on the run summary page without opening the log (the status itself is a fixed, safe string).
+        print(f"::warning title=Daily digest not sent::{digest_status}")
+        if digest_status.startswith("failed:digest-state"):  # Slack itself works; use it to say the state is broken
+            digest_alert = f" digest_alert={_alert_digest_state(os.getenv('SLACK_WEBHOOK_URL'))}"
 
     counts = report.get("classification_counts", {})
     market_summary = " ".join(
@@ -306,7 +367,7 @@ def main() -> None:
         f"{market_summary} "
         f"snapshot={snapshot.name} "
         f"snapshot_created={snapshot_created} "
-        f"digest={digest_status}"
+        f"digest={digest_status}{digest_alert}"
     )
 
 

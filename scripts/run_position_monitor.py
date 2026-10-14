@@ -46,6 +46,9 @@ SLACK_TIMEOUT_SECONDS = 10
 CLOSE_GRACE_MINUTES = 30
 WARNING_DISTANCE_PCT = 3.0  # warn when the price is within this % above the stop (stop not yet hit)
 OVEREXTENDED_RETURN_20D_PCT = 50.0  # matches inflection_live._classify's r20 >= 50%; no scan dependency
+# The provider keeps 1-minute history only for about this many calendar days. A pending session older than
+# this can never be replayed minute by minute, so it is judged on its daily bar instead of blocking forever.
+INTRADAY_RETENTION_DAYS = 30
 P = ParamSpec("P")
 T = TypeVar("T")
 
@@ -133,6 +136,41 @@ def _preserve_previous_state(row: dict[str, Any], previous: dict[str, Any] | Non
     row["as_of_at"] = previous.get("as_of_at", "") if previous else ""
 
 
+def _daily_could_touch(prior_high_water: float, daily: dict[str, Any], stop_pct: float) -> bool:
+    """Whether a minute-level evaluation of this session could have touched the trailing stop.
+
+    A touch needs a minute low at or under ``high_water * (1 - stop)``, and the high-water mark at any minute is
+    at most ``max(prior high-water, the day's high)``; no minute low is under the day's low. So a daily low above
+    that level proves there was no touch, while a lower one means "possible" (the intraday order is unknown).
+    """
+    level = max(prior_high_water, float(daily["High"])) * (1.0 - stop_pct / 100.0)
+    return float(daily["Low"]) <= level
+
+
+def _recover_daily_only(
+    ticker: str, purchase_date: date, session: date, history: SplitAdjustedHistory, stop_pct: float,
+    daily: dict[str, Any], close: datetime,
+) -> dict[str, Any] | None:
+    """A session beyond the 1-minute retention: ``None`` when the daily bar rules a touch out, else a recovery row."""
+    prior = history.daily_highs.loc[history.daily_highs.index.date < session]
+    prior_high_water = history.entry_price if prior.empty else max(history.entry_price, float(prior.max()))
+    if not _daily_could_touch(prior_high_water, daily, stop_pct):
+        return None
+    stop_price = prior_high_water * (1.0 - stop_pct / 100.0)
+    current_price = float(daily["Close"])
+    return {
+        "ticker": ticker, "entry_date": purchase_date.isoformat(), "entry_price": round(history.entry_price, 6),
+        "current_price": round(current_price, 6),
+        "high_water_mark": round(max(prior_high_water, float(daily["High"])), 6),
+        "stop_price": round(stop_price, 6), "trailing_stop_pct": round(stop_pct, 6),
+        "unrealized_pct": round((current_price / history.entry_price - 1.0) * 100.0, 6),
+        "distance_to_stop_pct": round((current_price / stop_price - 1.0) * 100.0, 6),
+        "triggered": True, "exit_reason": "recovered_daily_possible_touch", "as_of_at": close.isoformat(),
+        "quote_source": "daily_bar_conservative", "status": "recovered", "error": "",
+        "triggered_at": close.isoformat(), "last_notified_at": "",
+    }
+
+
 def _recover_pending(
     ticker: str, purchase_date: date, history: SplitAdjustedHistory, stop_pct: float,
     previous: dict[str, Any] | None, calendar: Any, current: datetime,
@@ -161,6 +199,13 @@ def _recover_pending(
         ):
             continue
         bars = fetch_session_bars(ticker, session.isoformat())
+        if bars is None and daily is not None and (current.date() - session).days > INTRADAY_RETENTION_DAYS:
+            recovered = _recover_daily_only(ticker, purchase_date, session, history, stop_pct, daily, close)
+            if recovered is None:
+                continue  # the daily bar proves there was no touch; nothing minute-level is left to replay
+            if previous and _stored_triggered(previous) and previous.get("last_notified_at"):
+                return dict(previous)
+            return recovered
         if bars is not None and daily is not None:
             bars.attrs["daily_bar"] = daily
         quote = None if bars is None else build_today_quote(bars)

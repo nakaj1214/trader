@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 JST = ZoneInfo("Asia/Tokyo")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # Failure jobs run without installing the package.
-from src.data.provider_output import suppress_provider_output
+from src.data.quiet_output import suppress_provider_output
 
 STATE = ROOT / ".harness" / "state" / "workflow-alerts.json"
 WORKFLOWS = ("inflection_shadow.yml", "position_monitor.yml", "forward_validation.yml", "reliability_watchdog.yml")

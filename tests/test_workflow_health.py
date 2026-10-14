@@ -143,3 +143,70 @@ def test_new_success_without_expected_snapshot_is_not_hidden_by_an_older_failure
     with patch("scripts.check_workflow_health._github_runs", side_effect=_runs):
         alerts = watchdog_alerts(NOW, tmp_path, ["failure:inflection_shadow.yml:1"])
     assert len(alerts) == 1 and "kind=snapshot_missing" in alerts[0]["text"]
+
+
+# --- the failure notifier needs nothing but the standard library (ISSUE-08) --------------------------------------
+
+
+def _bare_python() -> list[str]:
+    """The current interpreter with site-packages disabled: what a runner python without our dependencies sees."""
+    import sys
+
+    return [sys.executable, "-B", "-S"]
+
+
+def test_the_failure_notifier_starts_without_any_third_party_package() -> None:
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [*_bare_python(), str(root / "scripts" / "check_workflow_health.py"), "--help"],
+        capture_output=True, text=True, timeout=60, check=False, cwd=root,
+    )
+
+    assert result.returncode == 0, result.stderr[-400:]
+    assert "ModuleNotFoundError" not in result.stderr
+
+
+def test_a_failure_notification_is_delivered_from_a_python_without_third_party_packages(tmp_path: Path) -> None:
+    import http.server
+    import os
+    import subprocess
+    import threading
+
+    received: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    root = Path(__file__).resolve().parents[1]
+    state = tmp_path / "alerts.json"
+    env = {
+        "PATH": os.environ.get("PATH", ""), "WORKFLOW_NAME": "inflection_shadow.yml", "GITHUB_RUN_ID": "123456",
+        "GITHUB_REPOSITORY": "owner/repo", "FAILURE_STAGE": "snapshot_save",
+        "SLACK_WEBHOOK_URL": f"http://127.0.0.1:{server.server_address[1]}/hook",
+    }
+    try:
+        result = subprocess.run(
+            [*_bare_python(), str(root / "scripts" / "check_workflow_health.py"), "--notify-failure",
+             "--state", str(state)],
+            capture_output=True, text=True, timeout=60, check=False, cwd=root, env=env,
+        )
+    finally:
+        server.shutdown()
+
+    assert result.returncode == 0, result.stdout[-300:] + result.stderr[-300:]
+    assert len(received) == 1
+    assert "workflow=inflection_shadow.yml kind=snapshot_save" in received[0]["text"]
+    assert "actions/runs/123456" in received[0]["text"]
+    assert "127.0.0.1" not in received[0]["text"]  # the webhook address is never part of the message
+    assert json.loads(state.read_text()) == ["failure:inflection_shadow.yml:123456"]

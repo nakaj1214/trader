@@ -2,9 +2,9 @@
 
 > verify-before-fix スキルで生成。証拠に基づく診断結果と修正方針。
 > 日時: 2026-10-14
-> 対象: ISSUE-07（learning の超過収益だけ、ベンチマークのコストが 0.2% で他は 0.05%）
-> 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）
-> 前の要件書: ISSUE-01〜06（REQ-071〜076）は実装済み。ISSUE-04・06 と通知の警告は未コミット。
+> 対象: ISSUE-08（失敗通知ジョブが、依存を入れずに `requests` を import する）
+> 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）、[Codex 最終監査](../../.harness/reports/reliability-final-audit-2026-10-13.md)（Q01）
+> 前の要件書: ISSUE-01〜07（REQ-071〜077）は実装済み。ISSUE-04・06・07 は未コミット。
 
 ---
 
@@ -12,53 +12,51 @@
 
 ### 確認した現象
 
-- learning の超過収益は、ベンチマーク（1306.T）の往復コストを 0.2% で計算する。forward・historical は 0.05%（`BENCHMARK_ROUND_TRIP_COST_PCT`）で、文書（project-overview）にも 0.05% と記載されている。
-- 同じ取引で結論が逆になる実測（synthetic。株が 1.00%/日、ベンチマークが 0.98%/日で 5 営業日保有）:
-  - 取引の純損益: 3.8604%。
-  - learning: ベンチマーク 3.778%、超過 **+0.0824**（勝ち）。
-  - forward: ベンチマーク 3.928%、超過 **−0.0676**（負け）。
+- site-packages を使えない Python で `scripts/check_workflow_health.py` を実行すると、起動前に `ModuleNotFoundError: No module named 'requests'`、終了コード 1 で落ちる。
+- 4 つの workflow（`inflection_shadow` / `position_monitor` / `forward_validation` / `reliability_watchdog`）の `notify-failure` ジョブは、`setup-python` も `uv sync` も無く、`python scripts/check_workflow_health.py --notify-failure` を直接実行している。実行環境にたまたま入っている package に頼っている。
 
 ### 根本原因
 
-[evaluate_learning_observations](../../src/evaluation/inflection_learning.py#L340-L344) が、取引用の `round_trip_cost_pct`（既定 0.2%）を、ベンチマークの比較（`paired_benchmark_returns`）にもそのまま渡している。forward は 9/10 の時点でベンチマーク専用の定数（0.05%）を持ち、レポートにも `"benchmark": 0.05` を出力していた。learning は 9/14 の最初のコミットから取引用のコストを流用しており、別にした理由の記録は履歴にも文書にも無い。
+[check_workflow_health.py:20](../../scripts/check_workflow_health.py#L20) が、出力を静かにする小さな関数 `suppress_provider_output` を `src/data/provider_output.py` から import する。そのモジュールは先頭で `import requests` する（[provider_output.py:13](../../src/data/provider_output.py#L13)）ため、関数自体は標準ライブラリしか使わないのに、`requests` が無いと import に失敗する。
+
+失敗通知の経路（`failure_alert` と `notify_once`）は、標準ライブラリ（`json`・`os`・`re`・`urllib`）だけで書かれている。障害時に動くべき経路なので、依存は少ないほどよい。
 
 ### 証拠
 
 | 仮説 | 判定 | 証拠 |
 |------|------|------|
-| 1. 意図しない不一致 | 確認 | git 履歴（forward は専用定数が先、learning は流用で導入）。意図を示す記録なし。 |
-| 2. 意図した差 | 棄却 | 同上。文書は 0.05% と明記。 |
-| 3. 影響の大きさ | 確認 | 同じ取引で超過収益が 0.15pt ずれ、境界付近では勝ち/負けが逆になる。超過収益は外れ率（[inflection_learning.py:443](../../src/evaluation/inflection_learning.py#L443)）、`prediction_miss_reasons`（[同:288](../../src/evaluation/inflection_learning.py#L288)）、昇格判定の平均超過収益の符号に使われる。 |
+| 1. `requests` の import で起動前に落ちる | 確認 | site-packages なしの実行で `ModuleNotFoundError`、終了コード 1。 |
+| 2. 4 つの `notify-failure` ジョブは依存を入れない | 確認 | 4 ファイルとも、`notify-failure` 内に `setup-python` / `uv sync` / `pip install` が無い。 |
+| 3. 切り離しで他が壊れる | 棄却 | `src/__init__.py` は空、`src/data/__init__.py` は 72 バイトで重い import なし。重い依存を使うのは Watchdog の経路（`exchange_calendars`、遅延 import）だけで、そのジョブは依存を入れている。 |
 
 ---
 
 ## 修正要件
 
-### REQ-077: learning のベンチマーク往復コストを、forward・historical と同じ定数にする（ISSUE-07）
+### REQ-078: 失敗通知スクリプトを標準ライブラリだけで起動できるようにする（ISSUE-08）
 
-- **画面**: 自己学習（`scripts/rebuild_inflection_learning.py`、`evaluate_learning_observations`）
-- **対象ファイル**: [src/evaluation/inflection_learning.py](../../src/evaluation/inflection_learning.py)（`evaluate_learning_observations`）、`tests/test_inflection_learning.py`
-- **Before（現状）**: ベンチマーク側のコストに、取引用の `round_trip_cost_pct`（既定 0.2%）を使う。
+- **画面**: GitHub Actions の `notify-failure` ジョブ（`scripts/check_workflow_health.py --notify-failure`）
+- **対象ファイル**: [src/data/provider_output.py](../../src/data/provider_output.py)、新規の小さなモジュール（`suppress_provider_output` の移設先）、[scripts/check_workflow_health.py](../../scripts/check_workflow_health.py)、`tests/test_workflow_health.py`
+- **Before（現状）**: 失敗通知が `requests` に依存する import 連鎖を持つため、`requests` が無い環境では起動できない。
 - **After（期待）**:
-  - ベンチマーク側の往復コストは、`BENCHMARK_ROUND_TRIP_COST_PCT`（0.05%）を常に使う。取引側のコスト（`round_trip_cost_pct`、既定 0.2%）は変えない。
-  - forward のレポートと同様に、「ベンチマークのコストは取引のコスト設定によらず固定」とする。
-  - 同じ取引は、learning と forward で超過収益の定義が一致する。
+  - `suppress_provider_output` を、標準ライブラリだけを import する新しいモジュール（例 `src/data/quiet_output.py`）へ移す。`provider_output.py` は同名で再エクスポートし、既存の import（`from src.data.provider_output import suppress_provider_output`）と挙動を変えない。
+  - `check_workflow_health.py` は新しいモジュールから import する。
+  - site-packages を使えない環境（`python -B -S`）で、`--help` と `--notify-failure` が動く。
+  - 重い依存を使う経路（Watchdog の期待実行の判定）は変更しない（そのジョブは依存を入れている）。
 - **修正方針**:
-  - `inflection_learning.py` で `BENCHMARK_ROUND_TRIP_COST_PCT` を `src.evaluation.inflection_report` から import する（循環なし。report は learning を import しない）。
-  - `paired_benchmark_returns(..., round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT)` に変更する。
-  - 取引側の計算、`ROUND_TRIP_COST_PCT`（0.2%）、爆発判定、昇格の閾値・統計は変更しない。
-  - 学習レポートの `limitations` に、ベンチマークのコスト（0.05%）を 1 行で明記する。
+  - 移すのは `suppress_provider_output` だけ。分類（`classify_provider_failure` など）は `requests` の型を使うので、`provider_output.py` に残す。
+  - workflow（`notify-failure` ジョブ）は変更しない。依存を入れず、標準ライブラリだけで動く経路にするのが目的。
 - **受入条件**:
-  1. 上記 synthetic で、learning の超過収益が forward と一致する（ベンチマーク 3.928%、超過 −0.0676）。修正前に失敗する回帰テストとして追加する。
-  2. 取引側のコスト（引数 `round_trip_cost_pct`）を変えても、ベンチマーク側は 0.05% のまま。
-  3. 取引の純損益、爆発判定、`explosive` は不変。
-  4. 既存テストが無変更で PASS（超過収益を固定していたテストが無い想定。ある場合は意図を確認して報告する）。
-  5. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
-- **baseline への影響**: baseline-changing。learning の超過収益が一律に 0.15pt 下がる（ベンチマーク側が 0.15pt 増える）。外れ率（超過 ≤ 0）、`prediction_miss_reasons`、昇格判定の平均超過収益が変わり得る。実 snapshot は暗号化されており検証できない（鍵なし）ため、影響は synthetic で示す。
+  1. site-packages を使わない Python（`-B -S`）で `check_workflow_health.py --help` が終了コード 0。修正前に失敗する回帰テストとして追加する。
+  2. 同じく site-packages なしで、`--notify-failure` が、ローカルの HTTP サーバー（`127.0.0.1`）に通知を送り、状態ファイルを書き、終了コード 0。通知の本文に secret・URL を含まない。
+  3. `provider_output.suppress_provider_output` は従来どおり import でき、出力を抑える挙動は不変（既存のテストが無変更で PASS）。
+  4. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
+- **baseline への影響**: なし（投資判定・評価の数値には無関係）。
+- **未確認（integration）**: 実際の GitHub Actions 上でのジョブ実行は、ローカルでは確認できない。
 
 ---
 
 ## 次の手順
 
 - 修正は Phase 5 で実施する。原因は確定済み。
-- 続けて ISSUE-08（失敗通知ジョブの依存前提）に進む。
+- 続けて ISSUE-09（障害分類の消失）に進む。

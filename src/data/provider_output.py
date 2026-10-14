@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import contextlib
-import logging
 import math
-import os
-import sys
-from collections.abc import Iterator
 from enum import StrEnum
 
 import requests
+
+from src.data.quiet_output import suppress_provider_output
+
+__all__ = ["MAX_RETRY_AFTER_SECONDS", "ProviderFailure", "ProviderFailureCategory", "bounded_retry_after",
+           "classify_provider_failure", "safe_error_details", "suppress_provider_output"]
 
 MAX_RETRY_AFTER_SECONDS = 300.0
 
@@ -76,15 +76,3 @@ class ProviderFailure(RuntimeError):
         self.provider_error_type = type(error).__name__
         self.http_status = getattr(getattr(error, "response", None), "status_code", None)
         super().__init__(f"stage={stage} category={self.category} {safe_error_details(error)}")
-
-
-@contextlib.contextmanager
-def suppress_provider_output() -> Iterator[None]:
-    """Suppress print and all ordinary loggers only while calling a private provider."""
-    previous = logging.root.manager.disable
-    with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-        logging.disable(sys.maxsize)
-        try:
-            yield
-        finally:
-            logging.disable(previous)

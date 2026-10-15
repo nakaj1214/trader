@@ -90,3 +90,14 @@ def test_every_job_that_holds_production_secrets_is_limited_to_main_or_to_schedu
             assert "github.ref == 'refs/heads/main'" in header or "github.event_name == 'schedule'" in header, (
                 f"{path.name}:{job} uses secrets but can run on any branch"
             )
+
+
+def test_every_workflow_states_its_token_permissions_instead_of_inheriting_the_repository_default() -> None:
+    for path in WORKFLOWS.glob("*.yml"):
+        workflow = path.read_text()
+        top_level = workflow.split("\njobs:\n", 1)[0]
+        # An explicit top-level block: a missing one would silently follow the repository's default token scope
+        # (which may be read-write), and a write scope must be granted per job, never for the whole workflow.
+        assert re.search(r"(?m)^permissions:\n(?:  [a-z-]+: (?:read|none)\n)+", top_level), (
+            f"{path.name} has no explicit read-only top-level permissions"
+        )

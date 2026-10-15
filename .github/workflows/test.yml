@@ -13,6 +13,10 @@ on:
       - "uv.lock"
       - ".github/workflows/test.yml"
 
+# Lint, type-check and tests need nothing beyond reading the repository (also for fork pull requests).
+permissions:
+  contents: read
+
 concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: true

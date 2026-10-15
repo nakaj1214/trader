@@ -33,6 +33,7 @@ STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION = 60
 class _SharedHistoryFrames:
     earliest_dates: dict[str, str] = field(default_factory=dict)
     frames: dict[str, pd.DataFrame | Exception] = field(default_factory=dict)
+    latest_one_minute_failure: str | None = None  # a safe category name only, set by the latest one-minute fetch
 
 
 _SHARED_HISTORY_FRAMES: ContextVar[_SharedHistoryFrames | None] = ContextVar(
@@ -206,16 +207,46 @@ def fetch_split_adjusted_history(
     )
 
 
+def _count(diagnostics: dict[str, int] | None, category: ProviderFailureCategory) -> None:
+    if diagnostics is not None:
+        diagnostics[category] = diagnostics.get(category, 0) + 1
+    shared = _SHARED_HISTORY_FRAMES.get()
+    if shared is not None:
+        shared.latest_one_minute_failure = str(category)
+
+
+def _begin_one_minute_fetch() -> None:
+    shared = _SHARED_HISTORY_FRAMES.get()
+    if shared is not None:
+        shared.latest_one_minute_failure = None
+
+
+def latest_one_minute_failure() -> str | None:
+    """The safe category (``timeout``, ``rate_limit``, ``empty`` ...) of why the latest one-minute fetch returned
+    nothing, or ``None`` when it did not fail or no monitor run is active. Read it right after the fetch."""
+    shared = _SHARED_HISTORY_FRAMES.get()
+    return None if shared is None else shared.latest_one_minute_failure
+
+
+def _one_minute_frame_problem(frame: pd.DataFrame) -> ProviderFailureCategory | None:
+    """Why a one-minute response is unusable, as a safe category (``None`` when it is usable)."""
+    if frame.empty:
+        return ProviderFailureCategory.EMPTY
+    if not {"Open", "High", "Low", "Close"}.issubset(frame.columns) or pd.DatetimeIndex(frame.index).tz is None:
+        return ProviderFailureCategory.PROTOCOL
+    return None
+
+
 def fetch_today_bars(ticker: str, *, diagnostics: dict[str, int] | None = None) -> pd.DataFrame | None:
     """Return today's timestamped one-minute bars in JST."""
+    _begin_one_minute_fetch()
     try:
         with suppress_provider_output():
             frame = yf.Ticker(ticker).history(
                 period="1d", interval="1m", auto_adjust=False, actions=False, prepost=False, timeout=15,
             )
-        if frame.empty or not {"Open", "High", "Low", "Close"}.issubset(frame.columns):
-            return None
-        if pd.DatetimeIndex(frame.index).tz is None:
+        if (problem := _one_minute_frame_problem(frame)) is not None:
+            _count(diagnostics, problem)
             return None
         frame = frame.copy()
         frame.index = _jst_index(frame.index)
@@ -223,6 +254,7 @@ def fetch_today_bars(ticker: str, *, diagnostics: dict[str, int] | None = None) 
         now = _now_jst()
         today = frame.loc[[timestamp.date() == now.date() for timestamp in frame.index]]
         if today.empty or today.index[-1] > now:
+            _count(diagnostics, ProviderFailureCategory.EMPTY)  # nothing usable for today yet
             return None
         today.attrs["requested_date"] = now.date().isoformat()
         return today
@@ -230,8 +262,7 @@ def fetch_today_bars(ticker: str, *, diagnostics: dict[str, int] | None = None) 
         category = classify_provider_failure(exc)
         if category == ProviderFailureCategory.UNEXPECTED:
             raise
-        if diagnostics is not None:
-            diagnostics[category] = diagnostics.get(category, 0) + 1
+        _count(diagnostics, category)
         return None
 
 
@@ -239,6 +270,7 @@ def fetch_session_bars(
     ticker: str, session_date: str, *, diagnostics: dict[str, int] | None = None
 ) -> pd.DataFrame | None:
     """Retrieve a pending session, including its closing auction, without caching failures."""
+    _begin_one_minute_fetch()
     session = date.fromisoformat(session_date)
     try:
         with suppress_provider_output():
@@ -246,9 +278,8 @@ def fetch_session_bars(
                 start=session.isoformat(), end=(session + timedelta(days=1)).isoformat(),
                 interval="1m", auto_adjust=False, actions=False, prepost=False, timeout=15,
             )
-        if frame.empty or not {"Open", "High", "Low", "Close"}.issubset(frame.columns):
-            return None
-        if pd.DatetimeIndex(frame.index).tz is None:
+        if (problem := _one_minute_frame_problem(frame)) is not None:
+            _count(diagnostics, problem)
             return None
         frame = frame.copy()
         frame.index = _jst_index(frame.index)
@@ -259,8 +290,7 @@ def fetch_session_bars(
         category = classify_provider_failure(exc)
         if category == ProviderFailureCategory.UNEXPECTED:
             raise
-        if diagnostics is not None:
-            diagnostics[category] = diagnostics.get(category, 0) + 1
+        _count(diagnostics, category)
         return None
 
 

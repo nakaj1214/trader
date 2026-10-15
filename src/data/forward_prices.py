@@ -167,6 +167,13 @@ def _download_batch(
         return pd.DataFrame()
 
 
+def _failure_summary(failures: dict[str, int]) -> str:
+    """`` (timeout=2, empty=1)``: safe category names and counts only; empty when nothing was counted."""
+    if not failures:
+        return ""
+    return " (" + ", ".join(f"{category}={count}" for category, count in sorted(failures.items())) + ")"
+
+
 def fetch_price_histories(
     tickers: Iterable[str],
     start: date,
@@ -231,10 +238,11 @@ def fetch_price_histories(
             sleep(batch_interval_seconds)
 
     missing = [ticker for ticker in wanted if ticker not in raw]
+    causes = _failure_summary(failures)
     if set(required) & set(missing):
-        raise RuntimeError("Required price history is unavailable")
+        raise RuntimeError("Required price history is unavailable" + causes)
     if len(missing) > len(wanted) * max_failure_ratio:
-        raise RuntimeError(f"Price retrieval failed for {len(missing)} ticker(s)")
+        raise RuntimeError(f"Price retrieval failed for {len(missing)} ticker(s)" + causes)
 
     if to_fetch:
         for ticker in to_fetch:

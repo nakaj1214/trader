@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import requests
 
 from scripts.rebuild_inflection_forward_validation import _changed_price_rows, _history_row_hashes
 from src.data.forward_prices import (
@@ -470,3 +471,38 @@ def test_learning_reuses_forwards_cache_and_both_have_prior_history_for_legacy_s
     for ticker, frame in learned.total_return().items():
         # enough prior closes for the 273-close regime reading as well as the 61-close volatility
         assert (frame.index < earliest_observation).sum() >= 273, ticker
+
+
+# --- the terminal error says WHY prices are missing, with categories and counts only (ISSUE-09) -------------------
+
+
+def test_the_terminal_error_carries_the_failure_categories_but_no_ticker() -> None:
+    def timeout(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        raise requests.Timeout("9999.T private-token")
+
+    with (
+        patch("yfinance.download", timeout),
+        pytest.raises(RuntimeError, match=r"Price retrieval failed for 2 ticker\(s\) \(.*timeout=\d+") as caught,
+    ):
+        fetch_price_histories(["9999.T", "8888.T"], START, END, max_retries=0, sleep=lambda _: None)
+
+    message = str(caught.value)
+    assert "9999.T" not in message and "8888.T" not in message and "private-token" not in message
+
+
+def test_the_required_price_error_also_names_the_categories() -> None:
+    def server_error(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        raise requests.HTTPError("x", response=type("R", (), {"status_code": 503})())
+
+    with (
+        patch("yfinance.download", server_error),
+        pytest.raises(RuntimeError, match=r"Required price history is unavailable \(.*server_error=\d+"),
+    ):
+        fetch_price_histories(["1306.T"], START, END, required={"1306.T"}, max_retries=0, sleep=lambda _: None)
+
+
+def test_a_clean_terminal_error_keeps_its_original_wording_when_nothing_was_counted() -> None:
+    with pytest.raises(RuntimeError) as caught:
+        _fetch({"1111.T": _raw()}, tickers=["1111.T", "2222.T"], max_retries=0, max_failure_ratio=0.0, missing={"2222.T"})
+
+    assert "Price retrieval failed for 1 ticker(s)" in str(caught.value)

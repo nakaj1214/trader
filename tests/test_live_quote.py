@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
@@ -299,3 +300,41 @@ def test_private_output_boundary_restores_logging_after_success_and_failure(fail
     assert logging.root.manager.disable == previous
     logging.getLogger("safe.diagnostics").error("safe provider stage completed")
     assert "private-token" not in caplog.text and "safe provider stage completed" in caplog.text
+
+
+# --- why a one-minute fetch returned nothing is recorded as a safe category (ISSUE-09) ---------------------------
+
+
+def _one_minute_failure_category(fetch: Any, history: Mock | Exception) -> dict[str, int]:
+    ticker = Mock()
+    if isinstance(history, Exception):
+        ticker.history.side_effect = history
+    else:
+        ticker.history.return_value = history
+    diagnostics: dict[str, int] = {}
+    with (
+        patch("src.data.live_quote.yf.Ticker", return_value=ticker),
+        patch("src.data.live_quote._now_jst", return_value=NOW),
+    ):
+        assert fetch(diagnostics) is None
+    return diagnostics
+
+
+@pytest.mark.parametrize("which", ["today", "session"])
+@pytest.mark.parametrize(
+    ("frame", "category"),
+    [
+        (pd.DataFrame(), "empty"),
+        (pd.DataFrame({"Open": [1.0], "Close": [1.0]}, index=pd.DatetimeIndex(["2026-09-08 09:00"], tz=JST)), "protocol"),
+        (pd.DataFrame({"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0]},
+                      index=pd.DatetimeIndex(["2026-09-08 09:00"])), "protocol"),
+    ],
+    ids=["empty_response", "missing_ohlc_columns", "timezone_naive"],
+)
+def test_an_empty_or_malformed_response_is_counted_with_its_category(which: str, frame: pd.DataFrame, category: str) -> None:
+    def fetch(diagnostics: dict[str, int]) -> Any:
+        if which == "today":
+            return fetch_today_bars("1111.T", diagnostics=diagnostics)
+        return fetch_session_bars("1111.T", "2026-09-08", diagnostics=diagnostics)
+
+    assert _one_minute_failure_category(fetch, frame) == {category: 1}

@@ -978,7 +978,9 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
     market = report["groups"]["early_candidate"]["exit_strategies"]["synthetic"]["market_benchmark_excess"]
     assert report["benchmark"]["ticker"] == "1306.T" and report["price_unavailable_ticker_count"] == 0
     if missing:
-        assert market["value"] is None and market["reason"] == "RuntimeError: Required price history is unavailable"
+        # The failure categories and counts (never a ticker) are part of the reason since ISSUE-09.
+        assert market["value"] is None
+        assert market["reason"] == "RuntimeError: Required price history is unavailable (empty=1)"
         assert "growth" not in saved
     else:
         assert market["グロース"]["benchmark_ticker"] == "growth" and market["グロース"]["evaluated"] == 1

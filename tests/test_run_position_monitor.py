@@ -16,6 +16,8 @@ import requests
 
 from scripts.run_position_monitor import is_in_session, run
 from src.data.live_quote import SplitAdjustedHistory, TodayQuote
+from src.data.live_quote import fetch_session_bars as live_fetch_session_bars
+from src.data.live_quote import fetch_today_bars as live_fetch_today_bars
 
 JST = ZoneInfo("Asia/Tokyo")
 NOW = datetime(2026, 9, 8, 12, 35, tzinfo=JST)
@@ -913,3 +915,87 @@ def test_the_daily_test_never_misses_a_touch_the_minute_path_would_report() -> N
         possible += could
         impossible += not could
     assert possible > 0 and impossible > 0  # the check is not trivially always true or always false
+
+
+# --- the failure category reaches the status row, safely (ISSUE-09) -----------------------------------------------
+
+
+class _Status:
+    def __init__(self, code: int) -> None:
+        self.status_code = code
+
+
+def _http_error(code: int) -> requests.HTTPError:
+    return requests.HTTPError("boom", response=_Status(code))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("failure", "category"),
+    [
+        (requests.Timeout("t"), "timeout"),
+        (_http_error(429), "rate_limit"),
+        (_http_error(401), "auth"),
+        (_http_error(500), "server_error"),
+    ],
+    ids=["timeout", "http_429", "http_401", "http_500"],
+)
+def test_the_provider_failure_category_is_in_the_status_row_and_nothing_else(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception, category: str
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    ticker = Mock()
+    ticker.history.side_effect = failure
+    with _dependencies([HOLDING]) as deps, patch("src.data.live_quote.yf.Ticker", return_value=ticker):
+        deps["fetch_bars"].side_effect = live_fetch_today_bars  # the real fetcher, on a failing provider
+        with pytest.raises(RuntimeError):
+            run(dry_run=False, evaluated_at=NOW)
+    row = _written(deps)[0]
+
+    assert row["status"] == "stale"
+    assert row["error"] == f"current quote is missing or invalid ({category})"
+    assert "1111.T" not in row["error"] and "boom" not in row["error"]
+
+
+def test_one_ticker_failure_category_is_shared_by_all_its_positions_and_not_by_other_tickers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    holdings = [HOLDING, {**HOLDING, "entry_date": "2026-09-04"}, {**HOLDING, "ticker": "2222.T"}]
+
+    def provider(symbol: str) -> Mock:
+        ticker = Mock()
+        ticker.history.side_effect = requests.Timeout("t") if symbol == "1111.T" else _http_error(429)
+        return ticker
+
+    with _dependencies(holdings) as deps, patch("src.data.live_quote.yf.Ticker", side_effect=provider):
+        deps["fetch_bars"].side_effect = live_fetch_today_bars
+        with pytest.raises(RuntimeError):
+            run(dry_run=False, evaluated_at=NOW)
+
+    assert [row["error"] for row in _written(deps)] == [
+        "current quote is missing or invalid (timeout)",
+        "current quote is missing or invalid (timeout)",
+        "current quote is missing or invalid (rate_limit)",
+    ]
+
+
+def test_a_pending_session_failure_names_its_category_in_the_incomplete_row() -> None:
+    today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
+    previous = [{**HOLDING, "triggered": False, "as_of_at": "2026-09-08T15:20:00+09:00"}]
+    index = pd.DatetimeIndex(["2026-09-08"], tz=JST)
+    ticker = Mock()
+    ticker.history.side_effect = requests.Timeout("t")
+    with (
+        _dependencies([HOLDING], previous=previous) as deps,
+        patch("src.data.live_quote.yf.Ticker", return_value=ticker),
+        patch("scripts.run_position_monitor.fetch_session_bars", live_fetch_session_bars),
+        pytest.raises(RuntimeError, match="no holdings"),
+    ):
+        deps["fetch_history"].return_value = SplitAdjustedHistory(
+            100.0, pd.Series([100.0], index=index), pd.Series([100.0], index=index)
+        )
+        run(dry_run=True, evaluated_at=today)
+    row = _written(deps)[0]
+
+    assert row["status"] == "incomplete"
+    assert row["error"] == "pending historical session data is unavailable (timeout)"

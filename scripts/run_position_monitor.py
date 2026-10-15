@@ -22,6 +22,7 @@ from src.data.live_quote import (
     fetch_session_bars,
     fetch_split_adjusted_history,
     fetch_today_bars,
+    latest_one_minute_failure,
     shared_split_history_frames,
 )
 from src.data.market_calendar import TSE_CALENDAR
@@ -199,6 +200,7 @@ def _recover_pending(
         ):
             continue
         bars = fetch_session_bars(ticker, session.isoformat())
+        failure = latest_one_minute_failure() if bars is None else None
         if bars is None and daily is not None and (current.date() - session).days > INTRADAY_RETENTION_DAYS:
             recovered = _recover_daily_only(ticker, purchase_date, session, history, stop_pct, daily, close)
             if recovered is None:
@@ -210,7 +212,9 @@ def _recover_pending(
             bars.attrs["daily_bar"] = daily
         quote = None if bars is None else build_today_quote(bars)
         if quote is None or bars is None:
-            raise IncompleteQuoteError("pending historical session data is unavailable")
+            raise IncompleteQuoteError(
+                "pending historical session data is unavailable" + (f" ({failure})" if failure else "")
+            )
         status = evaluate_position(
             history.entry_price, purchase_date.isoformat(),
             history.daily_highs.loc[history.daily_highs.index.date < session],
@@ -378,6 +382,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
         )
     configure_split_history_sharing(history_starts)
     today_cache: dict[str, Any] = {}
+    today_failure: dict[str, str | None] = {}  # the safe category of why a ticker's current bars are missing
 
     rows: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
@@ -414,6 +419,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                     today_cache[ticker] = _private_call(fetch_today_bars, ticker)
                 except Exception as exc:  # noqa: BLE001 - cache the same acquisition failure for this ticker
                     today_cache[ticker] = exc
+                today_failure[ticker] = latest_one_minute_failure()
             cached_bars = today_cache[ticker]
             if isinstance(cached_bars, Exception):
                 raise cached_bars
@@ -429,7 +435,8 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                     entry_price=raw_price,
                     trailing_stop_pct=stop_pct,
                     status="stale",
-                    error="current quote is missing or invalid",
+                    error="current quote is missing or invalid"
+                    + (f" ({today_failure[ticker]})" if bars is None and today_failure.get(ticker) else ""),
                 )
                 _preserve_previous_state(failed, previous)
                 rows.append(failed)

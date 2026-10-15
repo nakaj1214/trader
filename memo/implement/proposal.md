@@ -1,10 +1,10 @@
 # 修正要件書（verify-before-fix）
 
 > verify-before-fix スキルで生成。証拠に基づく診断結果と修正方針。
-> 日時: 2026-10-14
-> 対象: ISSUE-08（失敗通知ジョブが、依存を入れずに `requests` を import する）
-> 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）、[Codex 最終監査](../../.harness/reports/reliability-final-audit-2026-10-13.md)（Q01）
-> 前の要件書: ISSUE-01〜07（REQ-071〜077）は実装済み。ISSUE-04・06・07 は未コミット。
+> 日時: 2026-10-15
+> 対象: ISSUE-09（障害分類が最終結果に残らない）
+> 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）、[Codex 最終監査](../../.harness/reports/reliability-final-audit-2026-10-13.md)（Q07）
+> 前の要件書: ISSUE-01〜08（REQ-071〜078）は実装済み・コミット済み（`debug 5` まで）。
 
 ---
 
@@ -12,51 +12,54 @@
 
 ### 確認した現象
 
-- site-packages を使えない Python で `scripts/check_workflow_health.py` を実行すると、起動前に `ModuleNotFoundError: No module named 'requests'`、終了コード 1 で落ちる。
-- 4 つの workflow（`inflection_shadow` / `position_monitor` / `forward_validation` / `reliability_watchdog`）の `notify-failure` ジョブは、`setup-python` も `uv sync` も無く、`python scripts/check_workflow_health.py --notify-failure` を直接実行している。実行環境にたまたま入っている package に頼っている。
+- **(a) Position Monitor**: timeout・HTTP 429・認証失敗（401）・サーバーエラー（500）のどれでも、状況の行は同じ `status='stale'`、`error='current quote is missing or invalid'` になる。運用者は原因を区別できない。
+- **(b) forward**: 価格取得が失敗した後の終端例外は、`Required price history is unavailable` / `Price retrieval failed for 2 ticker(s)` だけ。関数は `{timeout: 2, empty: 2}` と分かっているのに、例外に含めない。
 
 ### 根本原因
 
-[check_workflow_health.py:20](../../scripts/check_workflow_health.py#L20) が、出力を静かにする小さな関数 `suppress_provider_output` を `src/data/provider_output.py` から import する。そのモジュールは先頭で `import requests` する（[provider_output.py:13](../../src/data/provider_output.py#L13)）ため、関数自体は標準ライブラリしか使わないのに、`requests` が無いと import に失敗する。
-
-失敗通知の経路（`failure_alert` と `notify_once`）は、標準ライブラリ（`json`・`os`・`re`・`urllib`）だけで書かれている。障害時に動くべき経路なので、依存は少ないほどよい。
+- (a) [fetch_today_bars](../../src/data/live_quote.py#L209-L235) / [fetch_session_bars](../../src/data/live_quote.py#L238-L264) は、既知の失敗を `diagnostics` に数えて `None` を返す。しかし呼び出し側の [run_position_monitor.py](../../scripts/run_position_monitor.py) は `diagnostics` を渡さないため、分類が捨てられる。また、空の応答や構造異常で `None` を返す経路（行 216-219、249-252）は、`diagnostics` にも数えない。
+- (b) [fetch_price_histories](../../src/data/forward_prices.py#L233-L237) の終端で、蓄積した `failures`（分類別の件数）を、汎用の `RuntimeError` に含めない。
 
 ### 証拠
 
 | 仮説 | 判定 | 証拠 |
 |------|------|------|
-| 1. `requests` の import で起動前に落ちる | 確認 | site-packages なしの実行で `ModuleNotFoundError`、終了コード 1。 |
-| 2. 4 つの `notify-failure` ジョブは依存を入れない | 確認 | 4 ファイルとも、`notify-failure` 内に `setup-python` / `uv sync` / `pip install` が無い。 |
-| 3. 切り離しで他が壊れる | 棄却 | `src/__init__.py` は空、`src/data/__init__.py` は 72 バイトで重い import なし。重い依存を使うのは Watchdog の経路（`exchange_calendars`、遅延 import）だけで、そのジョブは依存を入れている。 |
+| (a) Monitor が失敗の種類を区別できない | 確認 | 4 種類の失敗すべてで、行が同一。 |
+| (b) forward の終端例外が原因を失う | 確認 | 例外の文面に分類が無い（関数の `failures` には `timeout`・`empty` の件数がある）。 |
+| (c) 自前のバグが validation として握られる | 棄却（対処しない） | `classify_provider_failure` が `ValueError`/`KeyError` を validation にするのは、yfinance 自体が解析失敗でこれらを投げるため。例外の型では、provider の失敗と自前のバグを区別できない。型を変えると、正当な provider の失敗が `unexpected` に変わって scan が止まる。区別する安全な手段が無いので、今回は変更しない。 |
 
 ---
 
 ## 修正要件
 
-### REQ-078: 失敗通知スクリプトを標準ライブラリだけで起動できるようにする（ISSUE-08）
+### REQ-079: provider 障害の分類を、Monitor の行と forward の終端例外に残す（ISSUE-09）
 
-- **画面**: GitHub Actions の `notify-failure` ジョブ（`scripts/check_workflow_health.py --notify-failure`）
-- **対象ファイル**: [src/data/provider_output.py](../../src/data/provider_output.py)、新規の小さなモジュール（`suppress_provider_output` の移設先）、[scripts/check_workflow_health.py](../../scripts/check_workflow_health.py)、`tests/test_workflow_health.py`
-- **Before（現状）**: 失敗通知が `requests` に依存する import 連鎖を持つため、`requests` が無い環境では起動できない。
+- **画面**: Position Monitor（Sheets の状況、Slack 警告）/ forward validation・learning の価格取得
+- **対象ファイル**: [src/data/live_quote.py](../../src/data/live_quote.py)（`fetch_today_bars`、`fetch_session_bars`）、[scripts/run_position_monitor.py](../../scripts/run_position_monitor.py)、[src/data/forward_prices.py](../../src/data/forward_prices.py)（`fetch_price_histories`）、`tests/test_run_position_monitor.py`、`tests/test_live_quote.py`、`tests/test_forward_prices.py`
+- **Before（現状）**: Monitor は失敗の種類を行に残さない。forward の終端例外は原因を含まない。
 - **After（期待）**:
-  - `suppress_provider_output` を、標準ライブラリだけを import する新しいモジュール（例 `src/data/quiet_output.py`）へ移す。`provider_output.py` は同名で再エクスポートし、既存の import（`from src.data.provider_output import suppress_provider_output`）と挙動を変えない。
-  - `check_workflow_health.py` は新しいモジュールから import する。
-  - site-packages を使えない環境（`python -B -S`）で、`--help` と `--notify-failure` が動く。
-  - 重い依存を使う経路（Watchdog の期待実行の判定）は変更しない（そのジョブは依存を入れている）。
+  - `fetch_today_bars` / `fetch_session_bars` は、空の応答を `empty`、構造異常（OHLC 列の欠落、タイムゾーンなし）を `protocol` として `diagnostics` に数える（既存の例外起因の分類に加える）。戻り値は変えない。
+  - Monitor は `diagnostics` を渡し、`stale` / `incomplete` の行の `error` に分類を括弧書きで添える（例: `current quote is missing or invalid (timeout)`、`pending historical session data is unavailable (rate_limit)`）。分類が無ければ従来の文面のまま。
+  - forward の終端例外は、蓄積した分類別の件数を文面に含める（例: `Price retrieval failed for 2 ticker(s) (timeout=2, empty=2)`）。文面の先頭部分（`Required price history is unavailable` / `Price retrieval failed for N ticker(s)`）は維持する。
+  - 公開してよい情報は、分類名と件数だけ。ticker・URL・response body・生の例外本文は出さない（Q02/Q07 の保護を維持）。
+  - 正常系の戻り値・取得結果・判定は不変。
 - **修正方針**:
-  - 移すのは `suppress_provider_output` だけ。分類（`classify_provider_failure` など）は `requests` の型を使うので、`provider_output.py` に残す。
-  - workflow（`notify-failure` ジョブ）は変更しない。依存を入れず、標準ライブラリだけで動く経路にするのが目的。
+  - `live_quote.py`: 2 つの関数で、`None` を返す前に、該当する分類を `diagnostics` に加える小さな補助関数を使う。
+  - `run_position_monitor.py`: ticker ごとの当日足の共有（Stage 4C の仕組み）で、`diagnostics` を一緒に保持し、同じ ticker の position に同じ分類を一貫して使う。`_recover_pending` の `fetch_session_bars` にも `diagnostics` を渡す。
+  - `forward_prices.py`: 終端例外を作る箇所で、`failures`（引数 `diagnostics` を含む）を整形して文面に添える。
+  - 既存テストのうち、`fetch_today_bars` の呼び出しの形（`assert_called_once_with("1111.T")`）を固定している 3 箇所は、診断を受け取る引数が加わるため、期待を `diagnostics=ANY` を許す形に更新する。契約の意図的な変更であり、他の期待は変えない。
 - **受入条件**:
-  1. site-packages を使わない Python（`-B -S`）で `check_workflow_health.py --help` が終了コード 0。修正前に失敗する回帰テストとして追加する。
-  2. 同じく site-packages なしで、`--notify-failure` が、ローカルの HTTP サーバー（`127.0.0.1`）に通知を送り、状態ファイルを書き、終了コード 0。通知の本文に secret・URL を含まない。
-  3. `provider_output.suppress_provider_output` は従来どおり import でき、出力を抑える挙動は不変（既存のテストが無変更で PASS）。
-  4. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
-- **baseline への影響**: なし（投資判定・評価の数値には無関係）。
-- **未確認（integration）**: 実際の GitHub Actions 上でのジョブ実行は、ローカルでは確認できない。
+  1. timeout・429・401・500 の fake で、Monitor の行の `error` が、それぞれ別の分類を含む。修正前に失敗する回帰テストとして追加する。
+  2. 空の応答と構造異常で、`diagnostics` に `empty` / `protocol` が数えられ、戻り値は従来どおり `None`。
+  3. 同じ ticker の複数 position で、取得は 1 回のまま（Stage 4C）、同じ分類が全 position の行に付く。
+  4. forward の終端例外が、分類別の件数を含み、文面の先頭部分は従来どおり（既存の `match=` が通る）。
+  5. 行・例外・公開ログに、ticker・URL・response body・秘密が含まれない。
+  6. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
+- **baseline への影響**: なし（失敗時の診断文面のみ。投資判定・評価の数値は不変）。
 
 ---
 
 ## 次の手順
 
 - 修正は Phase 5 で実施する。原因は確定済み。
-- 続けて ISSUE-09（障害分類の消失）に進む。
+- 続けて ISSUE-10（日次 scan workflow に main ブランチの限定が無い）に進む。

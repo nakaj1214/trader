@@ -102,12 +102,12 @@ source .venv/bin/activate
 | Workflow | 役割 |
 |---|---|
 | `test.yml` | Python regression、ruff、現行経路の mypy と coverage |
-| `inflection_shadow.yml` | 平日16:40 JSTのscan、暗号化snapshot・通知状態のcommit、Slackダイジェスト。手動実行で `resend_digest` 指定可 |
+| `inflection_shadow.yml` | 平日16:40 JSTのscan（main限定）、暗号化snapshot・通知状態のcommit、Slackダイジェスト。手動実行で `resend_digest` 指定可 |
 | `forward_validation.yml` | 日曜09:30 JSTと手動実行で暗号化snapshotを評価。関連PR（fork含む）はsecret不要の回帰テストのみ。learning・price hash pushはscheduleのみ |
 | `position_monitor.yml` | 平日09:20 / 12:50 / 15:35 / 15:50 JSTのstop監視・引け確認。mainの手動実行可。Google Sheets更新とSlack通知は実装・fake検証済みで、実サービスの再確認は未実施 |
 | `reliability_watchdog.yml` | 毎日20:10 JSTとmainの手動実行でworkflowの失敗・未起動・snapshot欠落を確認しSlack通知 |
 
-scheduleはbest-effortです。scanはbranch別concurrency、Monitorはmain限定の `position-monitor-production`、障害通知とWatchdogは `workflow-reliability-notifications` で直列化し、いずれも実行中のcancelをしません。Testはref別で古いrunをcancelします。Action参照はSHA固定、依存は `uv.lock` の `uv sync --frozen` から導入します。`contents: write` の明示付与はsnapshotをpushするscan jobと週次hash保存jobだけで、障害通知・Watchdogは `actions: read` / `contents: read`。Testにはworkflow/jobの明示permissions指定がありません。secretは必要stepへ渡し、`pull_request_target` は使いません。
+scheduleはbest-effortです。scanもMonitorもmain限定（scanはブランチから手動実行してもジョブがスキップされ、本番のsecret・Slack・pushを使いません。ブランチでの確認はローカル実行かテストで行います）で、concurrencyはscanがref別、Monitorが `position-monitor-production`、障害通知とWatchdogは `workflow-reliability-notifications` で直列化し、いずれも実行中のcancelをしません。Testはref別で古いrunをcancelします。Action参照はSHA固定、依存は `uv.lock` の `uv sync --frozen` から導入します。`contents: write` の明示付与はsnapshotをpushするscan jobと週次hash保存jobだけで、障害通知・Watchdogは `actions: read` / `contents: read`。Testにはworkflow/jobの明示permissions指定がありません。secretは必要stepへ渡し、`pull_request_target` は使いません。
 
 Monitorは前回の `as_of_at` を検証済みcheckpointとして、未評価区間のstop接触を回収します。引け足が不足する状態は `incomplete` で、stop非接触の確認ではありません。1分足の保持期間（30日）より古い未評価の営業日は日足で保守的に判定し、安値が stop 水準以下なら `recovered_daily_possible_touch`（接触の可能性。日中の順序は不明なので誤報があり得る）として1回だけ通知、上回っていれば接触なしとして先へ進みます。`triggered_at`・`last_notified_at`・`last_warned_at` を保持し、通知・Sheets保存の片方だけ成功した境界は手動確認が必要です。branch・通常のローカル実行はproduction writer制限で拒否されます。Watchdogの2時間grace、通知cache消失時の重複、Actions全体停止時の限界は `docs/playbooks.md` を参照してください。
 

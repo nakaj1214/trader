@@ -12,7 +12,8 @@ on:
         default: false
 
 concurrency:
-  # A manual branch run must never cancel the scheduled main run.
+  # The scan job runs on main only (below); a manual run from another branch is skipped before it can use any secret.
+  # The group stays per branch so a skipped branch run can never cancel or queue behind the scheduled main run.
   group: jp-inflection-shadow-${{ github.ref_name }}
   # A manual run on main queues behind the scheduled run instead of cancelling it.
   cancel-in-progress: false
@@ -22,6 +23,8 @@ permissions:
 
 jobs:
   scan:
+    # Production API key, snapshot key and Slack webhook: never from a branch (same rule as the position monitor).
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

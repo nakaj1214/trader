@@ -32,6 +32,8 @@ Use this flow when a command, container operation, PHP process, JavaScript reque
 - Slack timeout/500 is a failed notification, never recorded as delivered. Slack acceptance and Sheets status persistence are separate operations; after a status-write failure, reconcile the private notification and Sheets state before rerunning. Public logs retain stage, error type, row number, counts, and HTTP status; diagnose provider exception details through private channels rather than publishing holdings or credentials.
 # Stage 4B reliability boundaries
 
+The daily scan job runs on `main` only: a manual run from another branch is skipped before it can use the production API key, snapshot key or Slack webhook, or push a snapshot to that branch, and a skipped run raises no failure alert. Check a branch locally or with the tests instead.
+
 The daily digest records `pending` or `succeeded` by market date in
 `dashboard/data/inflection/digest_state.json`. A pending day is retried by the next normal run;
 `workflow_dispatch` with `resend_digest=true` forces a retry. Delivery is best-effort, not exactly

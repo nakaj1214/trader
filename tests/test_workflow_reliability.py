@@ -52,3 +52,41 @@ def test_failures_are_reported_by_separate_jobs_and_missing_runs_by_a_watchdog()
         assert "always()" in workflow
         assert "check_workflow_health.py --notify-failure" in workflow
     assert (WORKFLOWS / "reliability_watchdog.yml").exists()
+
+
+def _job_header(workflow: str, job: str) -> str:
+    """The text of one job from its name up to its ``runs-on`` line (conditions and dependencies live there)."""
+    start = workflow.index(f"\n  {job}:\n") + 1
+    return workflow[start : workflow.index("runs-on:", start)]
+
+
+def test_the_daily_scan_runs_only_on_main_so_a_branch_cannot_use_production_secrets() -> None:
+    workflow = (WORKFLOWS / "inflection_shadow.yml").read_text()
+
+    # The scan uses the production API key, snapshot key and Slack webhook and pushes to the ref it ran on.
+    assert "if: github.ref == 'refs/heads/main'" in _job_header(workflow, "scan")
+    notify = _job_header(workflow, "notify-failure")
+    assert "needs: scan" in notify and "github.ref == 'refs/heads/main'" in notify
+    # A skipped scan is neither a failure nor a cancellation, so a branch run raises no failure alert.
+    assert "needs.scan.result == 'failure' || needs.scan.result == 'cancelled'" in notify
+
+
+def test_every_job_that_holds_production_secrets_is_limited_to_main_or_to_scheduled_runs() -> None:
+    allowed = {
+        # job -> why it may run off main (its writes/notifications are scoped or secret-free)
+        ("forward_validation.yml", "validate"): "secret steps are skipped for pull requests",
+        ("test.yml", "lint"): "no secrets",
+        ("test.yml", "test"): "no secrets",
+    }
+    for path in WORKFLOWS.glob("*.yml"):
+        workflow = path.read_text()
+        for job in re.findall(r"^  ([a-z][a-z0-9-]*):\n", workflow.split("\njobs:\n", 1)[1], flags=re.MULTILINE):
+            header = _job_header(workflow, job)
+            body_start = workflow.index(f"\n  {job}:\n")
+            next_job = re.search(r"\n  [a-z][a-z0-9-]*:\n", workflow[body_start + 1 :])
+            body = workflow[body_start : body_start + 1 + next_job.start()] if next_job else workflow[body_start:]
+            if "secrets." not in body or (path.name, job) in allowed:
+                continue
+            assert "github.ref == 'refs/heads/main'" in header or "github.event_name == 'schedule'" in header, (
+                f"{path.name}:{job} uses secrets but can run on any branch"
+            )

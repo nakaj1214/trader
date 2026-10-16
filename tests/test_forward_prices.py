@@ -506,3 +506,60 @@ def test_a_clean_terminal_error_keeps_its_original_wording_when_nothing_was_coun
         _fetch({"1111.T": _raw()}, tickers=["1111.T", "2222.T"], max_retries=0, max_failure_ratio=0.0, missing={"2222.T"})
 
     assert "Price retrieval failed for 1 ticker(s)" in str(caught.value)
+
+
+# --- the price cache is published atomically: an interrupted write never destroys the previous cache -------------
+
+
+def _cache_entries(*tickers: str) -> dict[str, dict[str, Any]]:
+    return {ticker: {"frame": _raw(), "start": START, "end": END} for ticker in tickers}
+
+
+def test_an_interrupted_cache_write_keeps_the_previous_cache_intact(tmp_path: Path) -> None:
+    from src.data import forward_prices
+
+    path = tmp_path / "price_cache.pkl"
+    forward_prices._save_cache(path, _cache_entries("1306.T"))
+    before = path.read_bytes()
+
+    def interrupted(self: Path, data: bytes) -> int:  # the direct write the old code used, stopped half way
+        with open(self, "wb") as handle:
+            handle.write(data[: len(data) // 2])
+        raise OSError("runner stopped")
+
+    def failing_replace(source: Any, target: Any) -> None:
+        raise OSError("runner stopped")
+
+    with (
+        patch.object(Path, "write_bytes", interrupted),
+        patch("src.data.atomic_write.os.replace", failing_replace),
+        pytest.raises(OSError, match="runner stopped"),
+    ):
+        forward_prices._save_cache(path, _cache_entries("1306.T", "1111.T"))
+
+    assert path.read_bytes() == before  # the last good cache is untouched
+    assert set(forward_prices._load_cache(path)) == {"1306.T"}
+    assert [p.name for p in tmp_path.iterdir()] == ["price_cache.pkl"]  # no temporary file is left behind
+
+
+def test_the_cache_bytes_are_unchanged_and_a_new_directory_is_created(tmp_path: Path) -> None:
+    import pickle
+
+    from src.data import forward_prices
+
+    path = tmp_path / "artifacts" / "nested" / "price_cache.pkl"
+    entries = _cache_entries("1306.T")
+    forward_prices._save_cache(path, entries)
+
+    assert path.read_bytes() == pickle.dumps({"entries": entries})  # exactly what the direct write produced
+    assert set(forward_prices._load_cache(path)) == {"1306.T"}
+
+
+def test_atomic_write_still_handles_text_after_gaining_a_binary_mode(tmp_path: Path) -> None:
+    from src.data.atomic_write import atomic_write_bytes, atomic_write_text
+
+    atomic_write_text(tmp_path / "a.txt", "日本語\n")
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "日本語\n"
+    assert atomic_write_bytes(tmp_path / "b.bin", b"\x00\xff", overwrite=False) is True
+    assert atomic_write_bytes(tmp_path / "b.bin", b"other", overwrite=False) is False  # immutable stays immutable
+    assert (tmp_path / "b.bin").read_bytes() == b"\x00\xff"

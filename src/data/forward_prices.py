@@ -25,6 +25,7 @@ import pandas as pd
 import yfinance as yf
 from yfinance.utils import auto_adjust
 
+from src.data.atomic_write import atomic_write_bytes
 from src.data.jquants_history import tse_sessions
 from src.data.provider_output import ProviderFailureCategory, classify_provider_failure, suppress_provider_output
 from src.data.validation import validate_ohlcv
@@ -138,8 +139,7 @@ def _load_cache(path: Path | None) -> dict[str, dict[str, Any]]:
 def _save_cache(path: Path | None, entries: dict[str, dict[str, Any]]) -> None:
     if path is None:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(pickle.dumps({"entries": entries}))
+    atomic_write_bytes(path, pickle.dumps({"entries": entries}))  # also creates the parent directory
 
 
 def _download_batch(

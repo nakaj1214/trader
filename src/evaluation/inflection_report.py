@@ -38,7 +38,7 @@ from src.evaluation.inflection_forward import (
     paired_benchmark_returns,
     summarize_benchmark_excess,
 )
-from src.evaluation.regime import regime_labels
+from src.evaluation.regime import TREND_WINDOW, VOLATILITY_BASELINE_SESSIONS, VOLATILITY_WINDOW, regime_labels
 
 ROUND_TRIP_COST_PCT = 0.2
 STRESS_ROUND_TRIP_COST_PCT = 1.2
@@ -69,14 +69,34 @@ def _summary_only(value: Any) -> Any:
     return value
 
 
+SHORT_MOVE_SESSIONS = 20  # `regime_sample_counts`: the benchmark's change over the last 20 sessions
+
+# "up" and "down" appear twice in one report with DIFFERENT meanings; these fixed texts say which is which.
+REGIME_DEFINITIONS = {
+    "regime_sample_counts": (
+        f"up/down = the benchmark close on the signal date is at or above (up) / below (down) its close "
+        f"{SHORT_MOVE_SESSIONS} sessions earlier; unknown while there is not enough history"
+    ),
+    "regime_breakdown.trend": (
+        f"up/down = the benchmark close on the signal date is at or above (up) / below (down) its "
+        f"{TREND_WINDOW}-session simple moving average; unknown while there is not enough history"
+    ),
+    "regime_breakdown.volatility": (
+        f"high/normal = the {VOLATILITY_WINDOW}-session annualised realised volatility on the signal date is above "
+        f"(high) / not above (normal) the median of the same measure over the previous "
+        f"{VOLATILITY_BASELINE_SESSIONS} sessions; unknown while there is not enough history"
+    ),
+}
+
+
 def regime_label(
     benchmark_history: pd.DataFrame, signal_date: str, prepared_closes: pd.Series | None = None,
 ) -> str:
     closes = _series(benchmark_history, "Close") if prepared_closes is None else prepared_closes.copy(deep=True)
     available = closes[closes.index <= pd.Timestamp(signal_date)]
-    if len(available) < 21:
+    if len(available) < SHORT_MOVE_SESSIONS + 1:
         return "unknown"
-    return "up" if float(available.iloc[-1]) >= float(available.iloc[-21]) else "down"
+    return "up" if float(available.iloc[-1]) >= float(available.iloc[-(SHORT_MOVE_SESSIONS + 1)]) else "down"
 
 
 REGIME_KINDS = {"trend": ("up", "down", "unknown"), "volatility": ("high", "normal", "unknown")}
@@ -136,6 +156,7 @@ def _report_breakdowns(
         "score_band_sample_counts": score_counts,
         "regime_sample_counts": regime_counts,
         "regime_breakdown": _regime_breakdown(completed, benchmark_history, prepared_benchmark),
+        "regime_definitions": REGIME_DEFINITIONS,
     }
 
 

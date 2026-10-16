@@ -998,7 +998,7 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
 
 
 ADDED_AFTER_THE_FINGERPRINTS = {
-    "exit_legs", "regime_breakdown", "price_diagnostics", "unevaluated", "unevaluated_reasons",
+    "exit_legs", "regime_breakdown", "regime_definitions", "price_diagnostics", "unevaluated", "unevaluated_reasons",
 }  # Additive diagnostics only; keep the original numeric fingerprints unchanged.
 
 
@@ -1147,3 +1147,43 @@ def test_session_coverage_keeps_the_report_keys_and_evaluation_unchanged(tmp_pat
 
     assert {"groups", "portfolio_summary", "tracked_pool_explosion_recall", "benchmark"} <= set(report)
     assert report["groups"]["early_candidate"]["signal_count"] == 1
+
+
+# --- the two meanings of "up"/"down" in one report are spelled out (ISSUE-14) -----------------------------------
+
+
+def _pullback_after_a_long_uptrend() -> tuple[pd.DataFrame, str]:
+    """Far above the 200-session mean, yet down over the last 20 sessions: the two definitions disagree."""
+    days = pd.bdate_range("2025-01-06", periods=320)
+    values = [100.0 + 0.5 * i for i in range(300)] + [250.0 - 1.5 * i for i in range(20)]
+    frame = pd.DataFrame({"Open": values, "High": values, "Low": values, "Close": values}, index=days)
+    return frame, str(days[-1].date())
+
+
+def test_the_report_states_what_up_and_down_mean_for_each_regime_block() -> None:
+    from src.evaluation.inflection_backtest import TradeResult
+    from src.evaluation.inflection_report import REGIME_DEFINITIONS, _report_breakdowns
+    from src.evaluation.regime import TREND_WINDOW, VOLATILITY_BASELINE_SESSIONS, VOLATILITY_WINDOW
+
+    bench, day = _pullback_after_a_long_uptrend()
+    trade = TradeResult("1111.T", day, 80.0, day, 1.0, day, 1.0, 1.0, 1.0, 1.0, 1.0, False, horizon_matured=True)
+    report = _report_breakdowns([trade], bench)
+
+    # The numbers themselves are unchanged: the same single trade is "down" by one definition and "up" by the other.
+    assert report["regime_sample_counts"] == {"up": 0, "down": 1, "unknown": 0}
+    assert {k: v["count"] for k, v in report["regime_breakdown"]["trend"].items()} == {"up": 1, "down": 0, "unknown": 0}
+
+    definitions = report["regime_definitions"]
+    assert definitions == REGIME_DEFINITIONS
+    assert set(definitions) == {"regime_sample_counts", "regime_breakdown.trend", "regime_breakdown.volatility"}
+    assert "20" in definitions["regime_sample_counts"] and str(TREND_WINDOW) not in definitions["regime_sample_counts"]
+    assert str(TREND_WINDOW) in definitions["regime_breakdown.trend"]
+    assert str(VOLATILITY_WINDOW) in definitions["regime_breakdown.volatility"]
+    assert str(VOLATILITY_BASELINE_SESSIONS) in definitions["regime_breakdown.volatility"]
+    assert definitions["regime_sample_counts"] != definitions["regime_breakdown.trend"]
+
+
+def test_the_regime_definitions_are_fixed_text_without_any_trade_data() -> None:
+    from src.evaluation.inflection_report import REGIME_DEFINITIONS
+
+    assert all(isinstance(text, str) and ".T" not in text for text in REGIME_DEFINITIONS.values())

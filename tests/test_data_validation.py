@@ -82,3 +82,34 @@ def test_real_network_access_is_blocked_in_tests() -> None:
     with pytest.raises(RuntimeError, match="forbidden"):
         socket.getaddrinfo("example.com", 443)
     del BLOCKED_NETWORK_ATTEMPTS[before:]  # keep the run-level count to unintended attempts only
+
+
+def test_curl_cffi_native_transport_is_blocked_and_counted_like_a_python_socket() -> None:
+    """yfinance talks through curl_cffi, which calls libcurl directly and never touches Python's socket module."""
+    import http.server
+    import threading
+
+    from curl_cffi import requests as curl_requests
+
+    from tests.conftest import BLOCKED_NETWORK_ATTEMPTS
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"reached")
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)  # local only: nothing here leaves the machine
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    before = len(BLOCKED_NETWORK_ATTEMPTS)
+    try:
+        with pytest.raises(RuntimeError, match="forbidden"):
+            curl_requests.get(f"http://127.0.0.1:{server.server_address[1]}/", timeout=5)
+        assert len(BLOCKED_NETWORK_ATTEMPTS) == before + 1
+        assert BLOCKED_NETWORK_ATTEMPTS[-1] == "native-transport"
+    finally:
+        server.shutdown()
+        del BLOCKED_NETWORK_ATTEMPTS[before:]  # keep the run-level count to unintended attempts only

@@ -137,6 +137,28 @@ def _preserve_previous_state(row: dict[str, Any], previous: dict[str, Any] | Non
     row["as_of_at"] = previous.get("as_of_at", "") if previous else ""
 
 
+def _daily_session_is_valid(daily: dict[str, Any]) -> bool:
+    """Whether a daily bar can be trusted as evidence: finite, positive and consistent High/Low/Close.
+
+    A comparison with NaN is always false, so an unchecked bar would "prove" there was no touch. Open is only used
+    for the consistency check when it is itself finite and positive.
+    """
+    try:
+        high, low, close = (float(daily[key]) for key in ("High", "Low", "Close"))
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all(math.isfinite(value) and value > 0 for value in (high, low, close)):
+        return False
+    prices = [close]
+    try:
+        opened = float(daily["Open"])
+    except (KeyError, TypeError, ValueError):
+        opened = math.nan
+    if math.isfinite(opened) and opened > 0:
+        prices.append(opened)
+    return low <= min(prices) and high >= max(prices)
+
+
 def _daily_could_touch(prior_high_water: float, daily: dict[str, Any], stop_pct: float) -> bool:
     """Whether a minute-level evaluation of this session could have touched the trailing stop.
 
@@ -157,12 +179,13 @@ def _recover_daily_only(
     prior_high_water = history.entry_price if prior.empty else max(history.entry_price, float(prior.max()))
     if not _daily_could_touch(prior_high_water, daily, stop_pct):
         return None
-    stop_price = prior_high_water * (1.0 - stop_pct / 100.0)
+    high_water = max(prior_high_water, float(daily["High"]))
+    stop_price = high_water * (1.0 - stop_pct / 100.0)  # the most the stop could have risen to: what the day was judged on
     current_price = float(daily["Close"])
     return {
         "ticker": ticker, "entry_date": purchase_date.isoformat(), "entry_price": round(history.entry_price, 6),
         "current_price": round(current_price, 6),
-        "high_water_mark": round(max(prior_high_water, float(daily["High"])), 6),
+        "high_water_mark": round(high_water, 6),
         "stop_price": round(stop_price, 6), "trailing_stop_pct": round(stop_pct, 6),
         "unrealized_pct": round((current_price / history.entry_price - 1.0) * 100.0, 6),
         "distance_to_stop_pct": round((current_price / stop_price - 1.0) * 100.0, 6),
@@ -202,6 +225,8 @@ def _recover_pending(
         bars = fetch_session_bars(ticker, session.isoformat())
         failure = latest_one_minute_failure() if bars is None else None
         if bars is None and daily is not None and (current.date() - session).days > INTRADAY_RETENTION_DAYS:
+            if not _daily_session_is_valid(daily):
+                raise IncompleteQuoteError("pending historical session daily bar is invalid")
             recovered = _recover_daily_only(ticker, purchase_date, session, history, stop_pct, daily, close)
             if recovered is None:
                 continue  # the daily bar proves there was no touch; nothing minute-level is left to replay

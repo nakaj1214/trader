@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date as calendar_date
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,7 +12,8 @@ from zoneinfo import ZoneInfo
 from src.data.atomic_write import atomic_write_text
 from src.data.market_calendar import expected_tse_session_date
 from src.data.provider_output import safe_error_details
-from src.data.snapshot_crypto import encrypt_json, key_id, snapshot_encryption_secret
+from src.data.session_gaps import sessions_between
+from src.data.snapshot_crypto import decrypt_json, encrypt_json, key_id, snapshot_encryption_secret
 from src.data.validation import is_finite_number
 from src.notify.inflection_digest import send_daily_digest
 from src.notify.slack import post_text
@@ -232,8 +233,10 @@ def _digest_states(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     loaded = json.loads(path.read_text(encoding="utf-8"))
+    # The type check comes first: a list or object value is unhashable and would raise TypeError in the set lookup.
     if not isinstance(loaded, dict) or any(
-        not isinstance(day, str) or state not in {"pending", "succeeded"} for day, state in loaded.items()
+        not isinstance(day, str) or not isinstance(state, str) or state not in {"pending", "succeeded"}
+        for day, state in loaded.items()
     ):
         raise ValueError("invalid digest state")
     return loaded
@@ -292,6 +295,55 @@ def _deliver_digest(
     return status
 
 
+DIGEST_RECOVERY_SESSIONS = 3  # how many market days back a still-pending digest is sent again
+
+
+def _recent_sessions(market_date: str, count: int = DIGEST_RECOVERY_SESSIONS) -> list[str]:
+    """The ``count`` TSE market days before ``market_date``; weekends and holidays do not count."""
+    day = calendar_date.fromisoformat(market_date)
+    window = sessions_between(day - timedelta(days=21), day - timedelta(days=1))
+    return [session.isoformat() for session in window][-count:]
+
+
+def _recover_pending_digests(
+    market_date: str, *, state_path: Path, snapshot_dir: Path, secret: str, webhook: str | None,
+) -> str:
+    """Send again, from its saved snapshot, any digest still ``pending`` from the last three market days.
+
+    A day with no usable snapshot (missing, undecryptable, or naming another day) stays pending and is tried again
+    on the next run until it leaves the window. Only counts are returned: nothing here is safe to print but numbers.
+    """
+    if not webhook:
+        return "skipped:no-webhook"
+    try:
+        states = _digest_states(state_path)
+    except (OSError, ValueError):
+        return "skipped:digest-state-invalid"
+    sent = failed = skipped = 0
+    for day in _recent_sessions(market_date):
+        if states.get(day) != "pending":
+            continue
+        try:
+            report = decrypt_json((snapshot_dir / f"{day}.enc").read_text(encoding="utf-8"), secret)
+        except (OSError, ValueError, TypeError):
+            skipped += 1
+            continue
+        if str(report.get("latest_price_date")) != day:
+            skipped += 1
+            continue
+        if send_daily_digest(report, snapshot_dir=snapshot_dir, webhook=webhook) != "sent":
+            failed += 1
+            continue
+        states[day] = "succeeded"
+        try:
+            _write_digest_state(state_path, states)
+        except OSError:
+            failed += 1  # delivered but not recorded: it will be sent again next time (at-least-once)
+            continue
+        sent += 1
+    return f"sent:{sent},failed:{failed},skipped:{skipped}"
+
+
 DIGEST_STATE_ALERT = (
     "[JP Inflection] 日次ダイジェストを送れませんでした。通知状態ファイル（digest_state.json）が読めない・書けない状態です。"
     "snapshot は保存済みです。ファイルの内容を確認して修正（または削除）してください。"
@@ -340,12 +392,22 @@ def main() -> None:
         )
     except Exception as exc:  # noqa: BLE001 - the snapshot is saved; the digest must never fail the scan
         digest_status = f"failed:{type(exc).__name__}"
+    try:
+        recovery = _recover_pending_digests(
+            str(report["latest_price_date"]), state_path=_digest_state_path(), snapshot_dir=OUT_DIR,
+            secret=encryption_secret, webhook=os.getenv("SLACK_WEBHOOK_URL"),
+        )
+    except Exception as exc:  # noqa: BLE001 - recovery is best effort and must never fail the scan
+        recovery = f"failed:{type(exc).__name__}"
+    digest_recovery = f" digest_recovery={recovery}" if recovery != "sent:0,failed:0,skipped:0" else ""
     digest_alert = ""
     if digest_status.startswith("failed:"):
         # Visible on the run summary page without opening the log (the status itself is a fixed, safe string).
         print(f"::warning title=Daily digest not sent::{digest_status}")
         if digest_status.startswith("failed:digest-state"):  # Slack itself works; use it to say the state is broken
             digest_alert = f" digest_alert={_alert_digest_state(os.getenv('SLACK_WEBHOOK_URL'))}"
+    elif digest_status == "sent:state-save-failed":  # already delivered, so no Slack: tomorrow may repeat it
+        print(f"::warning title=Daily digest state not saved::{digest_status}")
 
     counts = report.get("classification_counts", {})
     market_summary = " ".join(
@@ -367,7 +429,7 @@ def main() -> None:
         f"{market_summary} "
         f"snapshot={snapshot.name} "
         f"snapshot_created={snapshot_created} "
-        f"digest={digest_status}{digest_alert}"
+        f"digest={digest_status}{digest_alert}{digest_recovery}"
     )
 
 

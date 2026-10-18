@@ -16,7 +16,8 @@ from src.data.forward_prices import snapshot_dates
 from src.data.market_calendar import JST, TSE_CALENDAR, expected_tse_session_date
 
 
-def _sessions(start: date, end: date) -> list[date]:
+def sessions_between(start: date, end: date) -> list[date]:
+    """The TSE market days from ``start`` to ``end`` inclusive (weekends and holidays are not market days)."""
     if start > end:
         return []
     calendar = xcals.get_calendar(TSE_CALENDAR)
@@ -44,7 +45,7 @@ def missing_sessions(snapshot_dir: Path, through: date) -> list[str]:
     present = set(snapshot_dates([snapshot_dir]))
     if not present:
         return []
-    return [str(day) for day in _sessions(min(present), through) if day not in present]
+    return [str(day) for day in sessions_between(min(present), through) if day not in present]
 
 
 def previous_session_missing(snapshot_dir: Path, market_date: date) -> str | None:
@@ -52,7 +53,7 @@ def previous_session_missing(snapshot_dir: Path, market_date: date) -> str | Non
     present = set(snapshot_dates([snapshot_dir]))
     if not present:
         return None
-    earlier = _sessions(market_date - timedelta(days=14), market_date - timedelta(days=1))
+    earlier = sessions_between(market_date - timedelta(days=14), market_date - timedelta(days=1))
     if not earlier:
         return None
     previous = earlier[-1]
@@ -70,7 +71,7 @@ def session_coverage(snapshot_dir: Path, through: date) -> dict[str, Any]:
             "snapshots": 0,
             "missing_sessions": [],
         }
-    expected = _sessions(present[0], through)
+    expected = sessions_between(present[0], through)
     missing = [str(day) for day in expected if day not in set(present)]
     return {
         "first_snapshot_date": str(present[0]),

@@ -92,6 +92,49 @@ def test_every_job_that_holds_production_secrets_is_limited_to_main_or_to_schedu
             )
 
 
+def _steps_using_secrets(workflow: str) -> list[tuple[str, str, str]]:
+    """(job, step name, step text) for every step whose own text or whose job-level ``env`` reads ``secrets.``."""
+    found: list[tuple[str, str, str]] = []
+    jobs = workflow.split("\njobs:\n", 1)[1]
+    for job_match in re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):\n", jobs):
+        end = re.search(r"(?m)^  [a-z][a-z0-9-]*:\n", jobs[job_match.end() :])
+        body = jobs[job_match.end() : job_match.end() + end.start()] if end else jobs[job_match.end() :]
+        job_header_and_env = body.split("    steps:\n", 1)[0]
+        for step in re.split(r"(?m)^      - ", body.split("    steps:\n", 1)[1] if "    steps:\n" in body else ""):
+            if "secrets." in step or "secrets." in job_header_and_env:
+                name = re.search(r"name: (.+)", step) or re.search(r"id: (.+)", step)
+                found.append((job_match.group(1), name.group(1).strip() if name else step[:40], step))
+    return found
+
+
+def test_every_step_that_reads_a_production_secret_runs_only_on_main_or_on_a_schedule() -> None:
+    """A step-level check: a job without a main condition may still run for a pull request or a branch, so each
+    secret-reading step must carry its own (or its job's) main/schedule condition."""
+    offenders: list[str] = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = path.read_text()
+        for job, name, step in _steps_using_secrets(workflow):
+            job_text = workflow[workflow.index(f"\n  {job}:\n") :]
+            job_text = job_text.split("    steps:\n", 1)[0]
+            guarded = any(
+                "github.ref == 'refs/heads/main'" in text or "github.event_name == 'schedule'" in text
+                for text in (step, job_text)
+            )
+            if not guarded:
+                offenders.append(f"{path.name}:{job}:{name}")
+    assert not offenders, f"secret-reading steps that can run on any branch or pull request: {offenders}"
+
+
+def test_the_forward_decryption_step_needs_main_and_a_non_pull_request_event() -> None:
+    workflow = (WORKFLOWS / "forward_validation.yml").read_text()
+    step = next(text for job, name, text in _steps_using_secrets(workflow) if name == "Validate accumulated encrypted snapshots")
+
+    # Pull requests (including forks) never get the key, and neither does a manual run of another branch.
+    assert "github.event_name != 'pull_request'" in step and "github.ref == 'refs/heads/main'" in step
+    # The secret-free regression tests of the same job stay available to pull requests.
+    assert "github.ref == 'refs/heads/main'" not in workflow[workflow.index("  validate:") : workflow.index("    steps:")]
+
+
 def test_every_workflow_states_its_token_permissions_instead_of_inheriting_the_repository_default() -> None:
     for path in WORKFLOWS.glob("*.yml"):
         workflow = path.read_text()

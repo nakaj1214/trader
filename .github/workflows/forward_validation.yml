@@ -81,7 +81,8 @@ jobs:
 
       - name: Validate accumulated encrypted snapshots
         id: forward_validation
-        if: github.event_name != 'pull_request'
+        # The production snapshot key: never for a pull request, and never for a manual run of another branch.
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: |

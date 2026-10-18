@@ -782,8 +782,13 @@ def test_duplicate_position_failure_contains_row_numbers_without_the_private_key
 
 def _old_history(
     sessions: list[str], today: str, *, low_by_session: dict[str, float] | None = None, with_daily: bool = True,
+    damage: dict[tuple[str, str], float] | None = None,
 ) -> SplitAdjustedHistory:
-    """Flat 100/100/100/100 days (volume 30) unless a session's low is lowered; today's bar is flat too."""
+    """Flat 100/100/100/100 days (volume 30) unless a session's low is lowered; today's bar is flat too.
+
+    ``damage`` overwrites single cells of the daily frame, ``{(session, column): value}``, after the highs and
+    closes of ``prior`` were taken: the upstream fetch validates High and Close but not Low or Open.
+    """
     low_by_session = low_by_session or {}
     index = pd.DatetimeIndex([*sessions, today], tz=JST)
     daily = pd.DataFrame(
@@ -791,7 +796,9 @@ def _old_history(
          "Close": 100.0, "Volume": 30.0},
         index=index,
     )
-    prior = daily.iloc[:-1]
+    prior = daily.iloc[:-1].copy()
+    for (session, column), value in (damage or {}).items():
+        daily.loc[pd.Timestamp(session, tz=JST), column] = value
     return SplitAdjustedHistory(
         100.0, prior["High"], prior["Close"], daily if with_daily else pd.DataFrame(),
     )
@@ -807,12 +814,13 @@ def _flat_today(at: datetime) -> tuple[pd.DataFrame, TodayQuote]:
 def _run_old_sessions(
     sessions: list[str], at: datetime, *, previous: list[dict[str, Any]] | None = None,
     low_by_session: dict[str, float] | None = None, with_daily: bool = True,
+    damage: dict[tuple[str, str], float] | None = None,
 ) -> tuple[dict[str, Mock], Mock, list[dict[str, Any]] | None]:
     """Run once with 1-minute bars unavailable for every pending session; return deps, the recovery mock, rows."""
     from src.data.live_quote import build_today_quote
 
     today = at.date().isoformat()
-    history = _old_history(sessions, today, low_by_session=low_by_session, with_daily=with_daily)
+    history = _old_history(sessions, today, low_by_session=low_by_session, with_daily=with_daily, damage=damage)
     bars, quote = _flat_today(at)
     holding = {**HOLDING, "entry_date": "2026-06-01"}
     with (
@@ -864,6 +872,17 @@ def test_an_old_session_whose_daily_low_could_have_touched_the_stop_is_reported_
 
     again, _, _ = _run_old_sessions(OLD_SESSIONS, NOW, previous=rows, low_by_session={"2026-07-15": 85.0})
     again["post"].assert_not_called()  # the notified, latched recovery is not announced again
+
+
+def test_a_daily_only_recovery_row_shows_the_stop_level_it_was_judged_against() -> None:
+    # High 120 lifts the possible stop to 120 * 0.9 = 108; a low of 107 is under it (ISSUE-19).
+    _, _, rows = _run_old_sessions(
+        OLD_SESSIONS, NOW, low_by_session={"2026-07-15": 107.0}, damage={("2026-07-15", "High"): 120.0, ("2026-07-15", "Open"): 110.0, ("2026-07-15", "Close"): 110.0},
+    )
+
+    assert rows is not None and rows[0]["status"] == "recovered", rows[0]["error"]
+    assert rows[0]["high_water_mark"] == 120.0
+    assert rows[0]["stop_price"] == pytest.approx(rows[0]["high_water_mark"] * 0.9) == pytest.approx(108.0)
 
 
 @pytest.mark.parametrize(("evaluated_day", "age", "judged_on_daily"), [("2026-09-09", 30, False), ("2026-09-10", 31, True)])
@@ -999,3 +1018,108 @@ def test_a_pending_session_failure_names_its_category_in_the_incomplete_row() ->
 
     assert row["status"] == "incomplete"
     assert row["error"] == "pending historical session data is unavailable (timeout)"
+
+
+# --- a damaged daily bar cannot prove "no touch": it keeps the session incomplete (ISSUE-15) ---------------------
+
+
+DAMAGED = "2026-07-15"  # one of the old sessions, beyond the 1-minute retention
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("Low", float("nan")), ("Low", float("inf")), ("Low", float("-inf")), ("Low", 0.0), ("Low", -5.0),
+        ("High", float("nan")), ("High", 0.0), ("Close", float("nan")), ("Close", -1.0),
+    ],
+    ids=["low_nan", "low_inf", "low_neg_inf", "low_zero", "low_negative", "high_nan", "high_zero", "close_nan",
+         "close_negative"],
+)
+def test_a_damaged_daily_bar_keeps_the_old_session_incomplete_and_the_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, column: str, value: float
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    previous = [{**HOLDING, "entry_date": "2026-06-01", "triggered": False, "status": "ok",
+                 "as_of_at": "2026-06-30T15:30:00+09:00"}]
+    deps, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, previous=previous, damage={(DAMAGED, column): value})
+
+    assert rows is not None
+    assert rows[0]["status"] == "incomplete"
+    assert rows[0]["as_of_at"] == previous[0]["as_of_at"]  # the earlier checkpoint is kept, nothing was proven
+    assert rows[0]["error"] == "pending historical session daily bar is invalid"  # fixed text: no ticker, no value
+    assert rows[0]["triggered"] is False
+    for call in deps["post"].call_args_list:  # whatever is sent never claims "no touch" for the unproven session
+        assert "recovered_daily_possible_touch" not in call.kwargs["json"]["text"]
+
+
+def test_a_daily_bar_whose_high_is_below_its_low_cannot_prove_no_touch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    _, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, damage={(DAMAGED, "High"): 80.0})  # High 80 < Low 100
+
+    assert rows is not None and rows[0]["status"] == "incomplete"
+
+
+def test_a_missing_open_does_not_make_an_otherwise_valid_daily_bar_invalid() -> None:
+    # Open is only used for the consistency check; a bar with valid High/Low/Close is still usable evidence.
+    _, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, damage={(DAMAGED, "Open"): float("nan")})
+
+    assert rows is not None and rows[0]["status"] == "ok"
+
+
+def test_a_confirmed_no_trade_day_is_still_passed_over_without_a_daily_judgement() -> None:
+    nan = float("nan")
+    damage = {(DAMAGED, column): nan for column in ("Open", "High", "Low", "Close")} | {(DAMAGED, "Volume"): 0.0}
+    _, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, damage=damage)
+
+    assert rows is not None and rows[0]["status"] == "ok"  # all-NaN with zero volume: no trading, nothing to prove
+
+
+def test_a_valid_bar_next_to_a_damaged_one_does_not_hide_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    # An earlier session is healthy and a later one is damaged: the healthy one must not make the run look clean.
+    _, _, rows = _run_old_sessions(OLD_SESSIONS, NOW, damage={("2026-08-03", "Low"): float("nan")})
+
+    assert rows is not None and rows[0]["status"] == "incomplete"
+
+
+def test_the_daily_judgement_ignores_a_session_the_validation_rejected() -> None:
+    import random
+
+    from scripts.run_position_monitor import _daily_session_is_valid
+
+    rng = random.Random(20261016)
+    for _ in range(300):
+        low = rng.choice([float("nan"), float("inf"), -1.0, 0.0, 90.0 + rng.uniform(0, 20)])
+        high = rng.choice([float("nan"), 80.0, 100.0 + rng.uniform(0, 20)])
+        close = rng.choice([float("nan"), -1.0, 100.0])
+        daily = {"Open": 100.0, "High": high, "Low": low, "Close": close, "Volume": 10.0}
+        valid = _daily_session_is_valid(daily)
+        finite_positive = all(0 < v < float("inf") for v in (high, low, close))  # NaN fails both comparisons
+        assert valid == (finite_positive and high >= low and low <= min(100.0, close) and high >= max(100.0, close))
+
+
+def test_one_holding_with_a_damaged_daily_bar_does_not_stop_the_others_and_is_warned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.data.live_quote import build_today_quote
+
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    broken = {**HOLDING, "ticker": "1111.T", "entry_date": "2026-06-01"}
+    healthy = {**HOLDING, "ticker": "2222.T", "entry_date": "2026-06-01"}
+    histories = {
+        "1111.T": _old_history(OLD_SESSIONS, NOW.date().isoformat(), damage={(DAMAGED, "Low"): float("nan")}),
+        "2222.T": _old_history(OLD_SESSIONS, NOW.date().isoformat()),
+    }
+    bars, quote = _flat_today(NOW)
+    with (
+        _dependencies([broken, healthy], bars=bars, quote=quote) as deps,
+        patch("scripts.run_position_monitor.fetch_session_bars", return_value=None),
+    ):
+        deps["fetch_history"].side_effect = lambda ticker, *args: histories[ticker]
+        deps["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=NOW) == 0  # the healthy holding keeps the run successful
+        rows = _written(deps)
+
+    assert [(row["ticker"], row["status"]) for row in rows] == [("1111.T", "incomplete"), ("2222.T", "ok")]
+    texts = [call.kwargs["json"]["text"] for call in deps["post"].call_args_list]
+    assert any("Position Monitor警告" in text and "1111.T" in text for text in texts)  # warned, never "no touch"

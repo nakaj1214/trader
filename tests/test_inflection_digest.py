@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -548,3 +549,204 @@ def test_a_slack_failure_is_annotated_but_does_not_trigger_a_second_slack_messag
     out = capsys.readouterr().out
     assert post.call_count == 1  # only the digest attempt: the same channel is not used to report its own failure
     assert "digest=failed:ConnectionError" in out and "::warning" in out and "digest_alert" not in out
+
+
+def test_a_sent_digest_whose_state_was_not_saved_is_annotated_without_a_second_slack_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch.object(shadow, "_deliver_digest", return_value="sent:state-save-failed"):
+        post, _, _ = _main_with_digest_state(monkeypatch, tmp_path, content='{"2026-09-30": "pending"}\n')
+
+    out = capsys.readouterr().out
+    assert "digest=sent:state-save-failed" in out and "::warning" in out  # it may repeat tomorrow (ISSUE-21)
+    post.assert_not_called()  # the digest was mocked away; nothing else is sent over the same channel
+
+
+# --- a digest-state VALUE of any type is "invalid", never an unexpected exception (ISSUE-16) --------------------
+
+
+UNHASHABLE_OR_ODD_VALUES = ['[]', '{}', '[1, 2]', '{"a": 1}', '[[]]', '1', 'null', 'true', '1.5']
+
+
+@pytest.mark.parametrize("value", UNHASHABLE_OR_ODD_VALUES, ids=lambda v: v.replace(" ", ""))
+def test_a_digest_state_value_of_any_type_never_stops_the_snapshot_from_being_saved(tmp_path: Path, value: str) -> None:
+    from tests.test_shadow_health import SECRET, _healthy_report
+
+    out_dir, latest, state = tmp_path / "v3", tmp_path / "latest.enc", tmp_path / "digest_state.json"
+    state.write_text(f'{{"2026-09-07": {value}}}', encoding="utf-8")
+    before = state.read_text(encoding="utf-8")
+
+    snapshot, created = shadow.persist_report(
+        _healthy_report(), encryption_secret=SECRET, out_dir=out_dir, latest_path=latest, digest_state=state,
+    )
+
+    assert created is True and snapshot.exists()
+    assert state.read_text(encoding="utf-8") == before  # the damaged file is never rewritten
+
+
+@pytest.mark.parametrize("value", UNHASHABLE_OR_ODD_VALUES, ids=lambda v: v.replace(" ", ""))
+def test_a_digest_state_value_of_any_type_is_reported_as_invalid_without_sending(tmp_path: Path, value: str) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text(f'{{"2026-09-30": {value}}}', encoding="utf-8")
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+
+    assert status == "failed:digest-state-invalid"
+    send.assert_not_called()
+    assert state.read_text(encoding="utf-8") == f'{{"2026-09-30": {value}}}'
+
+
+def test_main_finishes_and_alerts_when_a_digest_state_value_is_a_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    post, _, _ = _main_with_digest_state(monkeypatch, tmp_path, content='{"2026-09-30": []}')
+
+    out = capsys.readouterr().out
+    assert "digest=failed:digest-state-invalid" in out and "digest_alert=sent" in out
+    post.assert_called_once()  # only the state alert; the digest itself is withheld
+
+
+def test_valid_digest_states_are_still_accepted(tmp_path: Path) -> None:
+    state = tmp_path / "digest_state.json"
+    state.write_text('{"2026-09-29": "succeeded", "2026-09-30": "pending"}', encoding="utf-8")
+
+    assert shadow._digest_states(state) == {"2026-09-29": "succeeded", "2026-09-30": "pending"}
+
+
+# --- a digest still pending from the last three market days is sent again from its saved snapshot (ISSUE-18) ----
+
+
+def _write_snapshot(directory: Path, day: str, *, tickers: tuple[str, ...] = ("1111.T",), claimed_day: str | None = None) -> None:
+    from src.data.snapshot_crypto import encrypt_json
+
+    report = make_report([candidate(ticker, "EARLY_CANDIDATE", 78.2) for ticker in tickers],
+                         latest_price_date=claimed_day or day)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{day}.enc").write_text(encrypt_json(report, "secret"), encoding="utf-8")
+
+
+def _recover(tmp_path: Path, state: dict[str, str], *, today: str = "2026-10-02", webhook: str | None = WEBHOOK,
+             sent: Mock | None = None, days: tuple[str, ...] = ("2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01")) -> tuple[str, Mock]:
+    directory = tmp_path / "v3"
+    for day in days:
+        _write_snapshot(directory, day)
+    state_path = directory.parent / "digest_state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    post = sent or Mock(return_value="sent")
+    with patch.object(shadow, "send_daily_digest", post):
+        summary = shadow._recover_pending_digests(
+            today, state_path=state_path, snapshot_dir=directory, secret="secret", webhook=webhook,
+        )
+    return summary, post
+
+
+def test_yesterdays_pending_digest_is_sent_again_and_marked_succeeded(tmp_path: Path) -> None:
+    summary, post = _recover(tmp_path, {"2026-10-01": "pending", "2026-10-02": "succeeded"})
+
+    assert summary == "sent:1,failed:0,skipped:0"
+    sent_report = post.call_args.args[0]
+    assert sent_report["latest_price_date"] == "2026-10-01"  # the saved snapshot's own day, not today's report
+    assert json.loads((tmp_path / "digest_state.json").read_text())["2026-10-01"] == "succeeded"
+
+
+def test_a_recovered_digest_is_not_sent_a_second_time(tmp_path: Path) -> None:
+    state = {"2026-10-01": "pending", "2026-10-02": "succeeded"}
+    _recover(tmp_path, state)
+    summary, post = _recover(tmp_path, json.loads((tmp_path / "digest_state.json").read_text()))
+
+    assert summary == "sent:0,failed:0,skipped:0"
+    post.assert_not_called()
+
+
+def test_only_the_last_three_market_days_are_recovered(tmp_path: Path) -> None:
+    state = {"2026-09-28": "pending", "2026-09-29": "pending", "2026-09-30": "pending", "2026-10-01": "pending"}
+    summary, post = _recover(tmp_path, state)
+
+    assert summary == "sent:3,failed:0,skipped:0"
+    assert sorted(call.args[0]["latest_price_date"] for call in post.call_args_list) == [
+        "2026-09-29", "2026-09-30", "2026-10-01",
+    ]
+    assert json.loads((tmp_path / "digest_state.json").read_text())["2026-09-28"] == "pending"  # too old: left alone
+
+
+def test_a_weekend_between_the_days_does_not_shorten_the_window(tmp_path: Path) -> None:
+    # Monday 2026-10-05: the three market days before it are Fri 10/2, Thu 10/1 and Wed 9/30.
+    state = {"2026-09-29": "pending", "2026-09-30": "pending", "2026-10-02": "pending"}
+    summary, post = _recover(tmp_path, state, today="2026-10-05", days=("2026-09-29", "2026-09-30", "2026-10-02"))
+
+    assert summary == "sent:2,failed:0,skipped:0"
+    assert sorted(call.args[0]["latest_price_date"] for call in post.call_args_list) == ["2026-09-30", "2026-10-02"]
+
+
+def test_a_day_without_a_usable_snapshot_stays_pending_without_an_error(tmp_path: Path) -> None:
+    directory = tmp_path / "v3"
+    directory.mkdir()
+    _write_snapshot(directory, "2026-10-01", claimed_day="2026-09-15")  # a snapshot that names a different day
+    (directory / "2026-09-30.enc").write_text("not an encrypted snapshot", encoding="utf-8")
+    state_path = directory.parent / "digest_state.json"
+    state_path.write_text('{"2026-09-29": "pending", "2026-09-30": "pending", "2026-10-01": "pending"}', encoding="utf-8")
+    with patch.object(shadow, "send_daily_digest", Mock(return_value="sent")) as post:
+        summary = shadow._recover_pending_digests(
+            "2026-10-02", state_path=state_path, snapshot_dir=directory, secret="secret", webhook=WEBHOOK,
+        )
+
+    assert summary == "sent:0,failed:0,skipped:3"  # no file / undecryptable / wrong day
+    post.assert_not_called()
+    assert set(json.loads(state_path.read_text()).values()) == {"pending"}
+
+
+def test_a_failed_recovery_send_leaves_the_day_pending_for_the_next_run(tmp_path: Path) -> None:
+    summary, _ = _recover(tmp_path, {"2026-10-01": "pending"}, sent=Mock(return_value="failed:ConnectionError"))
+
+    assert summary == "sent:0,failed:1,skipped:0"
+    assert json.loads((tmp_path / "digest_state.json").read_text())["2026-10-01"] == "pending"
+
+
+def test_no_recovery_is_attempted_without_a_webhook_or_with_a_damaged_state(tmp_path: Path) -> None:
+    summary, post = _recover(tmp_path, {"2026-10-01": "pending"}, webhook=None)
+    assert summary == "skipped:no-webhook"
+    post.assert_not_called()
+
+    directory = tmp_path / "other" / "v3"
+    _write_snapshot(directory, "2026-10-01")
+    damaged = directory.parent / "digest_state.json"
+    damaged.write_text('{"2026-10-01": []}', encoding="utf-8")
+    with patch.object(shadow, "send_daily_digest", Mock(return_value="sent")) as again:
+        summary = shadow._recover_pending_digests(
+            "2026-10-02", state_path=damaged, snapshot_dir=directory, secret="secret", webhook=WEBHOOK,
+        )
+    assert summary == "skipped:digest-state-invalid"
+    again.assert_not_called()
+    assert damaged.read_text() == '{"2026-10-01": []}'
+
+
+def test_days_that_are_succeeded_or_unknown_are_never_recovered(tmp_path: Path) -> None:
+    # 09-29: succeeded. 09-30 and 10-01 have no entry at all (snapshots from before the state file existed).
+    summary, post = _recover(tmp_path, {"2026-09-29": "succeeded"})
+
+    assert summary == "sent:0,failed:0,skipped:0"
+    post.assert_not_called()
+
+
+def test_main_reports_the_recovery_without_leaking_anything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "v3"
+    _write_snapshot(directory, "2026-09-29")
+    (directory.parent / "digest_state.json").write_text('{"2026-09-29": "pending"}', encoding="utf-8")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", WEBHOOK)
+    monkeypatch.setattr(shadow, "snapshot_encryption_secret", lambda: "secret")
+    post = Mock()
+    with (
+        patch.object(shadow, "scan_japan_inflection", return_value=make_report()),
+        patch.object(shadow, "persist_report", Mock(return_value=(directory / "2026-09-30.enc", True))),
+        patch.object(shadow, "OUT_DIR", directory),
+        patch("src.notify.slack.requests.post", post),
+    ):
+        shadow.main()
+
+    out = capsys.readouterr().out
+    assert "digest_recovery=sent:1,failed:0,skipped:0" in out
+    for hidden in (WEBHOOK, "SECRETTOKEN", "1111.T", "Company"):
+        assert hidden not in out
+    assert post.call_count == 2  # today's digest and the recovered one

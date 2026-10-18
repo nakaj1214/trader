@@ -2,9 +2,9 @@
 
 > verify-before-fix スキルで生成。証拠に基づく診断結果と修正方針。
 > 日時: 2026-10-16
-> 対象: ISSUE-14（レポート内の「up/down」の二重定義）
-> 出典: [memo/implement/prompt.md](prompt.md)（問題一覧）
-> 前の要件書: ISSUE-01〜13（REQ-071〜083）は実装済み。ISSUE-12・13 は未コミット。
+> 対象: ISSUE-18（前日分の pending 通知が、翌市場日の通常実行で再送されない）。方針は「直近 3 営業日まで自動回収」（ユーザー判断、2026-10-16）。
+> 出典: [memo/implement/issues-2026-10-16.md](issues-2026-10-16.md)（Codex 独立監査 #5、分類 A・P2）
+> 前の要件書: ISSUE-01〜17（REQ-071〜087）は実装済み。ISSUE-15〜17 は未コミット。
 
 ---
 
@@ -12,52 +12,60 @@
 
 ### 確認した現象
 
-- 同じ group report のブロックが、同じラベル `up`/`down` を、別の意味で出力する。
-- 実測（長い上昇のあとに 4 週間の押し目がある相場。最後の終値 221.5、200 営業日平均 207.8）:
-  - `regime_sample_counts`: `{'up': 0, 'down': 1, 'unknown': 0}`（20 営業日の騰落で `down`）。
-  - `regime_breakdown['trend']`: `{'up': 1, 'down': 0, 'unknown': 0}`（200 営業日移動平均との比較で `up`）。
+- `_deliver_digest` は、その実行の `latest_price_date`（当日）だけを確認・送信する。9/30 の送信が失敗して `pending` のまま残っても、10/1 の通常実行は 10/1 分だけを送信し、状態は `9/30=pending, 10/1=succeeded` になる。過去の pending 日を処理する呼び出しは無い。
+- 監査時点（`3e9b930`）でも現在でも、同じ結果（再現済み）。`playbooks.md` の「pending 日は次の通常実行で再試行」と食い違う（Stage 4B 以来）。
+- 状態は 30 件で切り捨てられる。明示再送（`resend_digest`）も最新日を使うので、前日の回収にならない。
 
 ### 根本原因
 
-- `regime_sample_counts` は [regime_label](../../src/evaluation/inflection_report.py#L72-L79) で、**直近 20 営業日の騰落**（20 営業日前以上の終値なら `up`）。
-- `regime_breakdown` は [regime.py](../../src/evaluation/regime.py) の `regime_labels` で、**200 営業日移動平均との比較**（以上なら `up`）。
-- 前者は 9/9、後者は 10/1 に別の目的（市場環境の層別）で追加された。同じ語が別の定義のまま並んで出力され、レポートからはどちらが何を指すか分からない。統一する指示や記録は無い。
+pending 日の再送が、同じ市場日の再実行にしか存在しない。過去日の pending を拾う処理が無い。
 
 ### 証拠
 
 | 仮説 | 判定 | 証拠 |
 |------|------|------|
-| 1. 同じレポート内で同じラベルが別の意味で使われる | 確認 | 上記の実測（`down` と `up` が同時に出る）。 |
-| 2. 意図的な差か | 経緯あり | 導入時期・目的が異なる（9/9 の件数表示、10/1 の層別）。統一の指示は無い。 |
-| 3. 利用者は限定的 | 確認 | `regime_sample_counts` はコード内で `_report_breakdowns` が作るだけで、読むのは出力 JSON。数値を変えると過去との比較が崩れる。 |
+| 1. 過去の pending 日を処理する経路が無い | 確認 | 再現（監査時点・現在とも）。 |
+| 2. 過去日のダイジェストを再構築できる | 確認（実現可能） | `build_digest(report, warnings=...)` は `report` の辞書（`classification_counts`・`data_policy`・`candidates`・`latest_price_date`）だけから本文を作る。保存済みの snapshot（`dashboard/data/inflection/v3/<日付>.enc`）は `decrypt_json` で同じ形の辞書に戻せる。scan ジョブは鍵を持つ。実際に `2026-10-15.enc` までの snapshot が存在する。 |
+| 3. 何日前まで回収するか | 要判断 → 決定 | ユーザー判断: 直近 3 営業日まで。 |
 
 ---
 
 ## 修正要件
 
-### REQ-084: up/down の定義をレポートに明示する（数値は変えない）（ISSUE-14）
+### REQ-088: 通常実行で、直近 3 営業日の pending ダイジェストを、保存済み snapshot から再送する（ISSUE-18）
 
-- **画面**: forward / historical のレポート（各 group report の horizon・exit_strategy ブロック）
-- **対象ファイル**: [src/evaluation/inflection_report.py](../../src/evaluation/inflection_report.py)（`_report_breakdowns`）、`tests/test_inflection_forward.py`（既存の report 形状のテストがある場所。必要なら）
-- **Before（現状）**: 同じ `up`/`down` が、20 営業日の騰落と 200 営業日移動平均で別の意味を持つのに、レポートに定義が無い。
+- **画面**: 日次 scan（`scripts/run_inflection_shadow.py`、Slack ダイジェスト）
+- **対象ファイル**: [scripts/run_inflection_shadow.py](../../scripts/run_inflection_shadow.py)、`tests/test_inflection_digest.py`、[docs/playbooks.md](../../docs/playbooks.md)（該当箇所のみ）
+- **Before（現状）**: 当日分だけを送る。送信失敗日は、同じ市場日の再実行か、手動再送でしか回収されない。
 - **After（期待）**:
-  - `_report_breakdowns` の出力に、定義を説明するキー `regime_definitions` を追加する。内容は固定の短い文字列で、`regime_sample_counts` は「直近 20 営業日の終値の騰落（20 営業日前以上で up）」、`regime_breakdown` の `trend` は「終値と 200 営業日単純移動平均の比較（以上で up）」、`volatility` は「20 営業日実現ボラティリティと、過去 252 営業日の値の中央値との比較」。
-  - 既存のキー（`score_band_sample_counts`・`regime_sample_counts`・`regime_breakdown`）と、その数値は一切変えない（キー名の変更もしない）。
-  - 追加するのは固定の文字列だけ（個別の取引情報・ticker を含まない）ので、公開用の要約にも含めてよい。
+  - 通常実行の最後に、当日より前の直近 3 つの TSE 営業日のうち、状態が `pending` の日を、その日の保存済み snapshot から本文を再構築して再送する。成功したら `succeeded` に更新する（状態は 1 件ごとに原子的に書く）。
+  - 失敗（Slack の失敗など）・snapshot が無い・復号できない・日付が合わない日は、`pending` のまま残し、次の実行で再試行する（3 営業日を過ぎたら回収しない）。
+  - 直近 3 営業日より古い pending、`succeeded`、状態に無い日（旧 snapshot）は対象外。
+  - webhook が無い、通知状態ファイルが不正・読めない、の場合は回収を試みない（当日分と同じ扱い）。
+  - 回収の例外は握らず状態として報告し、scan と snapshot の保存は成功のまま（ダイジェストは scan を失敗させない）。
+  - ログには回収の結果を件数だけで出す（例 `digest_recovery=sent:1,failed:0,skipped:0`）。ticker・本文・URL は出さない。
+  - 当日分の送信、手動再送、重複抑制（`succeeded`）の挙動は変えない。exactly-once は保証しない前提を維持する。
 - **修正方針**:
-  - `inflection_report.py` に定数 `REGIME_DEFINITIONS`（dict）を置き、`_report_breakdowns` の戻り値に `"regime_definitions": REGIME_DEFINITIONS` を足す。
-  - 定義の文面は、`regime.py` の閾値（`TREND_WINDOW`・`VOLATILITY_WINDOW`・`VOLATILITY_BASELINE_SESSIONS`）と `regime_label` の 20 営業日の定数（コード内の `21` 本目＝20 営業日前）から生成し、数値がずれないようにする。
-  - 新しいキーは、`_report_breakdowns` を使う全ブロック（horizon、stress、exit_strategy）に付く。レポートは再生成される前提で、キーが増えることは許容する（過去レポートとの比較は、既存キーで可能）。
+  - `_recover_pending_digests(market_date, *, state_path, snapshot_dir, secret, webhook)` を追加し、`main` の当日ダイジェストの後に呼ぶ（`try/except` で囲む）。
+  - 対象日は、TSE カレンダー（`exchange_calendars`）で、当日の直前の営業日 3 つを求める（休日・週末をまたいでも「3 営業日」）。
+  - 本文は、`decrypt_json` で snapshot を読み、`send_daily_digest` を再利用する（本文の組み立てを新設しない）。`latest_price_date` が対象日と一致しない場合は回収しない。
+  - 回収で `pending` を再び書く必要は無い（すでに `pending`）。成功時だけ `succeeded` を書く。
+  - `docs/playbooks.md` に、回収の範囲（直近 3 営業日）と、回収されない場合（snapshot が無い、4 営業日以上前）の手動対処を明記する。
 - **受入条件**:
-  1. レポートの各ブロックに `regime_definitions` があり、`regime_sample_counts` と `trend` の定義が、20 営業日の騰落と 200 営業日移動平均として区別されている。修正前に失敗する回帰テストとして追加する。
-  2. 既存のキーと数値が不変（既存のテストが無変更で PASS。上の実測の相場で `regime_sample_counts` と `trend` の値が従来どおり）。
-  3. 定義の文面に含まれる窓の数値が、コードの定数と一致する（定数を変えると文面も変わる）。
-  4. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
-- **baseline への影響**: なし（既存の数値は不変。レポートにキーが増えるのみ）。
+  1. 前日が `pending` のとき、次の通常実行で、当日分と前日分の 2 通が送られ、両方 `succeeded` になる。前日分の本文は前日の日付と候補を含む。修正前に失敗する回帰テストとして追加する。
+  2. 2 回目の通常実行で、再送されない（`succeeded`）。
+  3. 直近 3 営業日より古い pending は回収されず、`pending` のまま。
+  4. snapshot が無い日・日付が合わない日・復号できない日は、`pending` のまま（送らず、例外なし）。
+  5. Slack の失敗で、回収の日は `pending` のまま。scan は成功。
+  6. webhook が無い・状態が不正のとき、回収を試みない。
+  7. 当日分の送信・手動再送・`legacy-no-state` の既存の挙動が不変（既存のテストが無変更で PASS）。
+  8. 全テスト・ruff・mypy（既知 31 件のみ）が通る。
+- **baseline への影響**: なし（通知のみ）。
+- **未確認（integration）**: 実 Slack・実 snapshot（鍵が必要）での再構築。ローカルは fake Slack と、テスト用に暗号化した snapshot で確認する。
 
 ---
 
 ## 次の手順
 
 - 修正は Phase 5 で実施する。原因と方針は確定済み。
-- これで ISSUE-01〜14 のすべてに着手済み。
+- 続けて ISSUE-19〜21（小さい項目）に進む。

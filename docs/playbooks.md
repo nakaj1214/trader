@@ -35,7 +35,9 @@ Use this flow when a command, container operation, PHP process, JavaScript reque
 The daily scan job runs on `main` only: a manual run from another branch is skipped before it can use the production API key, snapshot key or Slack webhook, or push a snapshot to that branch, and a skipped run raises no failure alert. Check a branch locally or with the tests instead.
 
 The daily digest records `pending` or `succeeded` by market date in
-`dashboard/data/inflection/digest_state.json`. A pending day is retried by the next normal run;
+`dashboard/data/inflection/digest_state.json`. A pending day is retried by the next normal run of the same market day, and a normal run also sends again,
+from its saved snapshot, any digest still `pending` from the last three market days (weekends and holidays do not count; the log shows
+`digest_recovery=sent:N,failed:N,skipped:N`). A day older than that, or one with no usable snapshot, is left `pending` and needs a manual look;
 `workflow_dispatch` with `resend_digest=true` forces a retry. Delivery is best-effort, not exactly
 once: a runner stop after Slack accepts a message but before the state is pushed can duplicate it,
 and Slack acceptance does not prove end-user delivery.
@@ -50,9 +52,9 @@ workflow output. `unexpected` errors are propagated instead of being converted t
 Snapshot and latest are saved before digest delivery; the workflow commits/pushes afterwards.
 An existing snapshot without notification state is not sent by normal runs. A missing webhook
 keeps a pending day retryable. Explicit resend uses the new scan report, which may differ from
-the immutable snapshot. Initial notification-state write failure fails the run; Slack send
+the immutable snapshot. An unreadable or unwritable notification state withholds only the digest and never fails the run (see above); Slack send
 failure is best-effort. Investigate a successful Slack send followed by state-save or push failure
-privately before manual resend, because the next run can send a duplicate.
+privately before manual resend, because the next run can send a duplicate (`digest=sent:state-save-failed` raises a warning annotation).
 
 Snapshot, latest and evaluation files use same-directory temporary files followed by atomic
 publication. Immutable snapshots cannot be overwritten, even by competing creation attempts.

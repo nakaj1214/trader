@@ -103,7 +103,7 @@ source .venv/bin/activate
 |---|---|
 | `test.yml` | Python regression、ruff、現行経路の mypy と coverage |
 | `inflection_shadow.yml` | 平日16:40 JSTのscan（main限定）、暗号化snapshot・通知状態のcommit、Slackダイジェスト。手動実行で `resend_digest` 指定可 |
-| `forward_validation.yml` | 日曜09:30 JSTと手動実行で暗号化snapshotを評価。関連PR（fork含む）はsecret不要の回帰テストのみ。learning・price hash pushはscheduleのみ |
+| `forward_validation.yml` | 日曜09:30 JSTとmainの手動実行で暗号化snapshotを評価（復号stepはmain限定。ブランチの手動実行とPR（fork含む）はsecret不要の回帰テストのみ）。learning・price hash pushはscheduleのみ |
 | `position_monitor.yml` | 平日09:20 / 12:50 / 15:35 / 15:50 JSTのstop監視・引け確認。mainの手動実行可。Google Sheets更新とSlack通知は実装・fake検証済みで、実サービスの再確認は未実施 |
 | `reliability_watchdog.yml` | 毎日20:10 JSTとmainの手動実行でworkflowの失敗・未起動・snapshot欠落を確認しSlack通知 |
 

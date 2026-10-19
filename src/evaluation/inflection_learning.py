@@ -461,7 +461,12 @@ def _outcome_coverage(rows: list[dict[str, Any]], horizon: int, independent_coun
     outcomes = [row["horizons"][f"h{horizon}"] for row in rows]
     unevaluated = [outcome for outcome in outcomes if not outcome["completed"]]
     matured_unknown = sum(outcome.get("horizon_matured") is True for outcome in unevaluated)
+    # Evaluated but not comparable with the benchmark (a missing ETF day): its excess return is silently left out of
+    # the means, so it holds a promotion like an unevaluated outcome does.
+    unpaired = sum(outcome["completed"] and outcome.get("excess_return_pct") is None for outcome in outcomes)
+    matured_unknown += unpaired
     return {
+        "benchmark_unpaired": unpaired,
         "observations": len(rows),
         "evaluated": len(rows) - len(unevaluated),
         "unevaluated": len(unevaluated),

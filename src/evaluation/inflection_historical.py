@@ -486,9 +486,9 @@ def _excess_lower_bound(
     entry day and a valid Close on every market session of that window: a gap means no proven floor, and no later
     day stands in for it.
     """
-    if not trade.entry_date or benchmark_history.empty:
-        return None
-    calendar = pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar)
+    if not trade.entry_date or benchmark_history.empty or market_calendar is None:
+        return None  # the ETF's own dates cannot vouch for a complete window: a calendar is required
+    calendar = pd.DatetimeIndex(market_calendar)
     entry_day = pd.Timestamp(trade.entry_date)
     sessions = calendar[calendar >= entry_day][:62]
     if len(sessions) < 62 or sessions[0] != entry_day:
@@ -516,15 +516,16 @@ def unresolved_h60_outcomes(
     when no floor can be proven, which is always so for a missing benchmark span: the benchmark has no upper bound).
     """
     trades = _h60_trades(signals, histories, benchmark_history, market_calendar)
+    # One position per ticker, as for the valid pairs: a later signal on a held ticker is not another outcome.
+    independent = select_non_overlapping_trades(trades, include_unfinished=True)
     rows = [
         {
             "signal_date": trade.signal_date,
             "excess_lower_bound": _excess_lower_bound(trade, benchmark_history, market_calendar),
         }
-        for trade in trades
+        for trade in independent
         if trade.horizon_matured is True and trade.net_return_pct is None
     ]
-    independent = select_non_overlapping_trades(trades)
     paired = paired_benchmark_returns(
         independent, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT
     )
@@ -578,7 +579,8 @@ def kill_criterion(
 
     Matured h60 outcomes that are unresolved (stock side or no benchmark span) are never ignored. With any of them
     the verdict is ``incomplete``, except a ``pass`` that still holds with each one at a proven floor of its
-    excess return (``unresolved_outcomes``: real ``signal_date`` and ``excess_lower_bound``).
+    excess return, or a ``fail`` that still holds with each one at an unbounded gain (``unresolved_outcomes``:
+    real ``signal_date`` and ``excess_lower_bound``).
     ``insufficient_sample`` when there are fewer valid pairs than ``min_independent`` or no CI can be built;
     otherwise ``pass`` iff the CI lower bound is above zero.
     """
@@ -597,20 +599,32 @@ def kill_criterion(
         "unresolved_matured": unresolved_matured,
         "reason": None,
     }
-    if unresolved_matured > 0 and len(valid) >= min_independent and ci is not None and unresolved_outcomes:
+    if (
+        unresolved_matured > 0 and len(valid) >= min_independent and ci is not None
+        and unresolved_outcomes and len(unresolved_outcomes) == unresolved_matured
+    ):
+        # The bootstrap lower bound never falls when an unresolved value rises, so two limits decide it: every
+        # unresolved outcome at its proven floor (a pass must survive that) or at an unbounded gain (a fail must
+        # survive that, i.e. the lower bound is <= 0 whatever the unknowns are). Anything between stays incomplete.
+        all_dates = [*dates, *[str(row["signal_date"]) for row in unresolved_outcomes]]
         bounds = [row.get("excess_lower_bound") for row in unresolved_outcomes]
-        if len(bounds) == unresolved_matured and all(is_finite_number(bound) for bound in bounds):
-            # Only a proven floor is used: a pass must survive every unresolved outcome at its floor. There is no
-            # proven ceiling (a stock or a benchmark can rise without limit), so an unresolved outcome never gives a fail.
-            worst = cluster_bootstrap_ci(
-                [*values, *[float(row["excess_lower_bound"]) for row in unresolved_outcomes]],
-                [*dates, *[str(row["signal_date"]) for row in unresolved_outcomes]],
-            )
-            result["sensitivity"] = {"worst_ci95": list(worst) if worst is not None else None}
-            if worst is not None and worst[0] > 0:
-                result["verdict"] = "pass"
-            else:
-                result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
+        worst = (
+            cluster_bootstrap_ci([*values, *[float(row["excess_lower_bound"]) for row in unresolved_outcomes]], all_dates)
+            if all(is_finite_number(bound) for bound in bounds) else None
+        )
+        # Exactly the limit of letting every unresolved value grow: a resample drawing one of them has mean +inf.
+        ceiling = cluster_bootstrap_ci(
+            [*values, *[0.0] * unresolved_matured], all_dates,
+            unbounded=[False] * len(values) + [True] * unresolved_matured,
+        )
+        result["sensitivity"] = {
+            "worst_ci95": list(worst) if worst is not None else None,
+            "ceiling_ci95": [bound if math.isfinite(bound) else None for bound in ceiling] if ceiling else None,
+        }
+        if worst is not None and worst[0] > 0:
+            result["verdict"] = "pass"
+        elif ceiling is not None and ceiling[0] <= 0:  # an inf bound is never <= 0
+            result["verdict"] = "fail"
         else:
             result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
     elif unresolved_matured > 0:

@@ -519,6 +519,7 @@ def test_kill_criterion_ignores_non_finite_excess_values(bad: object) -> None:
 
 def _kill_criterion_via_lag_report(
     histories_end: dict[str, int], signal_days: dict[str, int], *, benchmark_sessions: int = 140,
+    benchmark_gaps: tuple[int, ...] = (),
 ) -> dict[str, Any]:
     """Run ``_lag_report`` on synthetic EARLY signals; ``histories_end`` is each ticker's last session index."""
     from src.evaluation.inflection_historical import _lag_report
@@ -536,7 +537,7 @@ def _kill_criterion_via_lag_report(
         for ticker, day in signal_days.items()
     ]
     report, _ = _lag_report(
-        signals, {}, histories, frame(benchmark_sessions, 0.05), min_independent=2, market_calendar=pd.DatetimeIndex(sessions),
+        signals, {}, histories, frame(benchmark_sessions, 0.05).drop(sessions[list(benchmark_gaps)]), min_independent=2, market_calendar=pd.DatetimeIndex(sessions),
     )
     return report["kill_criterion"]  # type: ignore[no-any-return]
 
@@ -578,6 +579,33 @@ def test_kill_criterion_holds_when_a_matured_trade_cannot_be_compared_to_the_ben
     assert (result["verdict"], result["reason"]) == ("incomplete", "matured_unresolved_outcomes")
 
 
+def test_a_benchmark_gap_on_the_entry_day_leaves_no_proven_floor_end_to_end() -> None:
+    # 3333.T's prices stop after 10 sessions (h60 matured, unevaluated); its entry is session 3.
+    ends, days = {"1111.T": 140, "2222.T": 140, "3333.T": 10}, {"1111.T": 0, "2222.T": 1, "3333.T": 2}
+    complete = _kill_criterion_via_lag_report(ends, days)
+    gap_on_entry = _kill_criterion_via_lag_report(ends, days, benchmark_gaps=(3,))
+    gap_inside = _kill_criterion_via_lag_report(ends, days, benchmark_gaps=(40,))
+
+    assert complete["unresolved_matured"] == 1 and complete["sensitivity"]["worst_ci95"] is not None  # floor proven
+    for gapped in (gap_on_entry, gap_inside):
+        assert gapped["verdict"] == "incomplete" and gapped["sensitivity"]["worst_ci95"] is None  # no floor: no pass
+
+
+def test_unresolved_outcomes_count_one_position_per_ticker_not_every_signal() -> None:
+    from src.evaluation.inflection_historical import unresolved_h60_outcomes
+
+    sessions = pd.bdate_range("2026-01-05", periods=180)
+    flat = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 100.0, "Close": 100.0}, index=sessions)
+    signals = [
+        {"ticker": "1111.T", "signal_date": str(sessions[day].date()), "score": 80.0,
+         "classification": "EARLY_CANDIDATE", "market": "プライム", "avg_turnover_20d_jpy": 1e9}
+        for day in range(20)  # twenty consecutive signals on one ticker whose prices stop after 30 sessions
+    ]
+    rows = unresolved_h60_outcomes(signals, {"1111.T": flat.iloc[:30]}, flat, pd.DatetimeIndex(sessions))
+
+    assert len(rows) == 1 and rows[0]["signal_date"] == str(sessions[0].date())
+
+
 def test_a_benchmark_missing_the_exit_day_gives_no_excess_return() -> None:
     from src.evaluation.inflection_backtest import TradeResult
     from src.evaluation.inflection_forward import paired_benchmark_returns
@@ -612,13 +640,26 @@ def test_kill_criterion_passes_only_when_it_survives_every_unresolved_outcome_at
     assert flips["sensitivity"]["worst_ci95"][0] <= 0 < flips["ci95"][0]
 
 
-def test_kill_criterion_never_confirms_a_fail_while_an_outcome_is_unresolved() -> None:
+def test_kill_criterion_confirms_a_fail_only_when_no_unresolved_gain_could_lift_it() -> None:
     from src.evaluation.inflection_historical import kill_criterion
 
-    result = kill_criterion(_pairs([-5.0 - (i % 5) * 0.1 for i in range(120)]), min_independent=100,
+    losing = kill_criterion(_pairs([-5.0 - (i % 5) * 0.1 for i in range(120)]), min_independent=100,
                             unresolved_matured=1, unresolved_outcomes=_floors(["2026-01-40"], -100.0))
+    # 40 unresolved outcomes spread over the 30 existing days: an unbounded gain in them lifts the lower bound.
+    liftable = kill_criterion(_pairs([-0.5] * 120), min_independent=100, unresolved_matured=40,
+                              unresolved_outcomes=_floors([f"2026-01-{1 + i % 30:02d}" for i in range(40)], -100.0))
 
-    assert (result["verdict"], result["reason"]) == ("incomplete", "matured_unresolved_outcomes")
+    assert (losing["verdict"], losing["reason"]) == ("fail", None)  # most resamples never draw the unknown day
+    assert liftable["verdict"] == "incomplete" and liftable["sensitivity"]["ceiling_ci95"][0] is None  # +inf: lifted without limit
+
+
+def test_a_fail_is_not_confirmed_when_a_gain_beyond_any_constant_would_lift_it() -> None:
+    from src.evaluation.inflection_historical import kill_criterion
+
+    huge_losses = kill_criterion(_pairs([-1e16] * 120), min_independent=100, unresolved_matured=30,
+                                 unresolved_outcomes=_floors([f"2026-01-{1 + i:02d}" for i in range(30)], -1e17))
+
+    assert huge_losses["verdict"] == "incomplete"  # with 1e20% gains in every day the bound is positive
 
 
 def test_kill_criterion_holds_without_a_proven_floor_for_every_unresolved_outcome() -> None:
@@ -656,15 +697,17 @@ def test_the_floor_of_a_stock_side_unresolved_outcome_uses_the_benchmark_window(
         max_drawdown_pct=None, explosive_50pct=None,
     )
 
-    bound = _excess_lower_bound(trade, etf)
+    calendar = pd.DatetimeIndex(etf.index)
+    bound = _excess_lower_bound(trade, etf, calendar)
     assert bound is not None and bound < -100.0  # the stock's -100% minus the best the benchmark could have made
-    assert _excess_lower_bound(trade, etf.iloc[:30]) is None  # no full window: no proven floor
+    assert _excess_lower_bound(trade, etf) is None  # no independent calendar: the ETF's own dates prove nothing
+    assert _excess_lower_bound(trade, etf.iloc[:30], pd.DatetimeIndex(etf.index[:30])) is None  # no full window
     entry_day = etf.index[1]
-    assert _excess_lower_bound(trade, etf.drop(entry_day)) is None  # the entry day is missing: not the next day's Open
-    assert _excess_lower_bound(trade, etf.drop(etf.index[30]), pd.DatetimeIndex(etf.index)) is None  # a gap inside
+    assert _excess_lower_bound(trade, etf.drop(entry_day), calendar) is None  # the entry day is missing: not the next day's Open
+    assert _excess_lower_bound(trade, etf.drop(etf.index[30]), calendar) is None  # a gap inside
     broken = etf.copy()
     broken.loc[etf.index[30], "Close"] = float("nan")
-    assert _excess_lower_bound(trade, broken) is None  # a non-finite close
+    assert _excess_lower_bound(trade, broken, calendar) is None  # a non-finite close
 
 
 # --- lag comparison ---------------------------------------------------------------------------

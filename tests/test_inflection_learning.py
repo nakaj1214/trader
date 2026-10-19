@@ -1155,3 +1155,15 @@ def test_the_benchmark_cost_does_not_follow_the_trade_cost(trade_cost: float) ->
     assert outcome["benchmark_net_return_pct"] == pytest.approx(forward["benchmark_net_return_pct"])
     assert outcome["net_return_pct"] == pytest.approx(trade["net"])  # only the benchmark side is fixed
     assert outcome["excess_return_pct"] == pytest.approx(trade["net"] - forward["benchmark_net_return_pct"])
+
+
+def test_an_evaluated_outcome_without_a_benchmark_comparison_holds_the_promotion() -> None:
+    from src.evaluation.inflection_learning import _outcome_coverage
+
+    def row(excess: float | None) -> dict[str, object]:
+        return {"horizons": {"h5": {"completed": True, "horizon_matured": True, "excess_return_pct": excess}}}
+
+    coverage = _outcome_coverage([row(1.0), row(None)], 5, 2)  # type: ignore[arg-type]
+
+    assert coverage["benchmark_unpaired"] == 1 and coverage["unresolved_matured"] == 1
+    assert coverage["conclusion_status"] == "incomplete"

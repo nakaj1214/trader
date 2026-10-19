@@ -7,6 +7,7 @@ into historical scoring.
 
 from __future__ import annotations
 
+import math
 import random
 from collections import Counter
 from collections.abc import Iterable
@@ -418,8 +419,13 @@ def simulate_signals(
     ]
 
 
-def select_non_overlapping_trades(trades: Iterable[TradeResult]) -> list[TradeResult]:
-    """Keep at most one open position per ticker, ordered by actual entry time."""
+def select_non_overlapping_trades(
+    trades: Iterable[TradeResult], *, include_unfinished: bool = False,
+) -> list[TradeResult]:
+    """Keep at most one open position per ticker, ordered by actual entry time.
+
+    ``include_unfinished`` also returns the one position per ticker that never exited (it still blocks the rest).
+    """
     selected: list[TradeResult] = []
     occupied_until: dict[str, str] = {}
     open_tickers: set[str] = set()
@@ -434,6 +440,8 @@ def select_non_overlapping_trades(trades: Iterable[TradeResult]) -> list[TradeRe
             continue
         if not trade.exit_date:
             open_tickers.add(trade.ticker)
+            if include_unfinished:
+                selected.append(trade)
             continue
         selected.append(trade)
         occupied_until[trade.ticker] = str(trade.exit_date)
@@ -451,33 +459,50 @@ def cluster_bootstrap_ci(
     n_resamples: int = 2000,
     confidence: float = 0.95,
     seed: int = BOOTSTRAP_SEED,
+    unbounded: list[bool] | None = None,
 ) -> tuple[float, float] | None:
-    """Return a deterministic percentile CI after resampling whole clusters."""
+    """Return a deterministic percentile CI after resampling whole clusters.
+
+    ``unbounded`` marks values taken as +infinity: a resample that draws any cluster holding one has mean +inf (the
+    limit of letting those values grow), so a bound can be an exact ``inf`` instead of depending on a large constant.
+    """
     if len(values) != len(cluster_keys):
         raise ValueError("values and cluster_keys must have equal length")
     if n_resamples < 1:
         raise ValueError("n_resamples must be at least 1")
     if not 0 < confidence < 1:
         raise ValueError("confidence must be between 0 and 1")
+    if unbounded is not None and len(unbounded) != len(values):
+        raise ValueError("unbounded must match values")
     clusters: dict[str, list[float]] = {}
-    for value, key in zip(values, cluster_keys, strict=True):
+    open_ended: set[str] = set()
+    for index, (value, key) in enumerate(zip(values, cluster_keys, strict=True)):
         clusters.setdefault(key, []).append(float(value))
+        if unbounded is not None and unbounded[index]:
+            open_ended.add(key)
     if len(clusters) < 2:
         return None
 
     rng = random.Random(seed)
     groups = list(clusters.values())
-    estimates = sorted(
-        mean(value for group in rng.choices(groups, k=len(groups)) for value in group)
-        for _ in range(n_resamples)
-    )
+    infinite = [key in open_ended for key in clusters]
+
+    def estimate() -> float:
+        picks = rng.choices(range(len(groups)), k=len(groups))
+        if any(infinite[pick] for pick in picks):
+            return math.inf
+        return mean(value for pick in picks for value in groups[pick])
+
+    estimates = sorted(estimate() for _ in range(n_resamples))
 
     def percentile(q: float) -> float:
         position = (len(estimates) - 1) * q
         lower = int(position)
         fraction = position - lower
-        if not fraction:
+        if not fraction or estimates[lower] == math.inf:
             return estimates[lower]
+        if estimates[lower + 1] == math.inf:
+            return math.inf
         return estimates[lower] + (estimates[lower + 1] - estimates[lower]) * fraction
 
     alpha = (1.0 - confidence) / 2.0

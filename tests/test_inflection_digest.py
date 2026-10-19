@@ -750,3 +750,27 @@ def test_main_reports_the_recovery_without_leaking_anything(
     for hidden in (WEBHOOK, "SECRETTOKEN", "1111.T", "Company"):
         assert hidden not in out
     assert post.call_count == 2  # today's digest and the recovered one
+
+
+def test_a_recovered_digest_whose_state_was_not_saved_is_annotated_through_main(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "v3"
+    _write_snapshot(directory, "2026-09-29")
+    (directory.parent / "digest_state.json").write_text('{"2026-09-29": "pending", "2026-09-30": "succeeded"}', encoding="utf-8")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", WEBHOOK)
+    monkeypatch.setattr(shadow, "snapshot_encryption_secret", lambda: "secret")
+    post = Mock()
+    with (
+        patch.object(shadow, "scan_japan_inflection", return_value=make_report()),
+        patch.object(shadow, "persist_report", Mock(return_value=(directory / "2026-09-30.enc", False))),
+        patch.object(shadow, "OUT_DIR", directory),
+        patch.object(shadow, "_write_digest_state", side_effect=OSError("stopped")),
+        patch("src.notify.slack.requests.post", post),
+    ):
+        shadow.main()
+
+    out = capsys.readouterr().out
+    assert post.call_count == 1  # delivered; no extra Slack message for the state problem
+    assert "unsaved:1" in out and "::warning" in out  # ISSUE-21 for the recovery path
+    assert "1111.T" not in out

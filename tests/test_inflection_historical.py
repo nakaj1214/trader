@@ -517,7 +517,9 @@ def test_kill_criterion_ignores_non_finite_excess_values(bad: object) -> None:
     assert kill_criterion(pairs, min_independent=1)["valid_pairs"] == 7
 
 
-def _kill_criterion_via_lag_report(histories_end: dict[str, int], signal_days: dict[str, int]) -> dict[str, Any]:
+def _kill_criterion_via_lag_report(
+    histories_end: dict[str, int], signal_days: dict[str, int], *, benchmark_sessions: int = 140,
+) -> dict[str, Any]:
     """Run ``_lag_report`` on synthetic EARLY signals; ``histories_end`` is each ticker's last session index."""
     from src.evaluation.inflection_historical import _lag_report
 
@@ -534,7 +536,7 @@ def _kill_criterion_via_lag_report(histories_end: dict[str, int], signal_days: d
         for ticker, day in signal_days.items()
     ]
     report, _ = _lag_report(
-        signals, {}, histories, frame(140, 0.05), min_independent=2, market_calendar=pd.DatetimeIndex(sessions),
+        signals, {}, histories, frame(benchmark_sessions, 0.05), min_independent=2, market_calendar=pd.DatetimeIndex(sessions),
     )
     return report["kill_criterion"]  # type: ignore[no-any-return]
 
@@ -563,6 +565,106 @@ def test_kill_criterion_reports_zero_unresolved_when_every_outcome_is_complete()
     result = _kill_criterion_via_lag_report({"1111.T": 140, "2222.T": 140}, {"1111.T": 0, "2222.T": 1})
 
     assert (result["verdict"], result["unresolved_matured"]) == ("pass", 0)
+
+
+def test_kill_criterion_holds_when_a_matured_trade_cannot_be_compared_to_the_benchmark() -> None:
+    # The ETF stops after 70 sessions: 3333.T's h60 matured (its own prices are complete) but has no benchmark span.
+    result = _kill_criterion_via_lag_report(
+        {"1111.T": 140, "2222.T": 140, "3333.T": 140}, {"1111.T": 0, "2222.T": 1, "3333.T": 70},
+        benchmark_sessions=70,
+    )
+
+    assert result["valid_pairs"] == 2 and result["unresolved_matured"] == 1
+    assert (result["verdict"], result["reason"]) == ("incomplete", "matured_unresolved_outcomes")
+
+
+def test_a_benchmark_missing_the_exit_day_gives_no_excess_return() -> None:
+    from src.evaluation.inflection_backtest import TradeResult
+    from src.evaluation.inflection_forward import paired_benchmark_returns
+
+    sessions = pd.bdate_range("2026-03-02", periods=30)
+    etf = pd.DataFrame({"Open": 100.0, "Close": 101.0}, index=sessions.delete([20, 21]))  # lacks the exit day
+    trade = TradeResult(
+        ticker="1111.T", signal_date=str(sessions[0].date()), score=80.0, entry_date=str(sessions[1].date()),
+        entry_price=100.0, exit_date=str(sessions[21].date()), exit_price=110.0, gross_return_pct=10.0,
+        net_return_pct=9.0, max_return_pct=10.0, max_drawdown_pct=0.0, explosive_50pct=False,
+    )
+    [row] = paired_benchmark_returns([trade], etf, round_trip_cost_pct=0.0)
+
+    assert row["excess_return_pct"] is None and row["benchmark_exit_date"] is None
+
+
+def _floors(dates: list[str], bound: float | None) -> list[dict[str, Any]]:
+    return [{"signal_date": day, "excess_lower_bound": bound} for day in dates]
+
+
+def test_kill_criterion_passes_only_when_it_survives_every_unresolved_outcome_at_its_floor() -> None:
+    from src.evaluation.inflection_historical import kill_criterion
+
+    pairs = _pairs([5.0 + (i % 5) * 0.1 for i in range(120)])
+    robust = kill_criterion(pairs, min_independent=100, unresolved_matured=1,
+                            unresolved_outcomes=_floors(["2026-01-40"], -100.0))
+    flips = kill_criterion(pairs, min_independent=100, unresolved_matured=40,
+                           unresolved_outcomes=_floors(["2026-01-40"] * 40, -300.0))
+
+    assert (robust["verdict"], robust["unresolved_matured"]) == ("pass", 1)
+    assert (flips["verdict"], flips["reason"]) == ("incomplete", "matured_unresolved_outcomes")
+    assert flips["sensitivity"]["worst_ci95"][0] <= 0 < flips["ci95"][0]
+
+
+def test_kill_criterion_never_confirms_a_fail_while_an_outcome_is_unresolved() -> None:
+    from src.evaluation.inflection_historical import kill_criterion
+
+    result = kill_criterion(_pairs([-5.0 - (i % 5) * 0.1 for i in range(120)]), min_independent=100,
+                            unresolved_matured=1, unresolved_outcomes=_floors(["2026-01-40"], -100.0))
+
+    assert (result["verdict"], result["reason"]) == ("incomplete", "matured_unresolved_outcomes")
+
+
+def test_kill_criterion_holds_without_a_proven_floor_for_every_unresolved_outcome() -> None:
+    from src.evaluation.inflection_historical import kill_criterion
+
+    pairs = _pairs([5.0 + (i % 5) * 0.1 for i in range(120)])
+    for outcomes in (None, _floors(["2026-01-40"], None), []):
+        result = kill_criterion(pairs, min_independent=100, unresolved_matured=1, unresolved_outcomes=outcomes)
+        assert result["verdict"] == "incomplete"
+
+
+def test_unresolved_outcomes_join_their_own_signal_day_cluster() -> None:
+    from src.evaluation.inflection_historical import kill_criterion
+
+    pairs = _pairs([5.0] * 120, per_date=4)  # 30 days of 4 equal wins
+    on_a_new_day = kill_criterion(pairs, min_independent=100, unresolved_matured=2,
+                                  unresolved_outcomes=_floors(["x-1", "x-2"], -100.0))
+    on_a_shared_day = kill_criterion(pairs, min_independent=100, unresolved_matured=2,
+                                     unresolved_outcomes=_floors([pairs[0]["signal_date"]] * 2, -100.0))
+
+    assert on_a_new_day["verdict"] == "pass"
+    assert on_a_shared_day["verdict"] == "incomplete"  # the same-day losses are correlated, not independent
+
+
+def test_the_floor_of_a_stock_side_unresolved_outcome_uses_the_benchmark_window() -> None:
+    from src.evaluation.inflection_backtest import TradeResult
+    from src.evaluation.inflection_historical import _excess_lower_bound
+
+    sessions = pd.bdate_range("2026-01-05", periods=80)
+    closes = [100.0 + i for i in range(80)]  # the ETF rises 1% a session
+    etf = pd.DataFrame({"Open": closes, "Close": closes}, index=sessions)
+    trade = TradeResult(
+        ticker="1111.T", signal_date="2026-01-05", score=80.0, entry_date=str(sessions[1].date()), entry_price=100.0,
+        exit_date=None, exit_price=None, gross_return_pct=None, net_return_pct=None, max_return_pct=None,
+        max_drawdown_pct=None, explosive_50pct=None,
+    )
+
+    bound = _excess_lower_bound(trade, etf)
+    assert bound is not None and bound < -100.0  # the stock's -100% minus the best the benchmark could have made
+    assert _excess_lower_bound(trade, etf.iloc[:30]) is None  # no full window: no proven floor
+    entry_day = etf.index[1]
+    assert _excess_lower_bound(trade, etf.drop(entry_day)) is None  # the entry day is missing: not the next day's Open
+    assert _excess_lower_bound(trade, etf.drop(etf.index[30]), pd.DatetimeIndex(etf.index)) is None  # a gap inside
+    broken = etf.copy()
+    broken.loc[etf.index[30], "Close"] = float("nan")
+    assert _excess_lower_bound(trade, broken) is None  # a non-finite close
 
 
 # --- lag comparison ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ The scoring itself is the live code (``select_and_evaluate``), not a copy.
 
 from __future__ import annotations
 
+import math
 import random
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
@@ -475,17 +476,73 @@ def _h60_trades(
     )
 
 
+def _excess_lower_bound(
+    trade: TradeResult, benchmark_history: pd.DataFrame, market_calendar: pd.DatetimeIndex | None = None,
+) -> float | None:
+    """A floor for a stock-side-unresolved trade's excess return, or ``None`` when none can be proven.
+
+    The stock cannot lose more than 100% (plus its cost); the benchmark return is at most the best close seen in the
+    60-session window from the entry (a superset of the true span). The floor needs the benchmark's valid Open on the
+    entry day and a valid Close on every market session of that window: a gap means no proven floor, and no later
+    day stands in for it.
+    """
+    if not trade.entry_date or benchmark_history.empty:
+        return None
+    calendar = pd.DatetimeIndex(benchmark_history.index if market_calendar is None else market_calendar)
+    entry_day = pd.Timestamp(trade.entry_date)
+    sessions = calendar[calendar >= entry_day][:62]
+    if len(sessions) < 62 or sessions[0] != entry_day:
+        return None
+    if not sessions.isin(benchmark_history.index).all():
+        return None
+    window = benchmark_history.loc[sessions]
+    entry = float(window["Open"].iloc[0])
+    closes = window["Close"].astype(float)
+    if not math.isfinite(entry) or not entry > 0 or not closes.map(math.isfinite).all() or not (closes > 0).all():
+        return None
+    best_benchmark = (float(closes.max()) / entry - 1.0) * 100.0 - BENCHMARK_ROUND_TRIP_COST_PCT
+    return -(100.0 + ROUND_TRIP_COST_PCT) - best_benchmark
+
+
+def unresolved_h60_outcomes(
+    signals: list[dict[str, Any]],
+    histories: dict[str, pd.DataFrame],
+    benchmark_history: pd.DataFrame,
+    market_calendar: pd.DatetimeIndex | None = None,
+) -> list[dict[str, Any]]:
+    """Matured h60 trades that cannot be evaluated, or evaluated but not compared with the benchmark.
+
+    Each row has its real ``signal_date`` (so it joins the same-day cluster) and ``excess_lower_bound`` (``None``
+    when no floor can be proven, which is always so for a missing benchmark span: the benchmark has no upper bound).
+    """
+    trades = _h60_trades(signals, histories, benchmark_history, market_calendar)
+    rows = [
+        {
+            "signal_date": trade.signal_date,
+            "excess_lower_bound": _excess_lower_bound(trade, benchmark_history, market_calendar),
+        }
+        for trade in trades
+        if trade.horizon_matured is True and trade.net_return_pct is None
+    ]
+    independent = select_non_overlapping_trades(trades)
+    paired = paired_benchmark_returns(
+        independent, benchmark_history, round_trip_cost_pct=BENCHMARK_ROUND_TRIP_COST_PCT
+    )
+    rows += [
+        {"signal_date": trade.signal_date, "excess_lower_bound": None}
+        for trade, pair in zip(independent, paired, strict=True)
+        if trade.net_return_pct is not None and pair["excess_return_pct"] is None
+    ]
+    return rows
+
+
 def unresolved_matured_h60(
     signals: list[dict[str, Any]],
     histories: dict[str, pd.DataFrame],
     benchmark_history: pd.DataFrame,
     market_calendar: pd.DatetimeIndex | None = None,
 ) -> int:
-    """h60 trades whose horizon has matured but that cannot be evaluated (same rule as learning's coverage)."""
-    return sum(
-        trade.horizon_matured is True and trade.net_return_pct is None
-        for trade in _h60_trades(signals, histories, benchmark_history, market_calendar)
-    )
+    return len(unresolved_h60_outcomes(signals, histories, benchmark_history, market_calendar))
 
 
 def h60_excess_pairs(
@@ -515,11 +572,13 @@ def kill_criterion(
     *,
     min_independent: int = DEFAULT_MIN_INDEPENDENT,
     unresolved_matured: int = 0,
+    unresolved_outcomes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Provisional stop rule on the h60 excess return over TOPIX (signal_date-cluster bootstrap).
 
-    ``incomplete`` while any matured h60 outcome is unresolved: the pairs hold only completed trades, so a
-    pass or fail would silently ignore them (learning holds its promotions in the same situation).
+    Matured h60 outcomes that are unresolved (stock side or no benchmark span) are never ignored. With any of them
+    the verdict is ``incomplete``, except a ``pass`` that still holds with each one at a proven floor of its
+    excess return (``unresolved_outcomes``: real ``signal_date`` and ``excess_lower_bound``).
     ``insufficient_sample`` when there are fewer valid pairs than ``min_independent`` or no CI can be built;
     otherwise ``pass`` iff the CI lower bound is above zero.
     """
@@ -538,7 +597,23 @@ def kill_criterion(
         "unresolved_matured": unresolved_matured,
         "reason": None,
     }
-    if unresolved_matured > 0:
+    if unresolved_matured > 0 and len(valid) >= min_independent and ci is not None and unresolved_outcomes:
+        bounds = [row.get("excess_lower_bound") for row in unresolved_outcomes]
+        if len(bounds) == unresolved_matured and all(is_finite_number(bound) for bound in bounds):
+            # Only a proven floor is used: a pass must survive every unresolved outcome at its floor. There is no
+            # proven ceiling (a stock or a benchmark can rise without limit), so an unresolved outcome never gives a fail.
+            worst = cluster_bootstrap_ci(
+                [*values, *[float(row["excess_lower_bound"]) for row in unresolved_outcomes]],
+                [*dates, *[str(row["signal_date"]) for row in unresolved_outcomes]],
+            )
+            result["sensitivity"] = {"worst_ci95": list(worst) if worst is not None else None}
+            if worst is not None and worst[0] > 0:
+                result["verdict"] = "pass"
+            else:
+                result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
+        else:
+            result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
+    elif unresolved_matured > 0:
         result |= {"verdict": "incomplete", "reason": "matured_unresolved_outcomes"}
     elif len(valid) < min_independent:
         result |= {"verdict": "insufficient_sample", "reason": "below_min_independent"}
@@ -649,6 +724,7 @@ def _lag_report(
         )
     early = [signal for signal in signals if signal["classification"] == "EARLY_CANDIDATE"]
     pairs = h60_excess_pairs(early, histories, benchmark_history, calendar)
+    unresolved = unresolved_h60_outcomes(early, histories, benchmark_history, calendar)
     early_trades = simulate_signals(
         early, histories, holding_days=60, round_trip_cost_pct=ROUND_TRIP_COST_PCT, apply_tax=False,
         market_calendar=calendar,
@@ -673,7 +749,8 @@ def _lag_report(
         "kill_criterion": kill_criterion(
             pairs,
             min_independent=min_independent,
-            unresolved_matured=unresolved_matured_h60(early, histories, benchmark_history, calendar),
+            unresolved_matured=len(unresolved),
+            unresolved_outcomes=unresolved,
         ),
     }
     return report, pairs

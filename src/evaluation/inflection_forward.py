@@ -206,6 +206,9 @@ def paired_benchmark_returns(
         if entries.empty or exits.empty or entries.index[0] > exits.index[-1]:
             rows.append(empty)
             continue
+        if entries.index[0] != pd.Timestamp(trade.entry_date) or exits.index[-1] != pd.Timestamp(trade.exit_date):
+            rows.append(empty)  # the benchmark lacks the stock's own entry/exit day: a different span is not comparable
+            continue
         entry_price = float(entries.iloc[0])
         exit_price = float(exits.iloc[-1])
         if entry_price <= 0 or exit_price <= 0:

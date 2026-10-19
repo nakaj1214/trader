@@ -81,3 +81,7 @@ represent different generations after an interrupted run.
   probe record. Historical integration remains deferred because erased filings prevent strict
   reconstruction. Production acquisition and end-to-end notification delivery were not reverified
   in Stage 4C; code integration is not evidence of production delivery.
+
+## Unresolved and non-comparable outcomes
+
+A TOPIX-ETF comparison is made only when the ETF has the stock's own entry and exit day; otherwise the excess return is unknown (never a nearby day). The historical kill criterion counts matured h60 trades that are unevaluated or have no benchmark span as unresolved. With any unresolved outcome the verdict stays `incomplete`, except a `pass` that still holds with each unresolved outcome at a proven floor of its excess return (the stock at -100% plus cost, against the best ETF close in the window; each counted on its real signal day, under `sensitivity.worst_ci95`). A fail is never confirmed while an outcome is unresolved (no proven ceiling), and a missing benchmark span has no floor. Learning still holds promotions for a horizon with a matured unresolved outcome. A recovered digest delivered but not recorded shows as `digest_recovery=...,unsaved:N` with a warning annotation.

@@ -319,7 +319,7 @@ def _recover_pending_digests(
         states = _digest_states(state_path)
     except (OSError, ValueError):
         return "skipped:digest-state-invalid"
-    sent = failed = skipped = 0
+    sent = failed = skipped = unsaved = 0
     for day in _recent_sessions(market_date):
         if states.get(day) != "pending":
             continue
@@ -338,10 +338,10 @@ def _recover_pending_digests(
         try:
             _write_digest_state(state_path, states)
         except OSError:
-            failed += 1  # delivered but not recorded: it will be sent again next time (at-least-once)
+            unsaved += 1  # delivered but not recorded: it will be sent again next time (at-least-once)
             continue
         sent += 1
-    return f"sent:{sent},failed:{failed},skipped:{skipped}"
+    return f"sent:{sent},failed:{failed},skipped:{skipped}" + (f",unsaved:{unsaved}" if unsaved else "")
 
 
 DIGEST_STATE_ALERT = (
@@ -408,6 +408,8 @@ def main() -> None:
             digest_alert = f" digest_alert={_alert_digest_state(os.getenv('SLACK_WEBHOOK_URL'))}"
     elif digest_status == "sent:state-save-failed":  # already delivered, so no Slack: tomorrow may repeat it
         print(f"::warning title=Daily digest state not saved::{digest_status}")
+    if ",unsaved:" in recovery:  # a recovered day was delivered but not recorded: it will be sent again
+        print(f"::warning title=Recovered digest state not saved::{recovery}")
 
     counts = report.get("classification_counts", {})
     market_summary = " ".join(

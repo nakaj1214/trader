@@ -260,3 +260,50 @@ VERDICT: PASS（REQ-068〜070 実装完了）
 - 独立差分レビューはPASS。共有データの書換え、障害伝播、購入日別履歴、Sheetsの認証／retry／writer制限、文書の過剰主張を確認し、Blockingなし。最後に購入日前後の分割と独立取得の完全一致テストを強化し、同じreviewerの限定再確認もPASS。
 - 全1032テストPASS、coverage95.74%、外部通信試行0。対象回帰はMonitor78・評価112・Sheets13件、最後の分割同等性テスト再実行もPASS。ruff PASS、mypyはpath/message単位で既知31件と一致し新規0。snapshot・archive・uv.lockの今回差分0、diff-check／minimal diff guard PASS。
 - 詳細・変更不要候補・実環境未確認事項は [Stage 4C完了報告](../../.harness/reports/reliability-stage4c-2026-10-12.md) に記録した。Growthには進まず停止する。
+
+---
+
+## 修正コード再レビュー（2026-10-19、最新結果）
+
+What this change does: ISSUE-15〜21の修正を、[issues-2026-10-16.md](issues-2026-10-16.md) の受入条件と現行コード・関連テストで照合した。前回指摘への未コミット修正も再確認した。以下が今回の最新判定であり、上の過去レビューとは区別する。
+
+対象: `3f42da1..7b8ddad` のISSUE関連修正と現在の作業ツリー。実装コードは変更していない。全文上書きはHarnessフックが大量削除として拒否したため、過去記録を保持し、前回のISSUEレビュー節を今回の結果で上書きした。
+
+### ISSUE-15〜21の確認結果
+
+| ID | 結果 | 実装・検証根拠 |
+|---|---|---|
+| ISSUE-15 | 追加指摘なし | `_daily_session_is_valid` がHigh/Low/Closeの有限性・正値・整合を確認。不正な古い日足は `incomplete` とし、以前のcheckpointを維持。正常日・確認済み無取引日は従来の経路を維持。 |
+| ISSUE-16 | 追加指摘なし | `_digest_states` が集合判定の前に値の文字列型を確認。配列・オブジェクト・数値・null等で通知だけを止め、snapshot保存は継続し、不正状態ファイルを変更しない。 |
+| ISSUE-17 | 静的確認で追加指摘なし | Forward復号stepは「非PRかつmain」、learningの鍵利用はschedule条件。PRのsecret不要テストは維持。実Actions・GitHub側設定は未確認。 |
+| ISSUE-18 | 現行の(a)、過去3市場日の回収を確認 | 保存済みsnapshotからpendingを再送し、成功を保存して次の実行での再送を抑止。休日・範囲外・snapshot欠損／復号不能を扱う。exactly-onceを保証しない前提を維持。 |
+| ISSUE-19 | 追加指摘なし | High=120、従前最高値=100、stop=10%では判定・保存値ともstop=108。既存列を増やしていない。 |
+| ISSUE-20 | 追加指摘なし | playbooksの「初期通知状態の保存失敗はrunを失敗させる」という旧説明を修正。現行docs・project-overviewに同じ旧主張は見つからない。 |
+| ISSUE-21 | 前回の再送経路の指摘も解消 | 当日分の `sent:state-save-failed` に加え、過去分の保存失敗を `unsaved:N` で区別しmainで警告する。追加Slack送信をしない回帰テストあり。 |
+
+ISSUE-18の(a)/N=3は現行実装・運用文書の方針として確認した。承認履歴はコードから証明できず、今回その方針は変更していない。
+
+### Must fix — 前回D3指摘の残件
+
+以下はISSUE-15〜21の未対応項目ではない。元のISSUE一覧が明示的に除外しているD1〜D3のうち、[proposal.md](proposal.md) の「証明できる下限だけで合格を確定する」という修正の再確認結果。
+
+1. **[P1] ETFの欠測があっても下限を確定し、誤って合格する**（[inflection_historical.py:486](../../src/evaluation/inflection_historical.py#L486)）
+   - **What this is:** `_excess_lower_bound` は銘柄側の未評価について、ETFのOpenと窓内の最高Closeから超過収益の下限を計算する。前回の実日付クラスタへの修正と、未評価がある場合に不合格を確定しない修正は反映済み。
+   - **Problem:** `index >= entry_date` の先頭62行を使うため、ETFの実entry日が欠けても翌日のOpenで代用する。62行あることは必要な市場日の完備を証明せず、期間内の欠測も見逃すため、「欠測なら下限不明」とする現行方針に反する。
+   - **再現:** 合成140営業日、シグナル2026-01-05、銘柄履歴は最初の10営業日だけとしてh60を未評価にした。ETFはOpen/Close=1000、実entry日2026-01-06の行だけ欠測。有効組120件の超過収益を+5%とすると、`unresolved_h60_outcomes → kill_criterion` は下限 **−100.15%**、感度分析CI下限 **+2.256957%** で `pass`。欠測行をOpen=100・Close=1000で補うと、下限 **−1000.15%**、CI下限 **−21.221304%** で `incomplete` になる。下限を証明できない欠測時点で保留が必要。
+   - **Fix:** 実entry日の有効なETF Openと、既存の市場カレンダーに基づく必要期間の有効なCloseが揃うときだけ下限を返す。欠測・非有限値があれば `None` とし、後の日付で代用しない。既存historicalテストに開始日欠測・期間内欠測と集計元から合否までの回帰ケースを追加する。
+   - **If we skip it:** データが欠けたことで下限が楽観的になり、完全なデータなら保留となる戦略を合格させる。
+
+これは前回指摘2「超過収益の下限を保証できない」の残件。新しい特徴量・閾値・依存関係・別の設計項目は要求しない。
+
+### 検証・変更範囲
+
+- 上記の独立再現はfake/syntheticだけで行い、終了コード0と、欠測時の `pass`／補完時の `incomplete` を確認した。
+- 関連7ファイル（Monitor、digest、workflow reliability、session gaps、historical、forward、learning）のテストは **455件PASS**、終了コード0、外部通信試行0。`.venv/bin/python -m pytest` に `-q -o addopts=` と一時 `--basetemp` を指定した。全体カバレッジは測定していない。
+- 実API・実Slack・実Sheets、保存済みsnapshot・archive・永続キャッシュには接続・更新していない。スコア・重み・Q06閾値・Growthの変更もない。
+- 全体のminimal diff guardは開始時から `proposal.md` の既存全面差替えで終了コード2。ガードや許可設定は変更していない。
+- 更新した `review.md` を指定したminimal diff guardと `git diff --check` はPASS。
+
+Verdict: ISSUE-15〜21に追加指摘なし。関連D3は指摘1を修正してから合否判定を利用する。
+
+Not checked: 実Actions・実データ再生成・実配信。D3にはETF欠測時の誤合格リスクが残る。

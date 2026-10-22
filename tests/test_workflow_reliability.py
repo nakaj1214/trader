@@ -166,3 +166,20 @@ def test_the_scan_commits_its_digest_state_so_the_next_run_can_read_it() -> None
     if result.returncode == 128:
         pytest.skip("not a git checkout")
     assert result.returncode == 1, f"{state} is git-ignored, so the scan never commits it"
+
+
+def test_the_dashboard_bundle_is_built_after_the_scan_and_never_fails_it() -> None:
+    from scripts.build_dashboard import OUTPUT
+
+    workflow = (WORKFLOWS / "inflection_shadow.yml").read_text()
+    step = workflow.split("name: Build encrypted dashboard bundle", 1)[1].split("\n\n", 1)[0]
+    persist = workflow.split("id: persist", 1)[1].split("\n\n", 1)[0]
+    bundle = OUTPUT.relative_to(WORKFLOWS.parents[1]).as_posix()
+
+    # The snapshot is saved by the scan step before this one; a dashboard problem must not turn the scan red.
+    assert workflow.index("id: scan") < workflow.index("id: dashboard") < workflow.index("id: persist")
+    assert "continue-on-error: true" in step and "secrets.DASHBOARD_PASSWORD" in step
+    assert "timeout-minutes: 5" in step  # continue-on-error does not save the job from its own timeout
+    assert "python scripts/build_dashboard.py" in step
+    # Committed only when it exists: the build skips (writes nothing) until the password secret is set.
+    assert f"if [[ -f {bundle} ]]; then git add {bundle}; fi" in persist

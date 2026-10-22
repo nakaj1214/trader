@@ -132,6 +132,16 @@ def test_the_headline_changes_when_the_data_delay_is_unknown() -> None:
 # --- data-quality warnings ----------------------------------------------------------------------------
 
 
+def test_a_configured_dashboard_url_is_linked_and_anything_unlinkable_is_left_out() -> None:
+    report = make_report([candidate("1111.T", "EARLY_CANDIDATE", 78.2)])
+
+    text = build_digest(report, warnings=[], dashboard_url="https://example.github.io/trader/dashboard/")
+    assert text.splitlines()[-1].startswith("<https://example.github.io/trader/dashboard/|ダッシュボードで詳しく見る>")
+
+    for bad in (None, "", "http://example.com/", "https://example.com/a|b", "https://a b", "javascript:alert(1)"):
+        assert "ダッシュボード" not in build_digest(report, warnings=[], dashboard_url=bad)
+
+
 def test_warnings_flag_a_skipped_previous_session_and_the_running_total(tmp_path: Path) -> None:
     directory = snapshot_dir(tmp_path, ["2026-09-24", "2026-09-25", "2026-09-29", "2026-09-30"])
 

@@ -6,6 +6,8 @@ after it), and nothing about the candidates may reach the job log (the repositor
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -16,6 +18,7 @@ from src.notify.slack import escape, post_text
 
 EARLY_LIMIT = 10
 WATCH_LIMIT = 5
+_LINKABLE_URL = re.compile(r"https://[^\s<>|]+")  # a Slack link breaks on spaces, angle brackets and pipes
 
 
 def _pct(value: Any) -> str:
@@ -46,8 +49,8 @@ def _section(title: str, rows: list[dict[str, Any]], limit: int) -> list[str]:
     return lines
 
 
-def build_digest(report: dict[str, Any], *, warnings: list[str]) -> str:
-    """The message text for one scan day."""
+def build_digest(report: dict[str, Any], *, warnings: list[str], dashboard_url: str | None = None) -> str:
+    """The message text for one scan day, with a dashboard link when a valid https URL is configured."""
     counts = report.get("classification_counts") or {}
     delay = (report.get("data_policy") or {}).get("jquants_data_delay_weeks")
     delay_text = f"財務データは約{delay}週間遅れです。" if delay else "財務データの公開時点を確認してください。"
@@ -69,6 +72,8 @@ def build_digest(report: dict[str, Any], *, warnings: list[str]) -> str:
     if not early and not watch:
         lines.append("本日の候補はありません。")
     lines += [f"⚠ {warning}" for warning in warnings]
+    if dashboard_url and _LINKABLE_URL.fullmatch(dashboard_url):
+        lines.append(f"<{dashboard_url}|ダッシュボードで詳しく見る>（数分後に今日の分へ更新されます）")
     return "\n".join(lines)
 
 
@@ -96,7 +101,7 @@ def send_daily_digest(
         return "skipped:no-webhook"
     try:
         warnings = daily_warnings(snapshot_dir, date.fromisoformat(str(report["latest_price_date"])))
-        post(webhook, build_digest(report, warnings=warnings))
+        post(webhook, build_digest(report, warnings=warnings, dashboard_url=os.getenv("DASHBOARD_URL")))
     except Exception as exc:  # noqa: BLE001 - best-effort: never fail the scan; log only the type
         return f"failed:{type(exc).__name__}"
     return "sent"

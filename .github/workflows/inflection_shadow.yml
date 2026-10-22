@@ -76,7 +76,21 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
           RESEND_DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resend_digest || false }}
+          # Optional repository variable (not a secret): the Pages URL linked from the Slack digest.
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
         run: python scripts/run_inflection_shadow.py
+
+      # The snapshot is already saved: a dashboard failure shows on the run page but never fails the scan.
+      # Without the DASHBOARD_PASSWORD secret the script only warns and skips.
+      - name: Build encrypted dashboard bundle
+        id: dashboard
+        continue-on-error: true
+        # Bounded so a slow price provider can never push the job past its timeout before the snapshot is pushed.
+        timeout-minutes: 5
+        env:
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: python scripts/build_dashboard.py
 
       # Intentional direct push: this step writes encrypted generated data only, never source code.
       - name: Commit encrypted immutable market-day snapshot
@@ -85,6 +99,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add dashboard/data/inflection/ dashboard/data/inflection_candidates.enc
+          if [[ -f dashboard/data/dashboard.enc ]]; then git add dashboard/data/dashboard.enc; fi
           git diff --staged --quiet || git commit -m "data: record encrypted JP inflection shadow scan [skip ci]"
           git pull --rebase --autostash origin "${{ github.ref_name }}"
           git push

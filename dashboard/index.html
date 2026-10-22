@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Trader ダッシュボード</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="css/main.css" />
+    <script>
+      // Apply a saved light/dark choice before the first paint.
+      try {
+        const theme = localStorage.getItem("trader-dashboard-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="page__header">
+        <div class="page__header-inner">
+          <div class="page__title">
+            <h1>Trader ダッシュボード</h1>
+            <p id="data-date">日本株の初動候補の記録（売買の推奨ではありません）</p>
+          </div>
+          <div class="page__actions">
+            <button class="button" id="theme-toggle" type="button">表示を切り替え</button>
+            <button class="button" id="lock" type="button" hidden>ロック</button>
+          </div>
+        </div>
+        <nav class="tabs" id="tabs" aria-label="表示の切り替え" hidden>
+          <div class="tabs__list" role="tablist">
+            <button class="tabs__tab" type="button" role="tab" id="tab-today" aria-controls="view-today" aria-selected="true">今日の候補</button>
+            <button class="tabs__tab" type="button" role="tab" id="tab-results" aria-controls="view-results" aria-selected="false" tabindex="-1">過去の候補のその後</button>
+            <button class="tabs__tab" type="button" role="tab" id="tab-trend" aria-controls="view-trend" aria-selected="false" tabindex="-1">推移</button>
+            <button class="tabs__tab" type="button" role="tab" id="tab-guide" aria-controls="view-guide" aria-selected="false" tabindex="-1">見方</button>
+          </div>
+        </nav>
+      </header>
+
+      <main class="page__main">
+        <section class="unlock" id="unlock" aria-labelledby="unlock-title">
+          <form class="unlock__form" id="unlock-form">
+            <h2 id="unlock-title">パスワードを入力</h2>
+            <p>候補の銘柄は暗号化して公開しています。GitHub の Secret <code>DASHBOARD_PASSWORD</code> に設定したパスワードで開けます。復号はこの端末の中だけで行い、パスワードはどこにも送信しません。</p>
+            <label class="unlock__field">
+              <span>パスワード</span>
+              <input type="password" id="password" name="password" autocomplete="current-password" required minlength="12" />
+            </label>
+            <label class="unlock__remember">
+              <input type="checkbox" id="remember" />
+              この端末に保存する（共用の端末では使わないでください）
+            </label>
+            <button class="button button--primary" type="submit" id="unlock-submit" disabled>開く</button>
+            <p class="unlock__status" id="unlock-status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <div class="notice-list" id="notices"></div>
+
+        <section class="section" id="view-today" role="tabpanel" aria-labelledby="tab-today" hidden></section>
+        <section class="section" id="view-results" role="tabpanel" aria-labelledby="tab-results" hidden></section>
+        <section class="section" id="view-trend" role="tabpanel" aria-labelledby="tab-trend" hidden></section>
+        <section class="section" id="view-guide" role="tabpanel" aria-labelledby="tab-guide" hidden></section>
+      </main>
+
+      <footer class="page__footer">
+        <p>このページは調査用の記録です。投資判断と売買はご自身で行ってください。表示する値動きは手数料・税金を含みません。</p>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+.guide {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: var(--space-base);
+}
+
+.guide__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-block: calc(var(--space-base) * 0.875) var(--space-base);
+  padding-inline: var(--space-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+
+  & p,
+  & li {
+    font-size: var(--font-size-sm);
+  }
+
+  & ul,
+  & ol {
+    padding-inline-start: 1.2em;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+}
+
+.glossary {
+  display: grid;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+
+  & dt {
+    font-weight: var(--font-weight-bold);
+  }
+
+  & dd {
+    margin: 0 0 var(--space-xs);
+    color: var(--color-text-muted);
+  }
+}

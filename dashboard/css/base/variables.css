@@ -1,0 +1,126 @@
+/*
+  Design tokens. Naming: category-property-variant.
+  WCAG AA: body text >= 4.5:1, UI parts and chart strokes >= 3:1. Ratios below were measured for each pair.
+  Prices: Japanese convention, up = red with ▲ and down = blue with ▼ (the sign is always shown, never color alone).
+*/
+:root {
+  color-scheme: light;
+
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef0f4;
+  --color-border: #d5dae1;
+  --color-border-strong: #8a94a3; /* on #ffffff = 3.1:1 ✓ UI */
+  --color-text: #14181f; /* on #ffffff = 17.8:1 ✓ */
+  --color-text-muted: #4a5361; /* on #ffffff = 7.8:1, on #eef0f4 = 6.8:1 ✓ */
+  --color-primary: #2251c7; /* on #ffffff = 6.8:1 ✓ */
+  --color-on-primary: #ffffff; /* on #2251c7 = 6.8:1 ✓ */
+  --color-up: #c0262d; /* on #ffffff = 5.9:1 ✓ */
+  --color-down: #1f5fbf; /* on #ffffff = 6.1:1 ✓ */
+
+  --color-early-bg: #fde7c7;
+  --color-early-text: #7a3d00; /* 7.0:1 ✓ */
+  --color-watch-bg: #dbe8fd;
+  --color-watch-text: #1e3f8a; /* 8.0:1 ✓ */
+  --color-over-bg: #f6dede;
+  --color-over-text: #8a1c1c; /* 7.3:1 ✓ */
+  --color-none-bg: #eceff3;
+  --color-none-text: #4a5361; /* 6.7:1 ✓ */
+  --color-warn-bg: #fff4d6;
+  --color-warn-text: #7a4b00; /* 6.8:1 ✓ */
+
+  --chart-line: var(--color-primary);
+  --chart-fill: color-mix(in srgb, var(--color-primary), transparent 88%);
+  --chart-volume: color-mix(in srgb, var(--color-text-muted), transparent 65%);
+  --chart-grid: var(--color-border);
+  --chart-marker: var(--color-early-text);
+  --chart-early: #e08a1e;
+  --chart-watch: #4f7fe0;
+  --chart-over: #c45656;
+
+  /* Spacing: φ steps above the base, halves below (LiftKit-style proportions). */
+  --space-2xs: 0.125rem;
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 0.75rem;
+  --space-base: 1rem;
+  --space-lg: 1.618rem;
+  --space-xl: 2.618rem;
+
+  --font-family-base: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Meiryo",
+    system-ui, sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.25rem;
+  --font-size-xl: clamp(1.4rem, 2vw + 1rem, 1.9rem);
+  --font-weight-normal: 400;
+  --font-weight-bold: 700;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(15 18 23 / 0.06);
+  --shadow-md: 0 4px 14px rgb(15 18 23 / 0.08);
+
+  --page-inline-size: 76rem;
+  --focus-ring: 2px solid var(--color-primary);
+}
+
+/* Dark values: the system preference unless the viewer picked light, and again for an explicit dark choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #0f1217;
+    --color-surface: #171b22;
+    --color-surface-muted: #1f252e;
+    --color-border: #2d3542;
+    --color-border-strong: #5b6676; /* on #171b22 = 3.0:1 ✓ UI */
+    --color-text: #e8ebf0; /* 14.4:1 ✓ */
+    --color-text-muted: #a3acb9; /* 7.5:1 ✓ */
+    --color-primary: #7aa2ff; /* 6.9:1 ✓ */
+    --color-on-primary: #0f1217; /* on #7aa2ff = 7.5:1 ✓ */
+    --color-up: #ff7b7b; /* 6.9:1 ✓ */
+    --color-down: #74a8ff; /* 7.2:1 ✓ */
+    --color-early-bg: #4a2c06;
+    --color-early-text: #ffd29a; /* 9.0:1 ✓ */
+    --color-watch-bg: #172d57;
+    --color-watch-text: #b7cdff; /* 8.5:1 ✓ */
+    --color-over-bg: #4a1717;
+    --color-over-text: #ffb8b8; /* 9.0:1 ✓ */
+    --color-none-bg: #262c36;
+    --color-none-text: #c2c9d3; /* 8.4:1 ✓ */
+    --color-warn-bg: #3a2a05;
+    --color-warn-text: #ffd98a; /* 10.3:1 ✓ */
+    --shadow-sm: none;
+    --shadow-md: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0f1217;
+  --color-surface: #171b22;
+  --color-surface-muted: #1f252e;
+  --color-border: #2d3542;
+  --color-border-strong: #5b6676;
+  --color-text: #e8ebf0;
+  --color-text-muted: #a3acb9;
+  --color-primary: #7aa2ff;
+  --color-on-primary: #0f1217;
+  --color-up: #ff7b7b;
+  --color-down: #74a8ff;
+  --color-early-bg: #4a2c06;
+  --color-early-text: #ffd29a;
+  --color-watch-bg: #172d57;
+  --color-watch-text: #b7cdff;
+  --color-over-bg: #4a1717;
+  --color-over-text: #ffb8b8;
+  --color-none-bg: #262c36;
+  --color-none-text: #c2c9d3;
+  --color-warn-bg: #3a2a05;
+  --color-warn-text: #ffd98a;
+  --shadow-sm: none;
+  --shadow-md: none;
+}

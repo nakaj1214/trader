@@ -1,0 +1,17 @@
+/* Entry stylesheet: the layer order decides the cascade, not file order or selector weight. */
+@layer reset, base, layout, components, utilities;
+
+@import url("base/reset.css") layer(reset);
+@import url("base/variables.css") layer(base);
+@import url("base/typography.css") layer(base);
+@import url("layouts/page.css") layer(layout);
+@import url("components/unlock.css") layer(components);
+@import url("components/notice.css") layer(components);
+@import url("components/tabs.css") layer(components);
+@import url("components/stat.css") layer(components);
+@import url("components/badge.css") layer(components);
+@import url("components/card.css") layer(components);
+@import url("components/chart.css") layer(components);
+@import url("components/table.css") layer(components);
+@import url("components/guide.css") layer(components);
+@import url("utilities/helpers.css") layer(utilities);

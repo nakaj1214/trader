@@ -1,0 +1,47 @@
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: 1.7;
+  font-feature-settings: "palt";
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.35;
+  font-weight: var(--font-weight-bold);
+}
+
+h1 {
+  font-size: var(--font-size-xl);
+}
+
+h2 {
+  font-size: var(--font-size-lg);
+}
+
+h3 {
+  font-size: var(--font-size-base);
+}
+
+a {
+  color: var(--color-primary);
+  text-underline-offset: 0.2em;
+}
+
+small {
+  font-size: var(--font-size-sm);
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-contrast: more) {
+  :focus-visible {
+    outline-width: 3px;
+  }
+}

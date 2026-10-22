@@ -1,0 +1,126 @@
+.chart {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  /* Drawn at the figure's pixel width by charts.js; the max keeps the first (fallback) draw inside narrow cards. */
+  & svg {
+    max-inline-size: 100%;
+    block-size: auto;
+    overflow: visible;
+    touch-action: pan-y;
+  }
+}
+
+.chart__caption {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.chart__line {
+  fill: none;
+  stroke: var(--chart-line);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart__line--muted {
+  stroke: var(--color-text-muted);
+}
+
+.chart__area {
+  fill: var(--chart-fill);
+}
+
+.chart__volume {
+  fill: var(--chart-volume);
+}
+
+.chart__grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart__axis {
+  fill: var(--color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__marker {
+  stroke: var(--color-surface);
+  stroke-width: 1.5;
+}
+
+.chart__marker--early {
+  fill: var(--chart-early);
+}
+
+.chart__marker--watch {
+  fill: var(--chart-watch);
+}
+
+.chart__cursor {
+  stroke: var(--color-text-muted);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart__dot {
+  fill: var(--chart-line);
+  stroke: var(--color-surface);
+  stroke-width: 2;
+}
+
+.chart__bar--early {
+  fill: var(--chart-early);
+}
+
+.chart__bar--watch {
+  fill: var(--chart-watch);
+}
+
+.chart__bar--over {
+  fill: var(--chart-over);
+}
+
+.chart__readout {
+  min-block-size: 1.4em;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-base);
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.legend__swatch {
+  display: inline-block;
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+  margin-inline-end: var(--space-xs);
+  border-radius: 2px;
+  vertical-align: -0.05em;
+  background: var(--swatch);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}

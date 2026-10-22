@@ -1,0 +1,121 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+}
+
+.page__header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--color-surface), transparent 8%);
+  backdrop-filter: blur(8px);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.page__header-inner,
+.page__main,
+.page__footer {
+  inline-size: min(var(--page-inline-size), 100% - 2 * var(--space-base));
+  margin-inline: auto;
+}
+
+.page__header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm) var(--space-base);
+  padding-block: var(--space-md);
+}
+
+.page__title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+
+  & h1 {
+    font-size: var(--font-size-lg);
+  }
+
+  & p {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.page__actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.page__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding-block: var(--space-lg) var(--space-xl);
+}
+
+.page__footer {
+  padding-block: var(--space-lg);
+  border-block-start: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-base);
+}
+
+.section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs) var(--space-base);
+
+  & p {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr));
+  gap: var(--space-base);
+}
+
+.button {
+  --button-bg: var(--color-surface);
+  --button-text: var(--color-text);
+  --button-border: var(--color-border-strong);
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-block: calc(var(--space-sm) * 0.9) var(--space-sm);
+  padding-inline: var(--space-md);
+  border: 1px solid var(--button-border);
+  border-radius: var(--radius-sm);
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--button-bg), var(--color-text) 6%);
+  }
+}
+
+.button--primary {
+  --button-bg: var(--color-primary);
+  --button-text: var(--color-on-primary);
+  --button-border: var(--color-primary);
+
+  font-weight: var(--font-weight-bold);
+}

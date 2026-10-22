@@ -1,0 +1,46 @@
+.notice {
+  --notice-bg: var(--color-surface-muted);
+  --notice-text: var(--color-text);
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-sm);
+  align-items: baseline;
+  padding: var(--space-md) var(--space-base);
+  border-radius: var(--radius-md);
+  background: var(--notice-bg);
+  color: var(--notice-text);
+  font-size: var(--font-size-sm);
+
+  & strong {
+    white-space: nowrap;
+  }
+
+  /* Beside the title when there is room, below it on a phone. */
+  & > span {
+    flex: 1 1 20rem;
+  }
+}
+
+.notice--warn {
+  --notice-bg: var(--color-warn-bg);
+  --notice-text: var(--color-warn-text);
+}
+
+.notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+
+  &:empty {
+    display: none;
+  }
+}
+
+.empty {
+  padding: var(--space-lg);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  text-align: center;
+}

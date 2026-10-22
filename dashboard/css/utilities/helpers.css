@@ -1,0 +1,25 @@
+.visually-hidden {
+  position: absolute !important;
+  inline-size: 1px !important;
+  block-size: 1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+@media (prefers-contrast: more) {
+  .card,
+  .stat,
+  .panel,
+  .button {
+    border: 2px solid currentColor;
+  }
+}

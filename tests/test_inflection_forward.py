@@ -29,6 +29,7 @@ from src.evaluation.inflection_forward import (
     SnapshotLoadError,
     benchmark_returns_by_signal_date,
     enrich_trades_with_benchmark,
+    load_inflection_control_signals,
     load_inflection_signals,
     paired_benchmark_returns,
     summarize_benchmark_excess,
@@ -335,6 +336,57 @@ def test_load_inflection_signals_still_rejects_schema3_mixed_with_schema5(tmp_pa
 
     with pytest.raises(SnapshotLoadError, match="Mixed strategy/schema"):
         load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
+
+
+def test_control_loader_keeps_cohorts_separate_and_accepts_older_snapshots(tmp_path) -> None:
+    _v3_snapshot(tmp_path, "2026-09-08", 4)
+    assert load_inflection_control_signals(tmp_path, encryption_secret=SECRET) == []
+    _v3_snapshot(tmp_path, "2026-09-09", 5)
+    path = tmp_path / "2026-09-09.enc"
+    payload = decrypt_json(path.read_text(), SECRET)
+    payload["control_sample"].append(dict(payload["candidates"][0]))
+    path.write_text(encrypt_json(payload, SECRET))
+
+    controls = load_inflection_control_signals(tmp_path, encryption_secret=SECRET)
+    candidates = load_inflection_signals(tmp_path, encryption_secret=SECRET)
+    assert len(controls) == 2 and {row["classification"] for row in controls} == {"CONTROL"}
+    assert {row["ticker"] for row in controls} == {"1111.T", "9999.T"}
+    assert all(row["signal_date"] == "2026-09-09" for row in controls)
+    assert [row for row in candidates if row["signal_date"] == "2026-09-08"] == SCHEMA4_EXPECTED_SIGNALS
+    assert any(row["ticker"] == "1111.T" and row["signal_date"] == "2026-09-09" for row in candidates)
+
+
+@pytest.mark.parametrize("sample", [None, {}, [None], [{}], [{"ticker": "1111.T"}],
+                                    [{"ticker": "1111.T", "score": True}],
+                                    [{"ticker": "1111.T", "score": "NaN"}],
+                                    [{"ticker": "1111.T", "score": 101}]])
+def test_control_loader_fails_closed_on_invalid_control_rows(tmp_path, sample) -> None:
+    _v3_snapshot(tmp_path, "2026-09-08", 5)
+    path = tmp_path / "2026-09-08.enc"
+    payload = decrypt_json(path.read_text(), SECRET)
+    payload["control_sample"] = sample
+    path.write_text(encrypt_json(payload, SECRET))
+    with pytest.raises(SnapshotLoadError, match="control|Control"):
+        load_inflection_control_signals(tmp_path, encryption_secret=SECRET)
+
+
+@pytest.mark.parametrize("fault", ["key", "mode", "date", "schema", "mixed"])
+def test_control_loader_applies_snapshot_trust_checks_even_without_controls(tmp_path, fault) -> None:
+    _v3_snapshot(tmp_path, "2026-09-08", 4)
+    path = tmp_path / "2026-09-08.enc"
+    payload = decrypt_json(path.read_text(), SECRET)
+    if fault == "mode":
+        payload["mode"] = "live"
+    elif fault == "date":
+        payload["latest_price_date"] = "2026-09-09"
+    elif fault == "schema":
+        payload["report_schema_version"] = True
+    elif fault == "mixed":
+        _v3_snapshot(tmp_path, "2026-09-09", 5)
+        payload["strategy_version"] = "other"
+    path.write_text(encrypt_json(payload, SECRET))
+    with pytest.raises(SnapshotLoadError):
+        load_inflection_control_signals(tmp_path, encryption_secret="wrong" if fault == "key" else SECRET)
 
 
 def test_price_hashes_ignore_later_uniform_corporate_action_rescaling() -> None:
@@ -780,7 +832,7 @@ def test_report_breakdowns_exclude_incomplete_trades() -> None:
     assert sum(counts["regime_sample_counts"].values()) == 1
 
 
-def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch) -> None:
+def test_main_writes_candidate_and_control_groups_and_tracked_pool_recall(tmp_path, monkeypatch) -> None:
     snapshot_dir = tmp_path / "dashboard" / "data" / "inflection" / "v3"
     snapshot_dir.mkdir(parents=True)
     (snapshot_dir / "2026-01-29.enc").write_text("placeholder", encoding="utf-8")
@@ -829,6 +881,9 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
         lambda *_args, **_kwargs: observations,
     )
     monkeypatch.setattr(
+        "scripts.rebuild_inflection_forward_validation.load_inflection_control_signals", lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
         "scripts.rebuild_inflection_forward_validation.fetch_price_histories",
         fake_fetch,
     )
@@ -857,7 +912,8 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     assert fetch_calls[1]["tickers"] == ["2516.T"] and fetch_calls[1]["required"] == {"2516.T"}
     assert fetch_calls[1]["cache_path"] == fetch_calls[0]["cache_path"]
     report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
-    assert set(report["groups"]) == {"early_candidate", "watch", "none"}
+    assert set(report["groups"]) == {"early_candidate", "watch", "none", "control"}
+    assert report["groups"]["control"]["signal_count"] == 0
     assert report["tracked_pool_explosion_recall"]["exploded_ticker_count"] == 0
     assert report["groups"]["early_candidate"]["signal_count"] == 1
     assert report["groups"]["watch"]["signal_count"] == 1
@@ -869,6 +925,86 @@ def test_main_writes_three_groups_and_tracked_pool_recall(tmp_path, monkeypatch)
     assert portfolio["open_positions_at_cutoff_count"] == 0
     assert portfolio["config"]["round_trip_cost_pct"] == 0.2
     assert portfolio["equity_curve"]
+
+
+@pytest.mark.parametrize("candidate_present", [True, False])
+@pytest.mark.parametrize("control_fetch_fails", [False, True])
+def test_controls_preserve_candidate_results_hash_windows_and_fetch_guards(
+    tmp_path, monkeypatch, candidate_present, control_fetch_fails,
+) -> None:
+    import copy
+
+    import scripts.rebuild_inflection_forward_validation as script
+
+    snapshots = tmp_path / "fixtures"
+    snapshots.mkdir()
+    for day, candidates, tickers in (
+        ("2026-01-05", [], ("1111.T", "3333.T")),
+        ("2026-01-29", [_payload()["candidates"][0]] if candidate_present else [], ("1111.T",)),
+    ):
+        payload = _payload() | {"report_schema_version": 5, "latest_price_date": day, "candidates": candidates}
+        payload["control_sample"] = [
+            {"ticker": ticker, "score": 80.0, "classification": "EARLY_CANDIDATE", "market": "グロース"}
+            for ticker in tickers
+        ]
+        (snapshots / f"{day}.enc").write_text(encrypt_json(payload, SECRET))
+    index = pd.bdate_range("2025-10-01", periods=400)
+    close = pd.Series([100.0 + i / 10 for i in range(len(index))], index=index)
+    history = pd.DataFrame({"Open": close, "High": close + 5, "Low": close - 5,
+                            "Close": close, "Adj Close": close, "Volume": 1_000_000})
+    calls = []
+    saved = []
+
+    def fetch(tickers, start, end, **kwargs):
+        calls.append((list(tickers), kwargs))
+        if control_fetch_fails and "3333.T" in tickers:
+            raise RuntimeError("synthetic control provider failure")
+        return PriceHistories(raw=dict.fromkeys(tickers, history), start=start, end=end)
+
+    monkeypatch.setattr(script, "snapshot_encryption_secret", lambda: SECRET)
+    monkeypatch.setattr(script, "fetch_price_histories", fetch)
+    monkeypatch.setattr(script, "_persist_price_hashes", lambda _p, hashes, _s: saved.append(copy.deepcopy(hashes)))
+    monkeypatch.setattr(sys, "argv", ["x", "--repo-root", str(tmp_path), "--snapshot-dir", "fixtures",
+                                     "--legacy-snapshot-dir", "missing", "--output", "artifacts/report.json"])
+    baseline = None
+    if candidate_present:
+        with monkeypatch.context() as scope:
+            scope.setattr(script, "load_inflection_control_signals", lambda *_a, **_k: [])
+            assert script.main() == 0
+        baseline = json.loads((tmp_path / "artifacts/report.json").read_text())
+        old_hashes = saved[-1]
+        calls.clear()
+
+    assert script.main() == 0
+    report = json.loads((tmp_path / "artifacts/report.json").read_text())
+    assert report["signal_count"] == int(candidate_present)
+    assert report["groups"]["control"]["signal_count"] == 3
+    assert calls[0][0] == (["1111.T", BENCHMARK_TICKER] if candidate_present else [BENCHMARK_TICKER])
+    assert calls[0][1]["required"] == {BENCHMARK_TICKER}
+    assert "max_failure_ratio" not in calls[0][1]
+    assert calls[1][0] == (["3333.T"] if candidate_present else ["1111.T", "3333.T"])
+    assert report["control_price_unavailable_ticker_count"] == (int(not candidate_present) + 1 if control_fetch_fails else 0)
+    if control_fetch_fails:
+        assert report["control_price_fetch_error"] == "RuntimeError: synthetic control provider failure"
+    else:
+        assert min(saved[-1]["3333.T"]["split_only"]) == "2025-12-26"
+        control = report["groups"]["control"]
+        assert control["horizons"]["h60"]["summary"]["completed"] == 3
+        trade = next(row for row in control["horizons"]["h60"]["trades"]
+                     if row["ticker"] == "1111.T" and row["signal_date"] == "2026-01-29")
+        expected = simulate_signal({"ticker": "1111.T", "signal_date": "2026-01-29", "score": 80.0},
+                                   history, holding_days=60, round_trip_cost_pct=0.2, apply_tax=False)
+        assert trade["entry_date"] == expected.entry_date and trade["exit_date"] == expected.exit_date
+        assert trade["net_return_pct"] == expected.net_return_pct
+    if baseline is not None:
+        for name in ("early_candidate", "watch", "none"):
+            assert report["groups"][name] == baseline["groups"][name]
+        for name in ("tracked_pool_explosion_recall", "portfolio_summary", "price_unavailable_ticker_count"):
+            assert report[name] == baseline[name]
+        assert all(saved[-1][ticker] == hashes for ticker, hashes in old_hashes.items())
+        assert min(saved[-1]["1111.T"]["split_only"]) == "2026-01-19"
+    else:
+        assert report["portfolio_summary"]["entered_position_count"] == 0
 
 
 def test_main_sizes_the_window_from_cli_snapshot_dirs_and_hashes_only_the_historic_window(tmp_path, monkeypatch) -> None:
@@ -902,6 +1038,7 @@ def test_main_sizes_the_window_from_cli_snapshot_dirs_and_hashes_only_the_histor
     prefix = "scripts.rebuild_inflection_forward_validation."
     monkeypatch.setattr(prefix + "snapshot_encryption_secret", lambda: SECRET)
     monkeypatch.setattr(prefix + "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(prefix + "load_inflection_control_signals", lambda *_a, **_k: [])
     monkeypatch.setattr(prefix + "fetch_price_histories", fake_fetch)
     monkeypatch.setattr(prefix + "_persist_price_hashes", fake_persist)
     monkeypatch.setattr(
@@ -945,6 +1082,7 @@ def test_optional_benchmark_fetch_is_isolated_from_existing_guards_and_candidate
     monkeypatch.setattr(script, "snapshot_encryption_secret", lambda: SECRET)
     monkeypatch.setattr(script, "shared_price_window", lambda *_a: (START, END))
     monkeypatch.setattr(script, "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(script, "load_inflection_control_signals", lambda *_a, **_k: [])
     monkeypatch.setattr(script, "fetch_price_histories", partial(
         fetch_price_histories, max_retries=0, batch_interval_seconds=0.0, sleep=lambda _: None,
     ))
@@ -1098,6 +1236,7 @@ def _run_forward_for_coverage(tmp_path, monkeypatch, snapshot_days: list[str], c
     prefix = "scripts.rebuild_inflection_forward_validation."
     monkeypatch.setattr(prefix + "snapshot_encryption_secret", lambda: SECRET)
     monkeypatch.setattr(prefix + "load_inflection_signals", lambda *_a, **_k: [observation])
+    monkeypatch.setattr(prefix + "load_inflection_control_signals", lambda *_a, **_k: [])
     monkeypatch.setattr(
         prefix + "fetch_price_histories",
         lambda tickers, start, end, **_k: PriceHistories(raw=dict.fromkeys(tickers, history), start=start, end=end),

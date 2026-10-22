@@ -18,7 +18,9 @@ from src.screening.inflection_live import (
     _normalize_available_score,
     _pre_score,
     _technical_features,
+    preselect_candidates,
     scan_japan_inflection,
+    select_and_evaluate,
 )
 
 
@@ -97,6 +99,34 @@ def test_live_score_normalizes_actual_measurable_maximum() -> None:
     assert LIVE_MEASURABLE_MAX_SCORE == 58.0
     assert _normalize_available_score(33.0, 25.0, 0.0) == pytest.approx(100.0)
     assert _normalize_available_score(33.0, 25.0, -3.0) < 100.0
+
+
+def test_preselection_preserves_frozen_selection_and_tie_order() -> None:
+    class Financials:
+        def financial_summary(self, code: str) -> list[dict[str, object]]:
+            return []
+
+    index = pd.bdate_range("2025-01-06", periods=260)
+    prices = {
+        ticker: pd.DataFrame({"Close": [100 + i * factor for i in range(260)],
+                              "Volume": [1e6] * 240 + [2e6] * 20}, index=index)
+        for ticker, factor in [("2222.T", 0.2), ("1111.T", 0.2), ("3333.T", 0.4)]
+    }
+    meta = {ticker: {"Code": ticker[:4] + "0", "CoName": ticker, "MktNm": "Prime", "S33": "3650"}
+            for ticker in prices}
+    liquid, usable, _ = preselect_candidates(prices, meta, seed_date=str(index[-1].date()), min_turnover_jpy=1e8)
+    assert [ticker for _, ticker, _ in liquid] == ["3333.T", "2222.T", "1111.T"]
+    assert usable == set(prices)
+    selected = select_and_evaluate(
+        prices, meta, Financials(), seed_date=str(index[-1].date()), deep_candidates=2,
+        min_turnover_jpy=1e8, control_sample_size=3, fundamental_limitation="test",
+    )
+    # Frozen from the selector before extraction; equal pre-scores keep input order.
+    assert [(c.ticker, c.pre_score, c.live_normalized_score) for c in selected.candidates] == [
+        ("3333.T", 21.855049, 29.31), ("2222.T", 20.557582, 24.138),
+    ]
+    assert [c.ticker for c in selected.control_sample] == ["1111.T", "2222.T", "3333.T"]
+    assert selected.liquid_candidate_count == 3 and selected.deep_candidate_count == 2
 
 
 def test_classify_marks_overextended_before_candidate_thresholds() -> None:

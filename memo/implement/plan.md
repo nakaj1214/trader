@@ -1,109 +1,99 @@
-## 実装計画: Stage 4C — 重複処理の削減と文書整合（REQ-068〜070）
+## 実装計画: 一次選別の測定と評価の接続（REQ-001〜003）
+
+> 入力: [proposal.md](proposal.md)。前の plan.md（Stage 4C）は上書きした。内容は git 履歴に残る。
+> 順序は REQ-001 → REQ-002 → REQ-003。前のステップの検証が終わってから次へ進む。同時に直さない。
 
 ### 目的
-Q08 を「計測 → 重複が確認できた箇所だけ 1 run 内で共有」で実施し、B09 で現行仕様を説明する文書を現在の実装に合わせる。正常入力に対する投資結果・スコア・通知対象は 1 件も変えない（baseline-preserving）。Stage 4A/4B は完了済みの baseline として扱い、再設計しない。
+「爆発的に伸びる株を初期に見つける」理念に対し、今の一次選別が何を取り、何を取りこぼすかを、既存のローカル日足キャッシュだけで測れるようにする（REQ-001）。あわせて、historical で評価されていない OVEREXTENDED（REQ-002）と、forward で読まれていない CONTROL（REQ-003）を評価に接続する。**スコア・閾値・重み・分類基準は変えない**。
 
 ### スコープ
-- 含むもの: REQ-068（Position Monitor の ticker 単位の取得共有、Sheets 接続の run 内共有、評価系列の run 内共有）、REQ-069（現行仕様文書の更新）、REQ-070（Stage 4C 境界テスト）
-- 含まないもの: Growth、Stage 4A/4B の再設計、Q06 閾値、スコア・閾値・重み、永続 cache・外部 cache・DB・multiprocessing・async・並列取得・memoization framework・新依存、過去レポートの書換え、Harness infrastructure、mypy 既知 31件の解消、archive・過去 snapshot の変更
+- 含むもの: 急騰イベントの定義と段階別到達の測定、historical への OVEREXTENDED 群の追加、forward への control 群の追加（別経路）。
+- 含まないもの: proposal の「保留中」の全項目（重み・閾値の見直し、信用残の取得、約定モデル、試行台帳、PSY など）。合否判定の数値（「初期」の許容値・通知上限）。`inflection_learning.py` への CONTROL 接続。forward 側での OVEREXTENDED 群の追加（[rebuild_inflection_forward_validation.py:323](../../scripts/rebuild_inflection_forward_validation.py#L323) の群は EARLY/WATCH/NONE のまま。必要なら別件）。
 
-### 調査結果（実装の前提）
-- **[確認済]** Stage 4B は完了済み。完了報告 `.harness/reports/reliability-stage4b-2026-10-12.md` が存在し、通知状態・再送（`scripts/run_inflection_shadow.py`）、atomic write（`src/data/atomic_write.py`）、workflow の SHA 固定・lockfile 導入・PR secret 分離は dev5 コミットに含まれる。baseline はこの状態。
-- **[確認済]** Position Monitor（[run_position_monitor.py](../../scripts/run_position_monitor.py) `run`）の保有行ループは、行ごとに `fetch_split_adjusted_history(ticker, purchase_date, entry_price)`（行 329）と `fetch_today_bars(ticker)`（行 336）を `_private_call` 経由で呼ぶ。行ごとに `_recover_pending`（履歴・checkpoint 依存、取引固有）と `evaluate_position`（entry・stop・購入日依存）を実行する。同一 ticker の複数 position は取得が重複する。
-- **[確認済]** `fetch_split_adjusted_history`（[live_quote.py:92](../../src/data/live_quote.py)）は `yf.Ticker(ticker).history(start=entry_date, …)` を 1 回呼び、その frame から (a) 購入日以降の確定足 `prior`、(b) 購入日の split 補正済み entry、(c) `daily_bars=frame` を作る。provider 呼出しは `start` に依存するが、取引固有なのは entry 補正（`_later_split_factor`）と `prior` の切り出し・欠損判定（`purchase_date` 依存）で、frame 取得自体は ticker 単位。
-- **[確認済]** `fetch_today_bars(ticker)` は `_now_jst()` を内部で取り、ticker ごとに独立した 1 分足を返す。呼出し側は `bars.attrs["daily_bar"] = daily` で**共有した DataFrame を書き換える**ため、共有する場合は position ごとに copy が必須。`fetch_today_bars` は想定外例外を再 raise する（Q07）。
-- **[確認済]** Sheets（[sheets_client.py:37-49](../../src/data/sheets_client.py)）は `read_status`・`read_holdings`・`write_status` が呼出しごとに `_worksheet()`（認証＋`open_by_key`＋`worksheet`）を行う。`run()` は通常 3 回（holdings 0 件の早期終了時は `read_status`＋`read_holdings`＋`write_status([])`）。呼出し元は `run_position_monitor.py` のみ。既存テスト（`test_run_position_monitor.py`、`test_sheets_client.py`）は `scripts.run_position_monitor.read_status` などを patch しており、関数名・戻り値・失敗注入（`test_run_position_monitor.py:694`）は変えられない。
-- **[確認済]** 評価（[inflection_report.py](../../src/evaluation/inflection_report.py) の horizon ループ）は 5 horizon × 通常/ストレス cost で `simulate_signals` と `_paired_trade_rows` を呼ぶ。`simulate_signal`（[inflection_backtest.py:240](../../src/evaluation/inflection_backtest.py)）は signal ごとに `_series(history, "Open"/"Close"/"High"/"Low")` を 4 回呼び（`pd.to_numeric`・tz 除去・重複/非正値検査・sort）、`_evaluation_window` でカレンダーの `normalize().drop_duplicates().sort_values()` も行う。同じ history に対して 10 回（5×2）繰り返される。`paired_benchmark_returns`（[inflection_forward.py:176](../../src/evaluation/inflection_forward.py)）も呼出しごとに benchmark の `_series` を 2 回作る。
-- **[未確認]** 上記の重複回数・時間・メモリの実測（Step 1 で計測する）。ほか `inflection_forward.py`・`inflection_learning.py` に同種の再計算があるか（Step 1 で呼出し回数を計数して判断）。
-- **[確認済]** B09 の対象文書: 現行仕様を説明する文書は [memo/project-overview.md](../project-overview.md)・[docs/playbooks.md](../../docs/playbooks.md)（Stage 4B 追記済み）・[.env.example](../../.env.example)（17 行）。`README` は存在しない。`project-overview.md` に既知の古い記述: 「専用鍵未設定時は `JQUANTS_API_KEY` を鍵素材に利用」（行 63）、「最低限の secret は `JQUANTS_API_KEY`」（行 93）、「標準セットアップ `pip install -e ".[dev]"`」（`uv.lock` 利用に未対応）、`position_monitor.yml` の時刻「9:03/12:35/15:35」（行 102、現行 9:20/12:50）。過去記録（`memo/analysis/`・`memo/research/`・`.harness/reports/` 過去分・`proposal_req*.md`・`plan_req*.md`）は変更しない。これらは現行 workflow・`.env.example`・コードと突き合わせて Step 6 で最終確定する。
+### 確認した現状（調査結果）
+- `select_and_evaluate`（[inflection_live.py:660](../../src/screening/inflection_live.py#L660)）の一次選別（流動性 → `_pre_score` 順位）は関数の内側の局所変数で、順位を外に出していない。段階別の判定には抽出が要る（Step 1）。
+- historical は `reconstruct_scan` → `collect_signals` → `_lag_report` の流れで、群は `GROUPS`（[:376](../../src/evaluation/inflection_historical.py#L376)）を回して作る。OVEREXTENDED は `collect_signals` で signal に入るが、`_lag_report` の群ループに無く評価されない（[:733](../../src/evaluation/inflection_historical.py#L733)）。
+- 評価開始日は `default_signal_start`（[:397](../../src/evaluation/inflection_historical.py#L397)）。旧 summary では 2026-02-16 から 94 日。ローカルキャッシュの日足は 2024-10-09〜2026-07-03（約 422 営業日）。
+- forward の loader `load_inflection_signals`（[inflection_forward.py:40](../../src/evaluation/inflection_forward.py#L40)）は `candidates` だけを読む。snapshot の `control_sample` は schema 5 以降にある。rebuild script は観測銘柄の価格取得・価格 hash・市場別ベンチマークを `all_observations` から作る（[:206-258](../../scripts/rebuild_inflection_forward_validation.py#L206)）。
+- 既存の評価機構は再利用する: 売買は `simulate_signals`、群の指標は `_build_group_report`（[inflection_report.py:334](../../src/evaluation/inflection_report.py#L334)）。新規の損益計算は書かない。
+- ローカルに `SNAPSHOT_ENCRYPTION_KEY` が無く、実 snapshot は復号していない [未確認: 実 snapshot の `control_sample` の件数]。
 
 ### 影響範囲（変更/追加予定ファイル）
-計測で重複が確認できた項目のみ変更する。効果が小さい項目は「変更不要」と報告する。
-- [scripts/run_position_monitor.py](../../scripts/run_position_monitor.py): ticker 単位の市場データ取得の run 内共有（取引固有計算は position ごとに独立）
-- [src/data/live_quote.py](../../src/data/live_quote.py): 履歴 frame の取得と購入日固有の切り出し・entry 補正の分離（必要な場合のみ。公開関数のシグネチャと戻り値は維持）
-- [src/data/sheets_client.py](../../src/data/sheets_client.py): 1 run 内の spreadsheet 共有（context manager。外では従来どおり呼出しごとに接続）
-- [src/evaluation/inflection_backtest.py](../../src/evaluation/inflection_backtest.py)・[inflection_report.py](../../src/evaluation/inflection_report.py)・[inflection_forward.py](../../src/evaluation/inflection_forward.py): 正規化済み系列の run 内共有（immutable）。計測で効果が小さければ変更しない
-- [memo/project-overview.md](../project-overview.md)、[docs/playbooks.md](../../docs/playbooks.md): B09 の文書更新（`.env.example` は照合のみ。不一致は報告し、値は変更しない）
-- テスト: `tests/test_run_position_monitor.py`、`tests/test_live_quote.py`、`tests/test_sheets_client.py`、`tests/test_inflection_backtest.py`、`tests/test_inflection_forward.py` を拡張。`tests/conftest.py` は変更しない
-- 計測用の一時スクリプトと before/after の結果 JSON は `.harness/runtime/stage4c/`（transient）に置く。リポジトリに恒久的な計測ツールは追加しない
+- `src/screening/inflection_live.py`: 一次選別の抽出（挙動不変の純リファクタ）。
+- `src/evaluation/inflection_event_recall.py`（新規）: イベント抽出・段階判定・集計。
+- `src/evaluation/inflection_historical.py`: `GROUPS` に OVEREXTENDED を追加。`build_backtest_report` に `event_recall` キーを追加（追加のみ）。
+- `scripts/run_inflection_historical_backtest.py`: 例示銘柄の指定オプション（既定は空）。
+- `src/evaluation/inflection_forward.py`: control 用の別 loader を追加。
+- `scripts/rebuild_inflection_forward_validation.py`: control 群の評価を追加（別キー）。
+- テスト: `tests/test_inflection_live.py`（抽出の同値性）、`tests/test_inflection_event_recall.py`（新規）、`tests/test_inflection_historical.py`、`tests/test_inflection_forward.py`、必要なら `tests/test_run_historical_backtest.py`。
+- `memo/project-overview.md`: 評価節に新しい出力キーを 1 段落で追記。
 
 ### 実装ステップ
 
-実装順: 計測（before 固定）→ Monitor 取得共有 → Sheets 共有 → 評価系列共有 → 境界テスト整理 → B09 → 検証・報告。各 Step は「対象テスト → 直前までの回帰」を通してから次へ進む。
+#### Step 1: 一次選別の抽出（REQ-001 の前提・挙動不変）
+- [ ] `select_and_evaluate` の「技術特徴 → 流動性 → pre_score 順位」の部分を関数に切り出し、順位つきの流動性通過リストと `technical_usable`・業種別リターンを返す。`select_and_evaluate` はそれを呼ぶだけにする。
+- [ ] 引数・戻り値・並び順（同点の扱いを含む）を変えない。
+**検証**: 既存の `tests/test_inflection_live.py` が無修正で通る。切り出す前後で同じ合成データの `Selection` が一致する同値性テストを 1 件追加する。
 
-#### Step 1: 計測と before の固定（REQ-068）
-- [ ] fixed-size synthetic/fake の計測ハーネス（一時スクリプト）を `.harness/runtime/stage4c/` に作る。外部通信は `tests/conftest.py` 相当の遮断を前提に、全 provider/Sheets を fake にする
-- [ ] Monitor: N ticker × M position（同一 ticker に複数購入日を含む。例: 20 position、うち 6 ticker が 2〜4 位置）で、`fetch_split_adjusted_history`・`fetch_today_bars` の呼出し数（総数／ticker 別）、`gspread.authorize` と `open_by_key` の回数、read/write 回数を計数する
-- [ ] 評価: 固定サイズ synthetic（例: 50 signal × 5 horizon × 2 cost）で `_series`、`_evaluation_window` のカレンダー正規化、`paired_benchmark_returns` の benchmark 正規化の呼出し回数を計数（`mock.patch` のラッパで計数。実行ロジックは変えない）。実行時間（`time.perf_counter`）と peak memory（`tracemalloc`）も記録
-- [ ] **before の出力そのもの**を保存する: Monitor の全 rows・通知対象・書込み内容、評価レポート dict（JSON 化）、portfolio/learning 入力。Step 2 以降の完全一致比較の基準にする
-- [ ] 計測結果から、変更する項目と「変更不要」とする項目を決め、以降の Step に反映する（効果が小さい項目は無理に変更しない）
-**検証**: before の呼出し回数が具体的な数値で記録され、before 出力が保存されている。コード変更なし。
+#### Step 2: 急騰イベントの抽出（REQ-001）
+- [ ] 新規 `inflection_event_recall.py` に、終値の系列からイベントを返す純関数を作る。定義は proposal の確定どおり（直前 120 営業日の最安終値の 2 倍以上になった最初の日を成立日、窓の最安終値の日を底（同値は最も早い日）、底から 120 営業日は同一銘柄の新イベントを作らない、初期は底から終値 +50% 到達日の前日まで）。
+- [ ] 入力は `data.panel.evaluation_histories()` の Close（split 調整済み）。
+**検証**: 合成系列のテストで、(a) 2 倍に届かない系列はイベントなし、(b) 長く続く上昇は 1 件、(c) +50% 到達日当日は初期に含めない、(d) 底の同値は最も早い日、(e) 将来の値を変えても過去日の判定が変わらない。
 
-#### Step 2: Position Monitor の ticker 単位の取得共有（REQ-068 / 受入: 同一 ticker で取得 1 回）
-- [ ] `run` 内にだけ存在する ticker 単位の共有（run のローカル dict。モジュールグローバルにしない）を作る。`fetch_today_bars(ticker)` は ticker ごとに 1 回。**成功値と失敗（例外）の両方を保存**し、同一 ticker の各 position は同じ結果を受ける（例外は同じ種類を再 raise。想定外例外は従来どおり行ごとの error 行になり、他 ticker の position に伝播しない）
-- [ ] 共有した `bars` は position ごとに `copy()` して `attrs["daily_bar"]` などの書込みを各 position に閉じる（cross contamination 防止）
-- [ ] 履歴 frame: `yf.Ticker(...).history(start=…)` は ticker ごとに 1 回（同一 ticker の最も早い購入日から）。購入日固有の切り出し（`prior_mask`）、`expected_dates` 欠損判定、split 補正済み entry（`_later_split_factor`）、`SplitAdjustedHistory` の組立は position ごとに独立して実行する。frame は共有 DataFrame を直接渡さず、position ごとに切り出して copy する。**同一入力で `fetch_split_adjusted_history` を単体で呼んだ場合と結果が一致すること**を保つ（Step 1 の before 出力と比較）
-- [ ] 取得を共有できない条件（購入日が異なると結果が変わり得る箇所）が見つかった場合は、その箇所は共有せず報告する
-- [ ] 気配時刻: 共有により同一 ticker の position が同じ `bars`（同一時刻）を使うことを、結果への影響（現状は position ごとに異なり得る）として報告。正常入力の結果が変わる場合は原因を調査して差を許容しない
-**検証**: 同一 ticker 複数 position で provider 呼出しが 1 回。異なる購入日の rows が before と完全一致。ある ticker の失敗は同一 ticker の position だけに及び、他 ticker は影響なし。共有 DataFrame への書込みが他 position に波及しない。
+#### Step 3: 段階別到達と集計（REQ-001）
+- [ ] 日ごとに Step 1 の関数で、価格あり → 流動性通過 → 上位 25 を判定し、イベントごとに「初めて各段階に入った日」「その日の底からの上昇倍率」「+50% 到達日との前後」を記録する。日足が 21 本未満の日は評価しない。`near_52w_high` が効かない期間（上場済み・新規とも 252 本未満）は `high_bonus_available=false` を付ける。
+- [ ] EARLY/WATCH の段階は `collect_signals` の signal から取る。底が `default_signal_start` より前のイベントは「未評価」とし、検出にも未検出にも数えず別の件数で出す。
+- [ ] 損益は、各段階の初到達日を signal として既存の `simulate_signals`（保有 60 営業日、通常コスト、次の始値で entry）に渡す。1 日あたりの通知件数（EARLY+WATCH）も集計する。
+- [ ] 出力に、価格が J-Quants の分割調整済み終値で本番（yfinance の Adj Close）と異なること、変形 B（60 本判定）は比較資料であり現行ロジック（252 本必須）を変えていないことを注記する。
+**検証**: 合成データで「100→149 まで上がってから WATCH → 翌日 150」が、検出済み・上昇倍率 1.49 として記録される。観測一覧に無い急騰銘柄が分母に入る。底が開始日より前のイベントが「未評価」になる。既存の `tracked_pool_explosion_recall` と `tests/test_inflection_recall.py` は無修正。
 
-#### Step 3: Sheets 接続の run 内共有（REQ-068）
-- [ ] `sheets_client` に context manager（例: `shared_spreadsheet()`）を追加。内部で認証と `open_by_key` を最大 1 回行い、`with` ブロック内の `_worksheet(name)` はその spreadsheet から worksheet を取得する。ブロック外・未使用の呼出しは従来どおり（既存テスト・他の呼出しに影響なし）
-- [ ] `run_position_monitor.run` は `with shared_spreadsheet():` で read/write を囲む。公開関数 `read_holdings`・`read_status`・`write_status` のシグネチャ・戻り値・`assert_production_writer`・batch 更新（`batch_update` の requests）・失敗時の例外種別は変更しない
-- [ ] 接続の失敗はキャッシュしない（失敗後の再試行・認証エラーは従来どおり各呼出しに伝わる）。長寿命グローバル接続・pool は作らない
-**検証**: 1 run の `gspread.authorize`／`open_by_key` が 3 → 1（holdings 0 件の経路も確認）。`test_sheets_client.py` の既存ケース無変更で PASS。認証エラー・書込み失敗・C07 writer 排他（`assert_production_writer`）の挙動が変わらない。書込み内容が before と一致。
+#### Step 4: レポートへの統合と CLI（REQ-001）
+- [ ] `build_backtest_report` に `event_recall` キーを追加する（価格だけの段階は lag に依らず 1 回、EARLY/WATCH の段階は lag ごと）。既存キーは変えない。`summary_report`・`_summary_only` が新キーを落とさず、イベント行の全件は full 出力だけに入るようにする。
+- [ ] CLI に `--event-focus`（銘柄のカンマ区切り、既定は空）を足し、指定銘柄のイベントの段階別到達日を summary に出す。
+**検証**: `tests/test_run_historical_backtest.py` の既存ケースが通り、`event_recall` が summary に入る。
 
-#### Step 4: 評価系列・統計の run 内共有（REQ-068）
-- [ ] Step 1 の計測で重複が有意な場合のみ実施。共有対象は正規化済みの**読み取り専用**の中間結果（例: 履歴ごとの `_series` 4 本、正規化済みカレンダー、benchmark の Open/Close）。`pd.Series` をそのまま共有せず、書込み不可（copy-on-use または `values` の read-only 化）にして後続の相互影響を防ぐ。浮動小数点の演算順序は変えない（同じ関数を同じ順序で呼ぶだけで、結果の再利用に限る）
-- [ ] 共有の単位は 1 つのレポート構築（`inflection_report` の horizon ループ）内に限る。呼出し側で一度だけ準備し、既存関数にはオプション引数で渡す（既存の呼出し・シグネチャは後方互換のまま。引数省略時は従来動作）。モジュールレベルの cache や `lru_cache` は使わない
-- [ ] 効果が小さい（呼出し削減が構造的に意味を持たない、またはメモリ増が上回る）場合は変更せず「変更不要」と報告する
-**検証**: 共有後も `simulate_signals`・`paired_benchmark_returns` の出力（trade rows、benchmark 列、レポート dict）が before と完全一致（キー順・値）。`_series` の呼出し回数が構造的に減る。共有物を変更しようとしても例外になる／元の history が変化しない。
+#### Step 5: 実キャッシュでの確認（REQ-001・手動）
+- [ ] 実キャッシュ（読み取りのみ）で `--event-focus` に例示 8 銘柄を指定して実行し、結果を `.harness/reports/` に記録する。外部 API・暗号化 snapshot は使わない。
+- [ ] 試作（`.harness/reports/trader-gap-verification-claude/analysis/funnel_variantB.json`）と比べ、食い違う到達日は一致させず、理由（高値加点の判定本数・調整価格の差）を記録する。
+**検証**: 実行が終了コード 0 で完了し、ピークメモリと所要時間を記録する（旧 historical は約 1.1GB）。
 
-#### Step 5: Stage 4C 境界テスト（REQ-070）
-- [ ] Step 2〜4 で追加した境界テストを一覧化し、受入条件の各項目に対応を付ける: 同一 ticker 複数 position で価格取得 1 回／異なる購入日の結果維持／cross contamination なし／provider 失敗の非伝播／Sheets 共有後の結果維持／最適化前後の評価結果一致
-- [ ] before 出力との比較は、保存した期待値または「共有を使わない経路」との比較で durable なテストにする（`.harness/runtime/` のファイルに依存しない）
-- [ ] B09 のために文書値を固定する大量テストは追加しない。workflow 時刻・secret 名などは、既存の `tests/test_workflow_reliability.py` の仕組みで自動照合が合理的な項目のみ
-**検証**: 外部通信試行数 0、保存済み snapshot・archive 変更 0。
+#### Step 6: OVEREXTENDED 群を historical に追加（REQ-002）
+- [ ] `GROUPS` に `"OVEREXTENDED"` を足す（群キーは `overextended`）。
+- [ ] 既存テストの群キー集合の期待値（[test_inflection_historical.py:845](../../tests/test_inflection_historical.py#L845)）は、意図した追加として更新する（他は書き換えない）。
+**検証**: 群ごとの signal_count の合計が signal 総数と一致するテストを追加する。既存 4 群の数値が変わらないことを同じ合成データで確認する。OVEREXTENDED が `overextended` 群に入るテストを追加する。
 
-#### Step 6: B09 — 現行仕様文書の整合（REQ-069）
-- [ ] 現行 workflow・`.env.example`・コードを正として、`memo/project-overview.md` と `docs/playbooks.md` を項目ごとに照合する: セットアップ（必須環境変数、`JQUANTS_PLAN`/`JQUANTS_DATA_DELAY_WEEKS` と validation、`SNAPSHOT_ENCRYPTION_KEY` の扱い、Slack、Google Sheets、EDINET key）、Actions（一覧・schedule・dispatch・concurrency・permissions・secret・`uv.lock`・Action SHA）、Forward Validation（PR の secret 分離・fork）、Position Monitor（実行時刻・stop 回収・checkpoint・incomplete・writer 制限・concurrency・通知状態）、通知（snapshot 生成→保存→Git 反映→Slack→通知状態→再送。exactly-once を保証しない）、Watchdog、provider 障害分類、atomic write（単一ファイルのみ。複数成果物の transaction ではない）、EDINET（コード接続済み／test 済み／live・historical・learning 利用／実 API 確認の有無）
-- [ ] 各事実は `grep`／workflow・コードの Read で確認してから書く（推測を事実として書かない。確認できないものは「未確認」と書く）。機能状態は implemented／tested with fake・unit test／integration not verified／production enabled／production unverified を自然な日本語で区別する
-- [ ] 更新は現行仕様を説明する文書の該当箇所に限り、最小 diff で行う（全面書換えしない）。過去記録は変更しない。判断に迷う文書は変更せず報告する
-- [ ] 更新した各文書について「何が古かったか」「何に合わせたか」を表にまとめる（レポート用）。`.env.example` との不一致は報告のみ
-**検証**: `git diff --stat` が現行仕様文書だけであること、過去記録（`memo/analysis/`・`memo/research/`・`.harness/reports/` の既存ファイル・`proposal_req*`・`plan_req*`）に今回の差分がないこと（作業開始前にユーザーが削除済みの `proposal_req*` / `plan_req*` の退避ファイルは今回の差分に含めない。git 履歴から復元可能）。文書記載の時刻・secret 名・環境変数が workflow・`.env.example` と一致。
+#### Step 7: CONTROL を forward 評価に別経路で接続（REQ-003）
+- [ ] `inflection_forward.py` に、`control_sample` を読む別 loader を追加する（復号・メタデータ・schema の検証は既存と同じ基準。schema 5 未満など `control_sample` が無い snapshot は空を返し、エラーにしない）。既存 loader の戻り値・挙動は変えない。
+- [ ] rebuild script で control 群を `groups["control"]` として別キーで評価する。`all_observations` には混ぜない（recall・portfolio の入力を変えない）。
+- [ ] 価格取得の対象に control の銘柄を加える。**価格 hash の `starts` は、既存どおり `all_observations` だけから計算し、control だけの銘柄の分は別に足す**（候補にも control にも出る銘柄の起点が動くと、保存済みの hash の窓がずれて改ざん検知が壊れるため）。
+- [ ] `ticker_markets` と市場別ベンチマークも control の行で補う。
+**検証**: fake の snapshot で、control 群が candidate 群と同じ entry/exit 規則で計算される。`control_sample` の無い旧 schema では群が空でエラーにならない。既存群と既存の price hash の値が、control を足す前後で一致する。`tests/test_inflection_forward.py` の既存ケースは無修正で通る。
 
-#### Step 7: 全体検証と報告
-- [ ] Q08 対象テスト → Stage 4C 境界テスト → Stage 4A 回帰 → Stage 4B 回帰 → 第1〜第3段階回帰 → 全テスト（約7分）→ coverage → ruff → mypy（既知 31件を内容で比較し新規 0）
-- [ ] 外部通信試行数、`git diff --check`、task 対象の minimal diff guard、保存済み snapshot 差分、archive 差分、`uv.lock` 差分（なし）を確認
-- [ ] Step 1 の before 出力と after を比較し、candidate／EARLY_CANDIDATE／classification／score／feature 値／stop 判定／notification 対象／outcome／portfolio／benchmark／learning 入力・出力が完全一致であることを確認。1 件でも差があれば原因を調査（結果差を許容しない）
-- [ ] Harness 正式入口は、既存の `plan.md`/`proposal.md` 全面差替えによる停止かどうかを区別して報告（Harness infrastructure は変更しない）
-- [ ] 独立レビュー（結果同等性、cross contamination、失敗の誤伝播、Sheets 排他・retry、文書の誤記・過剰主張）。重大な問題のみ修正して再検証
-- [ ] `.harness/reports/reliability-stage4c-2026-10-12.md` に報告（形式は proposal の「完了報告」1〜9）。Growth へ進まず停止
+#### Step 8: 文書と最終確認
+- [ ] `memo/project-overview.md` の評価節に、`event_recall`・`overextended` 群・`control` 群を各 1〜2 行で追記する。
+- [ ] 下記のテスト/検証方針を実行する。
 
 ### 例外・エラーハンドリング方針
-- 共有は「取得結果（成功値または例外）を ticker ごとに run 内で 1 回だけ作り、position ごとに独立に消費する」。失敗は同一 ticker の position に一貫して伝え、他 ticker・他 position の固有計算には伝播させない。想定外例外（Q07）を握り潰さない。
-- Sheets は共有に失敗しても従来の挙動（呼出しごとに接続）に戻れる構造にし、接続失敗をキャッシュしない。
-- 共有する中間結果は読み取り専用（copy または書込み不可）。可変 DataFrame を position・horizon 間で共有しない。
-- 公開ログに ticker・保有明細・URL・秘密情報を出さない（Q02/Q07 を維持）。
+- 入力が足りないときは推測で埋めない。日足が不足する日・価格のない銘柄は段階判定から外し、件数を別に出す（`excluded_no_price` と同じ考え方）。
+- control の復号失敗・不正な行は既存と同じく fail closed（`SnapshotLoadError`）。`control_sample` が無いだけなら空として扱う。
+- 分類基準・スコアの数値を変えない。既存の出力キーを削除・改名しない。
 
 ### テスト/検証方針
-- 自動テスト: `uv run --offline pytest -q -p no:cacheprovider tests/<対象>` → 全テスト `uv run --offline pytest -q -p no:cacheprovider` → `uv run --offline ruff check src scripts tests` → `uv run --offline mypy src scripts`
-- 結果同等性: Step 1 の before 出力と after の完全一致（`==`、キー順を含む JSON 比較）。構造指標（provider call 数・Sheets connection 数・`_series` 呼出し数）を before/after の数値で報告。実行時間・peak memory は参考値（小さな差を根拠にしない）。
-- 手動確認観点: 文書の各事実が workflow・`.env.example`・コードと一致していること、過去記録が無変更であること。実 GitHub Actions・実 Slack・実 provider・実 Google Sheets は確認不能（報告で分離）。
+- 自動テスト（対象を絞る。全体は最後に 1 回）:
+  - `.venv/bin/python -m pytest tests/test_inflection_live.py tests/test_inflection_event_recall.py tests/test_inflection_recall.py tests/test_inflection_historical.py tests/test_run_historical_backtest.py tests/test_inflection_forward.py -q`
+  - `.venv/bin/ruff check src scripts tests`、現行経路の mypy（`.github/workflows/test.yml` の設定どおり）
+- 手動確認観点: Step 5 の実キャッシュ実行（外部通信なし）で、例示 8 銘柄の到達日と、イベント件数（2 倍イベント 927 件前後）が試作と大きく矛盾しないこと。矛盾する場合は定義の差を記録する。
+- 既存の snapshot・`artifacts/`・`.data/`・archive は書き換えない。
 
 ### リスクと対策
-1. リスク: 履歴 frame を ticker 単位で共有すると、`start` が異なる従来の取得と微妙に結果が変わる（欠損判定・`daily_bars` の範囲） → 対策: 共有 frame を購入日で切り出して同一にし、単体呼出しとの完全一致を比較テストで固定。一致しない箇所は共有しない。
-2. リスク: 共有 `bars` の `attrs` や DataFrame を一方が書き換える → 対策: position ごとに copy。cross contamination テストを追加。
-3. リスク: Sheets の spreadsheet 共有で retry・認証エラー・writer 排他の挙動が変わる → 対策: context manager 内に限定、失敗はキャッシュしない、公開関数のシグネチャ・batch 内容を変えない。既存テスト無変更で PASS。
-4. リスク: 評価系列の共有で浮動小数点順序や dtype が変わり結果が微小に変わる → 対策: 同じ演算を同じ順序で行い、結果の再利用に限定。before 出力との完全一致比較。差が出れば採用しない。
-5. リスク: 計測の結果、重複が小さく最適化の効果が薄い → 対策: 無理に変更せず「変更不要」と報告（依頼文が許容）。
-6. リスク: 文書更新で未確認の事実を断定する、または過去記録を誤って書き換える → 対策: 各事実を workflow・コードで確認してから書く。差分を現行仕様文書に限定し、過去記録の差分 0 を確認。
-7. リスク: 作業ツリーに過去ファイルの削除などの未コミット差分があり、task 対象の差分ガードが判定しにくい → 対策: 変更ファイルを列挙して task 対象を指定。Harness の既存停止理由は区別して報告。
+1. リスク: 約 400 日 × 約 4,400 銘柄の価格だけの段階判定が重い（旧 historical は 94 日 × 2 lag で約 1.1GB）→ 対策: 日足から日ごとにフレームを作る既存の `frames_as_of` を使い、価格だけの段階は lag に依らず 1 回にする。実測値を Step 5 で記録し、重すぎれば期間を絞るオプションを足す。
+2. リスク: 抽出（Step 1）で並び順や同点の扱いが変わり、本番の候補が変わる → 対策: 同値性テストと既存テスト無修正を必須にする。差が出たら抽出をやめ、新モジュール側で同じ式を呼ぶ形に切り替える。
+3. リスク: control の銘柄を価格取得・hash に足すことで、保存済み hash の窓が動く、または yfinance の取得件数が増えて forward workflow が遅くなる → 対策: 既存銘柄の `starts` は `all_observations` だけから計算する（Step 7）。取得件数の増加（1 日 25 銘柄 × snapshot 日数）を実行前に見積もり、`forward_validation.yml` のタイムアウト内か確認する [未確認]。
+4. リスク: イベント定義（2 倍・120 営業日・底・重複）の細部で件数が大きく変わる → 対策: 定義は proposal で確定済み。パラメータは定数で 1 か所に置き、レポートの `definition` に出力する。
+5. リスク: キャッシュが約 1.7 年で、52 週高値の加点が効かない期間が長い → 対策: `high_bonus_available` で区別して出し、結論に混ぜない。
 
 ### 完了条件
-- [ ] REQ-068: before/after の provider call 数・Sheets connection 数が具体的な数値で報告され、重複が構造的に減った（または「変更不要」の根拠が示された）。正常入力の全指標が完全一致。禁止された最適化（永続 cache・並列・新依存等）を導入していない
-- [ ] REQ-069: 現行仕様文書が現行コード・workflow・`.env.example` と一致し、機能状態が区別されている。exactly-once・複数成果物の transaction を主張していない。過去記録は無変更。更新した文書ごとの「古かった点／合わせた先」と、変更しなかった文書が報告されている
-- [ ] REQ-070: 境界テストが受入条件に対応。外部通信試行数 0、保存済み snapshot・archive 変更 0
-- [ ] 全テスト PASS、ruff PASS、mypy 新規エラー 0（既知 31件の内容差分なし）、`uv.lock` 差分なし、`git diff --check` と task 対象 minimal diff guard の結果が報告されている
-- [ ] Stage 4A/4B・第1〜第3段階の回帰 PASS
-- [ ] Stage 4C レポート作成後に停止（Growth 未着手）
+- [ ] REQ-001: 受入条件 1〜5 を満たす（合成データのテストと、実キャッシュでの例示 8 銘柄の出力）。
+- [ ] REQ-002: historical レポートに `overextended` 群が出て、群の件数の合計が signal 総数と一致し、既存 4 群の数値が不変。
+- [ ] REQ-003: forward レポートに `control` 群が別キーで出て、既存群と価格 hash の値が不変。旧 schema でエラーにならない。
+- [ ] 対象テストと ruff・mypy が通る。スコア・閾値・分類基準の差分がない（`git diff` で確認）。

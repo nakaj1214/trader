@@ -43,6 +43,30 @@ def load_inflection_signals(
     encryption_secret: str,
     classifications: tuple[str, ...] = ("EARLY_CANDIDATE",),
 ) -> list[dict[str, Any]]:
+    """Load candidate observations without mixing in the control cohort."""
+    return _load_inflection_rows(
+        snapshot_dir, encryption_secret=encryption_secret, classifications=classifications, source="candidates",
+    )
+
+
+def load_inflection_control_signals(
+    snapshot_dir: Path,
+    *,
+    encryption_secret: str,
+) -> list[dict[str, Any]]:
+    """Load controls separately, including tickers also observed as candidates."""
+    return _load_inflection_rows(
+        snapshot_dir, encryption_secret=encryption_secret, classifications=("CONTROL",), source="control_sample",
+    )
+
+
+def _load_inflection_rows(
+    snapshot_dir: Path,
+    *,
+    encryption_secret: str,
+    classifications: tuple[str, ...],
+    source: str,
+) -> list[dict[str, Any]]:
     """Return one immutable signal row per market-data date/ticker.
 
     Only encrypted ``YYYY-MM-DD.enc`` snapshots are accepted. Any encrypted
@@ -86,16 +110,17 @@ def load_inflection_signals(
         elif strategy_version != expected_strategy_version or _schema_family(schema_version) != expected_schema_family:
             raise SnapshotLoadError(f"Mixed strategy/schema versions: {path.name}")
 
-        candidates = payload.get("candidates")
+        label = "control" if source == "control_sample" else "candidate"
+        candidates = payload.get(source, [] if source == "control_sample" else None)
         if not isinstance(candidates, list):
-            raise SnapshotLoadError(f"Invalid candidates payload: {path.name}")
+            raise SnapshotLoadError(f"Invalid {source} payload: {path.name}")
         for candidate in candidates:
             if not isinstance(candidate, dict):
-                raise SnapshotLoadError(f"Invalid candidate row: {path.name}")
-            classification = str(candidate.get("classification") or "")
+                raise SnapshotLoadError(f"Invalid {label} row: {path.name}")
+            classification = "CONTROL" if source == "control_sample" else str(candidate.get("classification") or "")
             ticker = str(candidate.get("ticker") or "")
             if not ticker:
-                raise SnapshotLoadError(f"Candidate ticker missing: {path.name}")
+                raise SnapshotLoadError(f"{label.capitalize()} ticker missing: {path.name}")
             if classification not in classifications:
                 continue
             key = (market_date, ticker)
@@ -103,13 +128,13 @@ def load_inflection_signals(
                 continue
             raw_score = candidate.get("score")
             if isinstance(raw_score, bool) or raw_score is None:
-                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
+                raise SnapshotLoadError(f"Invalid {label} score: {path.name}:{ticker}")
             try:
                 score = float(raw_score)
             except (TypeError, ValueError) as exc:
-                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}") from exc
+                raise SnapshotLoadError(f"Invalid {label} score: {path.name}:{ticker}") from exc
             if not isfinite(score) or not 0.0 <= score <= 100.0:
-                raise SnapshotLoadError(f"Invalid candidate score: {path.name}:{ticker}")
+                raise SnapshotLoadError(f"Invalid {label} score: {path.name}:{ticker}")
             signals[key] = {
                 "ticker": ticker,
                 "signal_date": market_date,

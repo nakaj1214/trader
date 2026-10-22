@@ -129,6 +129,23 @@ def test_no_scan_days_is_an_error(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "No scan days" in capsys.readouterr().err
 
 
+def test_event_focus_is_explicit_and_reaches_the_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _write_cache(tmp_path)
+    seen: list[tuple[str, ...]] = []
+
+    def build(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        seen.append(kwargs["event_focus"])
+        return {"lags": {"disclosure": {"kill_criterion": {"verdict": "incomplete"}}},
+                "lag_comparison": None, "event_recall": {"focus": {"1111.T": []}}}
+
+    monkeypatch.setattr(cli, "build_backtest_report", build)
+    assert main(["--repo-root", str(tmp_path), "--signal-start", DATES[-1],
+                 "--event-focus", "1111.T, 2222.T,1111.T"]) == 0
+    assert seen == [("1111.T", "2222.T")]
+    report = json.loads((tmp_path / "artifacts/inflection_historical_backtest_summary.json").read_text())
+    assert "1111.T" in report["event_recall"]["focus"]
+
+
 class ByCodeClient:
     def __init__(self, adj_close: dict[str, float]) -> None:
         self.adj_close = adj_close

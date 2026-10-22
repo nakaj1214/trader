@@ -60,6 +60,7 @@ jobs:
             src/evaluation/exit_rules.py \
             src/evaluation/explosion.py \
             src/evaluation/inflection_backtest.py \
+            src/evaluation/inflection_event_recall.py \
             src/evaluation/inflection_forward.py \
             src/evaluation/inflection_historical.py \
             src/evaluation/inflection_learning.py \

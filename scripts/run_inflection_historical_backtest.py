@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", help="fetch end (default: shared default range)")
     parser.add_argument("--signal-start", help="first scan day (default: price and fundamentals warm-up)")
     parser.add_argument("--min-independent", type=int, default=DEFAULT_MIN_INDEPENDENT)
+    parser.add_argument("--event-focus", default="", help="comma-separated event-focus tickers, e.g. 285A.T,6227.T")
     parser.add_argument("--output", default="artifacts/inflection_historical_backtest.json")
     parser.add_argument(
         "--include-trades",
@@ -133,11 +134,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if checks and all(check["constant"] for check in checks) else 1
 
     days = signal_days(data, args.signal_start)
-    if not days:
-        print("No scan days: the cache lacks 252 days of prices or enough fundamentals history.", file=sys.stderr)
-        return 1
     report = build_backtest_report(
-        data, days, min_independent=args.min_independent, include_trades=args.include_trades
+        data, days, min_independent=args.min_independent, include_trades=args.include_trades,
+        event_focus=tuple(dict.fromkeys(ticker.strip() for ticker in args.event_focus.split(",") if ticker.strip())),
     )
 
     # The aggregates are small and are the result, so they are written first: a crash while writing the huge

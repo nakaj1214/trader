@@ -17,6 +17,7 @@
 | 022 | モメンタム相対化（TOPIX/業種相対）のshadow A/B/C比較 | 方針未確定（着手前に決めることが7項目残っている） | `memo/implement/plan_req022.md` |
 | 017 | `deep_candidates`本数比較 | 未計画・データ蓄積待ち | なし（計画不要、データが貯まってから着手） |
 | 020 | スコア閾値・重みのband別検証 | 未計画・データ蓄積待ち | なし（同上） |
+| （2026-10-21）一次選別の測定 REQ-001〜003 | 全市場の急騰イベントの段階別到達・OVEREXTENDED 群（historical/forward）・forward の CONTROL 群。番号は過去の REQ-001〜003 とは別 | **実装済み**（2026-10-22。`review.md` 末尾、全テスト PASS） | `memo/implement/plan.md` |
 | 027 | 実売買履歴（Trade Ledger） | 意図的に凍結（実売買が発生するまで着手しない） | `memo/implement/plan_req027.md` |
 
 ## 推奨実装順

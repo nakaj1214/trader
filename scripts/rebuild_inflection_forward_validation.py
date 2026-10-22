@@ -33,6 +33,7 @@ from src.evaluation.inflection_backtest import (
 from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
     MARKET_BENCHMARK_TICKERS,
+    load_inflection_control_signals,
     load_inflection_signals,
 )
 from src.evaluation.inflection_portfolio import simulate_portfolio
@@ -139,7 +140,7 @@ def _persist_price_hashes(
     payload: dict[str, Any] = {
         "schema_version": PRICE_HASH_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
-        "hashes": hashes,
+        "hashes": {**previous.get("hashes", {}), **hashes},
         "revisions": changed,
     }
     atomic_write_text(path, encrypt_json(payload, secret))
@@ -207,7 +208,8 @@ def main() -> int:
         encryption_secret=encryption_secret,
         classifications=("EARLY_CANDIDATE", "WATCH", "NONE", "OVEREXTENDED"),
     )
-    if not all_observations:
+    controls = load_inflection_control_signals(snapshot_dir, encryption_secret=encryption_secret)
+    if not all_observations and not controls:
         print("Encrypted snapshots exist but contain no tracked inflection observations yet.")
         return 0
 
@@ -229,6 +231,20 @@ def main() -> int:
     }
     if fetched.unavailable:
         print(json.dumps({"price_unavailable_ticker_count": fetched.unavailable}))
+    control_histories = dict(histories)
+    control_split_histories = dict(split_histories)
+    control_price_error = None
+    extra_control_tickers = sorted({str(row["ticker"]) for row in controls} - set(observed))
+    if extra_control_tickers:
+        try:
+            control_prices = fetch_price_histories(
+                extra_control_tickers, *window, cache_path=repo_root / DEFAULT_CACHE_RELATIVE_PATH,
+            )
+        except RuntimeError as exc:
+            control_price_error = f"{type(exc).__name__}: {exc}"
+        else:
+            control_histories.update(control_prices.total_return())
+            control_split_histories.update(control_prices.split_only())
     market_benchmarks = {BENCHMARK_TICKER: benchmark_history}
     market_benchmark_error = None
     for ticker in sorted(set(MARKET_BENCHMARK_TICKERS.values()) - {BENCHMARK_TICKER}):
@@ -245,17 +261,24 @@ def main() -> int:
         (str(row["signal_date"]), str(row["ticker"])): str(row.get("market") or "unknown")
         for row in all_observations
     }
-    starts = _legacy_hash_starts(all_observations)
+    for row in controls:
+        ticker_markets.setdefault(
+            (str(row["signal_date"]), str(row["ticker"])), str(row.get("market") or "unknown"),
+        )
+    starts = _legacy_hash_starts(all_observations or controls)
+    if controls:
+        for ticker, start in _legacy_hash_starts(controls).items():
+            starts.setdefault(ticker, start)
     price_hashes = _price_hashes(
         {
             TOTAL_RETURN_ADJUSTED: {
-                **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in histories.items()},
+                **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in control_histories.items()},
                 BENCHMARK_TICKER: legacy_hash_window(benchmark_history, starts[BENCHMARK_TICKER]),
                 **{ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in market_benchmarks.items()
                    if ticker != BENCHMARK_TICKER},
             },
             SPLIT_ONLY: {
-                ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in split_histories.items()
+                ticker: legacy_hash_window(frame, starts[ticker]) for ticker, frame in control_split_histories.items()
             },
         }
     )
@@ -272,8 +295,12 @@ def main() -> int:
         "price_unavailable_ticker_count": len(
             observed_tickers - (set(histories) & set(split_histories))
         ),
-        "strategy_version": all_observations[0]["strategy_version"],
-        "report_schema_version": all_observations[0]["report_schema_version"],
+        "control_price_unavailable_ticker_count": len(
+            {str(row["ticker"]) for row in controls} - (set(control_histories) & set(control_split_histories))
+        ),
+        "control_price_fetch_error": control_price_error,
+        "strategy_version": (all_observations or controls)[0]["strategy_version"],
+        "report_schema_version": (all_observations or controls)[0]["report_schema_version"],
         "evaluation_unit": "independent_daily_signal_observation",
         "session_coverage": _snapshot_session_coverage(snapshot_dir),
         "portfolio_interpretation": True,
@@ -327,7 +354,7 @@ def main() -> int:
         "groups": {},
     }
     groups: dict[str, object] = {}
-    for classification in ("EARLY_CANDIDATE", "WATCH", "NONE"):
+    for classification in ("EARLY_CANDIDATE", "WATCH", "NONE", "OVEREXTENDED"):
         signals = [
             observation
             for observation in all_observations
@@ -343,6 +370,12 @@ def main() -> int:
             ticker_markets=ticker_markets,
             market_benchmark_error=market_benchmark_error,
         )
+    groups["control"] = _build_group_report(
+        controls, control_histories, control_split_histories, benchmark_history,
+        [str(signal["signal_date"]) for signal in controls],
+        market_benchmarks=market_benchmarks, ticker_markets=ticker_markets,
+        market_benchmark_error=market_benchmark_error,
+    )
     report["groups"] = groups
     portfolio_signals = [
         observation

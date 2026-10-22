@@ -657,23 +657,14 @@ class Selection:
     deep_candidate_count: int
 
 
-def select_and_evaluate(
+def preselect_candidates(
     prices: dict[str, pd.DataFrame],
     ticker_meta: dict[str, dict[str, Any]],
-    client: FinancialSource,
     *,
     seed_date: str,
-    deep_candidates: int,
     min_turnover_jpy: float,
-    control_sample_size: int,
-    fundamental_limitation: str,
-    holder_filings: list[dict[str, Any]] | None = None,
-    financial_delay_days: int = 0,
-) -> Selection:
-    """Pick the deep candidates and the control sample from already-fetched prices.
-
-    Shared by the live scan and the historical backtest so both apply identical logic.
-    """
+) -> tuple[list[tuple[float, str, dict[str, Any]]], set[str], dict[str, dict[int, float]]]:
+    """Return every liquid name in stable pre-score order, usable names and sector returns."""
     preselected: list[tuple[float, str, dict[str, Any]]] = []
     technical_usable: set[str] = set()
     sector_samples: dict[str, dict[int, list[float]]] = {}
@@ -701,8 +692,30 @@ def select_and_evaluate(
         for sector, samples in sector_samples.items()
     }
     preselected.sort(reverse=True, key=lambda item: item[0])
-    liquid = list(preselected)
-    preselected = preselected[:deep_candidates]
+    return preselected, technical_usable, sector_returns
+
+
+def select_and_evaluate(
+    prices: dict[str, pd.DataFrame],
+    ticker_meta: dict[str, dict[str, Any]],
+    client: FinancialSource,
+    *,
+    seed_date: str,
+    deep_candidates: int,
+    min_turnover_jpy: float,
+    control_sample_size: int,
+    fundamental_limitation: str,
+    holder_filings: list[dict[str, Any]] | None = None,
+    financial_delay_days: int = 0,
+) -> Selection:
+    """Pick the deep candidates and the control sample from already-fetched prices.
+
+    Shared by the live scan and the historical backtest so both apply identical logic.
+    """
+    liquid, technical_usable, sector_returns = preselect_candidates(
+        prices, ticker_meta, seed_date=seed_date, min_turnover_jpy=min_turnover_jpy,
+    )
+    preselected = liquid[:deep_candidates]
 
     candidates: list[LiveCandidate] = []
     for _, ticker, tech in preselected:

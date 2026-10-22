@@ -36,6 +36,7 @@ from src.evaluation.inflection_backtest import (
     select_non_overlapping_trades,
     simulate_signals,
 )
+from src.evaluation.inflection_event_recall import build_event_recall
 from src.evaluation.inflection_forward import BENCHMARK_TICKER, paired_benchmark_returns
 from src.evaluation.inflection_portfolio import simulate_portfolio
 from src.evaluation.inflection_recall import compute_tracked_pool_explosion_recall
@@ -373,7 +374,7 @@ def reconstruct_scan(
 
 FINS_WARMUP_DAYS = 410 + FREE_PLAN_LAG_DAYS  # a year of YoY base + ~45d to report + the longest lag
 DEFAULT_MIN_INDEPENDENT = 100
-GROUPS = ("EARLY_CANDIDATE", "WATCH", "NONE", "CONTROL")
+GROUPS = ("EARLY_CANDIDATE", "WATCH", "NONE", "CONTROL", "OVEREXTENDED")
 REPORT_NOTES = (
     "Evaluation only: the v3 thresholds and weights are used exactly as in production; no parameter was searched or tuned.",
     "Prices are split-adjusted only (J-Quants), while the live scan uses yfinance Adj Close (dividends included).",
@@ -780,6 +781,7 @@ def build_backtest_report(
     control_sample_size: int = DEFAULT_CONTROL_SAMPLE_SIZE,
     min_independent: int = DEFAULT_MIN_INDEPENDENT,
     include_trades: bool = True,
+    event_focus: tuple[str, ...] = (),
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Assemble the report. ``include_trades=False`` drops every per-trade row as soon as a lag is evaluated,
@@ -813,6 +815,12 @@ def build_backtest_report(
         if not include_trades:
             lag_reports[lag] = _summary_only(lag_reports[lag])
         log(f"evaluated lag={lag}: kill_criterion={lag_reports[lag]['kill_criterion']['verdict']}")
+    event_recall = build_event_recall(
+        data, histories, {lag: item["signals"] for lag, item in collected.items()},
+        financial_start=default_signal_start(data), financial_days=days,
+        deep_candidates=deep_candidates, min_turnover_jpy=min_turnover_jpy,
+        focus=event_focus, include_events=include_trades,
+    )
     return {
         "report_type": "inflection_historical_backtest",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -834,11 +842,12 @@ def build_backtest_report(
         "notes": list(REPORT_NOTES),
         "lags": lag_reports,
         "lag_comparison": lag_comparison(pairs_by_lag) if {"disclosure", "free_12w"} <= set(lags) else None,
+        "event_recall": event_recall,
     }
 
 
 def summary_report(report: dict[str, Any]) -> dict[str, Any]:
-    """Aggregates only: trade rows are removed (tickers never appear in the summary)."""
+    """Aggregates only, except for explicitly requested event-focus tickers."""
     return _summary_only(report)  # type: ignore[no-any-return]
 
 

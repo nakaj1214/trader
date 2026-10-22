@@ -63,7 +63,7 @@ PORTFOLIO_POSITION_SIZE_PCT = 1 / PORTFOLIO_MAX_POSITIONS
 def _summary_only(value: Any) -> Any:
     """Remove prediction-level trade rows from an otherwise useful report."""
     if isinstance(value, dict):
-        return {key: _summary_only(item) for key, item in value.items() if key != "trades"}
+        return {key: _summary_only(item) for key, item in value.items() if key not in {"trades", "event_rows"}}
     if isinstance(value, list):
         return [_summary_only(item) for item in value]
     return value

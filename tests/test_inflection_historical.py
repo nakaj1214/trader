@@ -842,7 +842,7 @@ def test_backtest_report_covers_both_lags_and_the_summary_has_no_tickers() -> No
     assert report["period"]["signal_days"] == 7 and report["period"]["first_signal_date"] == days[0]
     assert set(report["lags"]) == {"disclosure", "free_12w"}
     for lag_report in report["lags"].values():
-        assert set(lag_report["groups"]) == {"early_candidate", "watch", "none", "control"}
+        assert set(lag_report["groups"]) == {"early_candidate", "watch", "none", "control", "overextended"}
         assert lag_report["groups"]["control"]["signal_count"] == 7 * 3
         assert lag_report["kill_criterion"]["verdict"] == "insufficient_sample"  # h60 cannot mature in 40 days
         assert {"portfolio_summary", "tracked_pool_explosion_recall", "yoy_coverage_by_month"} <= set(lag_report)
@@ -853,6 +853,23 @@ def test_backtest_report_covers_both_lags_and_the_summary_has_no_tickers() -> No
     assert '"trades"' not in summary
     assert not any(f"{code[:4]}.T" in summary for code in CODES)
     json.dumps(report)  # the full report is serializable too
+
+
+def test_overextended_completes_group_counts_without_changing_existing_groups() -> None:
+    from src.evaluation.inflection_historical import _lag_report
+
+    histories = _data().panel.evaluation_histories()
+    benchmark = histories["1306.T"]
+    signals = [{"ticker": "1111.T", "signal_date": DATES[30 + i], "date": DATES[30 + i],
+                "score": 50.0, "classification": name}
+               for i, name in enumerate(("EARLY_CANDIDATE", "WATCH", "NONE", "CONTROL", "OVEREXTENDED"))]
+    before, _ = _lag_report(signals[:-1], {}, histories, benchmark, min_independent=100)
+    after, _ = _lag_report(signals, {}, histories, benchmark, min_independent=100)
+
+    assert sum(group["signal_count"] for group in after["groups"].values()) == after["signal_count"] == 5
+    assert after["groups"]["overextended"]["signal_count"] == 1
+    for name in ("early_candidate", "watch", "none", "control"):
+        assert after["groups"][name] == before["groups"][name]
 
 
 def test_yoy_coverage_differs_by_lag_when_the_latest_filing_is_recent() -> None:

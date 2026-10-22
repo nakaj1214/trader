@@ -140,7 +140,7 @@ def _persist_price_hashes(
     payload: dict[str, Any] = {
         "schema_version": PRICE_HASH_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
-        "hashes": hashes,
+        "hashes": {**previous.get("hashes", {}), **hashes},
         "revisions": changed,
     }
     atomic_write_text(path, encrypt_json(payload, secret))
@@ -354,7 +354,7 @@ def main() -> int:
         "groups": {},
     }
     groups: dict[str, object] = {}
-    for classification in ("EARLY_CANDIDATE", "WATCH", "NONE"):
+    for classification in ("EARLY_CANDIDATE", "WATCH", "NONE", "OVEREXTENDED"):
         signals = [
             observation
             for observation in all_observations

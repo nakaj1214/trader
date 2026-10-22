@@ -422,6 +422,21 @@ def test_price_hash_warning_hides_ticker_and_persists_encrypted_details(
     ]
 
 
+def test_unavailable_control_keeps_hash_baseline_until_recovery(tmp_path) -> None:
+    path = tmp_path / "hashes.enc"
+    candidate = {"1111.T": {"split_only": {"2026-09-09": "candidate"}}}
+    control = {"9999.T": {"split_only": {"2026-09-09": "old-control"}}}
+    _persist_price_hashes(path, candidate | control, SECRET)
+
+    _persist_price_hashes(path, candidate, SECRET)  # The control fetch failed this week.
+    assert decrypt_json(path.read_text(), SECRET)["hashes"] == candidate | control
+
+    recovered = {"9999.T": {"split_only": {"2026-09-09": "revised-control"}}}
+    assert _persist_price_hashes(path, candidate | recovered, SECRET) == [
+        {"ticker": "9999.T", "price_basis": "split_only", "date": "2026-09-09"},
+    ]
+
+
 def test_forward_summary_removes_prediction_rows() -> None:
     report = {
         "signal_count": 1,
@@ -912,12 +927,16 @@ def test_main_writes_candidate_and_control_groups_and_tracked_pool_recall(tmp_pa
     assert fetch_calls[1]["tickers"] == ["2516.T"] and fetch_calls[1]["required"] == {"2516.T"}
     assert fetch_calls[1]["cache_path"] == fetch_calls[0]["cache_path"]
     report = json.loads((tmp_path / "artifacts" / "report.json").read_text(encoding="utf-8"))
-    assert set(report["groups"]) == {"early_candidate", "watch", "none", "control"}
+    assert set(report["groups"]) == {"early_candidate", "watch", "none", "overextended", "control"}
     assert report["groups"]["control"]["signal_count"] == 0
     assert report["tracked_pool_explosion_recall"]["exploded_ticker_count"] == 0
     assert report["groups"]["early_candidate"]["signal_count"] == 1
     assert report["groups"]["watch"]["signal_count"] == 1
     assert report["groups"]["none"]["signal_count"] == 1
+    assert report["groups"]["overextended"]["signal_count"] == 1
+    # Every loaded candidate observation is evaluated in exactly one candidate group.
+    assert sum(report["groups"][name]["signal_count"]
+               for name in ("early_candidate", "watch", "none", "overextended")) == report["signal_count"]
     assert report["portfolio_interpretation"] is True
     portfolio = report["portfolio_summary"]
     assert portfolio["entered_position_count"] == 1

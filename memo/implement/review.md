@@ -331,3 +331,25 @@ Not checked: 実Actions・実データ再生成・実配信。D3にはETF欠測�
 - 価格取得の事前見積もりはローカルv3の18ファイル×既定25行で最大450 control行、専用銘柄数はその以下。50銘柄/batchで最大9 batch（再試行を除く）、batch間待機は計4秒。既存の30分timeoutは維持するが、実APIと実snapshotでの総所要時間は未測定。
 - 独立レビューはREQ-001の重複修正とREQ-003の最終差分を限定再確認してPASS。スコア・閾値・分類基準は変更していない。ruffとCI指定のmypy（33ファイル）PASS。
 - 最終全体テストは1178件PASS、2件はsandboxがlocalhostサーバー用socket作成を拒否して失敗（`PermissionError: Operation not permitted`）。この2件だけ承認付きで制限外再実行し、2件PASS・終了コード0を確認した。合計1180ケース確認、coverage 96.33%、外部通信試行0。全体ログ: `.harness/runtime/trader-implementation/final-pytest.log`、再実行ログ: `.harness/runtime/trader-implementation/localhost-recheck.log`。
+
+## REQ-001〜003 再点検と全体整合性（2026-10-22）
+
+要件・現在の実装・本番scan・historical/forward・学習・workflow・出力文書を照合し、以下の2件を修正した。
+
+1. **CONTROLの価格取得失敗で既存hashが消える（B3: 保護データ）**。取得できた銘柄だけで暗号化hash一覧を上書きしていたため、次回の取得成功時にCONTROLの価格改定を比較できなかった。保存時に取得できない銘柄の旧hashを残す1行へ修正。失敗中の保持と、復旧後の改定検出を回帰テストで確認した（修正前FAIL、修正後PASS）。候補のhash値・開始日、失敗割合のガードは変更していない。
+2. **財務準備期間未達で価格評価まで中止する（B4: 受入条件）**。CLIの旧`days=[]`早期終了を削除し、既存report関数へ渡す。価格イベントを測定し、EARLY/WATCHは全件未評価とする。旧「No scan daysはエラー」のテストは新要件と衝突するため、終了コードだけでなく、イベントの存在・価格段階の評価件数・財務の未評価件数・summary保存を検証するテストへ変更した（修正前FAIL、修正後PASS）。bars自体が無いときのエラーは維持する。
+
+CLI・forwardの関連103テストPASS（73.87秒、外部通信試行0）。スコア・分類・学習入力は変更していない。実API・実snapshot・本番workflowは実行していない。
+
+修正後の全1181テストPASS（終了コード0、490.10秒、coverage 96.33%、外部通信試行0）。localhostテストを含め、承認付きでsandbox外実行した。ruff・CI指定mypy 33ファイル・独立再レビュー・minimal diff guard・diff checkもPASS。全体ログは `.harness/runtime/followup-review/full-tests.log`。本番scanの候補選別、暗号化snapshotと通知、forwardの候補群・recall・portfolio、candidateだけを読む学習、週次workflowの暗号化hash保存とsummary出力の接続を確認し、追加の不整合は認めなかった。
+
+## Claude 確認: 漏れの点検と全体整合性（2026-10-22）
+
+- 調査結果（Codex G01〜G12、Claude M1〜M7）と実装を1件ずつ対応づけた。表は [implementation-trace.md](../../.harness/reports/trader-gap-verification-claude/implementation-trace.md)。範囲内の漏れは1件だった。
+- **漏れ: forward に OVEREXTENDED 群が無かった**。historical には REQ-002 で追加済みだったが、forward の群ループは EARLY/WATCH/NONE のままで、OVEREXTENDED の観測は読み込まれても recall にしか使われていなかった。除外判断の妥当性（M2）を本番の蓄積データで測れないため、群ループに追加した。先にテストへ期待値（群の存在と、候補4群の件数の合計＝signal 総数）を足し、修正前 FAIL・修正後 PASS を確認した。portfolio・recall・価格 hash の入力は変えていない。
+- 独立に再実行: 全 1181 テスト PASS（Claude の補完前の状態、431.5 秒、coverage 96.33%、外部通信の試行 0）。補完後は forward 関連 143 テスト PASS。ruff PASS、CI 指定の mypy 33 ファイル PASS。
+- スコア・閾値・分類基準・学習の差分なし（`src/strategy`・`explosion.py`・`inflection_learning.py` は無変更、`inflection_live.py` は一次選別の抽出だけ）。
+- `project-overview.md` の記述（各 workflow の実行時刻、選別の既定値、コスト、保有期間、学習の期間、`show_candidates.py` のオプション）を実装と照合し、一致した。forward の群の説明に OVEREXTENDED を追記した。
+- 番号の衝突: 今回の REQ-001〜003 は過去の `proposal_req001-036.md` と番号が重なるため、proposal・roadmap に注記した。
+- 既存の状態として記録: `src/evaluation/inflection_forward.py` は HEAD の時点で CRLF と LF が混在している。追加行も CRLF のため `git diff --check` が行末の空白を報告するが、動作には影響しない。正規化は差分が大きくなるので行っていない。
+- 未検証: forward workflow の実行時間（control 専用銘柄の取得が増える）、実 snapshot の `control_sample` の件数。いずれも実 API と復号鍵が要る。

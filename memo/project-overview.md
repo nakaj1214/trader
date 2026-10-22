@@ -65,7 +65,7 @@ dashboard/data/inflection_candidates.enc
 
 REQ-018適用後のsnapshotはstrategy v3として`inflection/v3/`へ分離します（schema 4、2026-10-01以降はschema 5）。schema 5はschema 4のcandidateに生の財務特徴量・スコア内訳・`pre_score`・33業種コードを追加し、別キー`control_sample`に流動性通過銘柄からの無作為抽出（日付由来のseedで決定的）を保存します。forward validationはschema 4と5を同一系列として読み、`control_sample`を別群`groups.control`で評価します。候補群・recall・portfolio・学習の入力には混ぜず、旧snapshotにcontrolがなければ空群です。既存v2 snapshotは保持しますがv3のforward validationには混在させないため、評価系列は非連続です。
 
-週次検証は暗号化済み snapshot を `EARLY_CANDIDATE`・`WATCH`・`NONE` の群に分け、翌営業日始値で entry（その日に始値が無い銘柄は次に始値がある日で entry し、診断の `entry_delay_sessions` に遅れた営業日数を記録）、5 / 20 / 60 / 126 / 252 営業日保有、往復コスト 0.2%（ストレス1.2%）で評価します。TOPIX ETF (`1306.T`、往復コスト0.05%) と比較し、市場別ベンチマーク（グロースは `2516.T`、プライム・スタンダードは `1306.T`）も併記します。追加ETFの取得失敗は市場別比較の欠損として扱います。
+週次検証は暗号化済み snapshot を `EARLY_CANDIDATE`・`WATCH`・`NONE`・`OVEREXTENDED` の群に分け（`OVEREXTENDED` は除外判断の妥当性を測るための評価群で、portfolio には入れない）、翌営業日始値で entry（その日に始値が無い銘柄は次に始値がある日で entry し、診断の `entry_delay_sessions` に遅れた営業日数を記録）、5 / 20 / 60 / 126 / 252 営業日保有、往復コスト 0.2%（ストレス1.2%）で評価します。TOPIX ETF (`1306.T`、往復コスト0.05%) と比較し、市場別ベンチマーク（グロースは `2516.T`、プライム・スタンダードは `1306.T`）も併記します。追加ETFの取得失敗は市場別比較の欠損として扱います。
 
 候補の確認方法は2つあります。(1) 日次 scan は候補のダイジェスト（EARLY_CANDIDATE 上限10件、WATCH 上位5件、件数、欠損営業日の警告）を`SLACK_WEBHOOK_URL`へ送ります。`dashboard/data/inflection/digest_state.json` の市場日別 `pending` は通常再実行で再送し、`succeeded` は送信を省略します。状態のない旧snapshotは通常再送しません。`workflow_dispatch` の `resend_digest=true` は明示再送で、再scanのreportを使うため元snapshotと内容が異なり得ます。Slack送信失敗はbest-effortですが、状態ファイルの初回保存失敗はrunを失敗させます。処理順はsnapshot・latest保存→通知状態とSlack送信→workflowのGit反映です。Slack受理後に状態保存やpushが失敗すると重複し得るため、exactly-onceは保証しません。公開ログに候補銘柄は出しません。(2) ローカルでは`SNAPSHOT_ENCRYPTION_KEY`を設定して`python scripts/show_candidates.py`を実行すると、最新または`--date`指定の snapshot を復号して表で表示します（`--classification`、`--top`、`--control`。外部通信はしません）。
 
@@ -77,7 +77,7 @@ EDINETの大量保有報告の取得・live scanへの診断値記録・learning
 
 過去検証（ローカル専用・評価のみ）は`scripts/run_inflection_historical_backtest.py`で実行します。J-Quants Freeの過去データ（約2年分）を`.data/jquants/`へ再開可能に取得（`--fetch`）し、現行v3のロジックを過去の各営業日にpoint-in-timeで再現して（`src/evaluation/inflection_historical.py`）forwardと同じ評価器で集計します。財務を開示当日から使える場合と12週後から使える場合（現行Freeの状態）を比較し、60営業日の対TOPIX超過リターンの信頼区間による撤退条件の一次判定（暫定基準: 独立観測100件以上）を出力します。閾値・重みの探索は行わず、取得データと出力（`artifacts/`）はgit管理外です。Freeプランの2年という期間のため、60営業日の成績まで確定する期間は約1か月分にとどまります。
 
-historicalの`event_recall`は全市場の2倍イベントを分母に、価格・流動性・上位25・EARLY/WATCHへの初到達を測ります（終値+50%当日は初期に含めず、財務履歴の不足は未評価）。全イベント行はfull出力だけ、`--event-focus`の指定銘柄はsummaryにも出します。historicalの`lags.*.groups.overextended`は既存4群に追加した評価群です。
+historicalの`event_recall`は全市場の2倍イベントを分母に、価格・流動性・上位25・EARLY/WATCHへの初到達を測ります（終値+50%当日は初期に含めず、財務履歴の不足は未評価）。財務の評価開始日に届かなくても価格段階は実行し、EARLY/WATCHは未評価として出力します。全イベント行はfull出力だけ、`--event-focus`の指定銘柄はsummaryにも出します。historicalの`lags.*.groups.overextended`は既存4群に追加した評価群で、forwardの`groups.overextended`と対になります。
 
 ポートフォリオ評価は `EARLY_CANDIDATE` の60営業日保有・通常コストだけを対象に、初期資金300万円、最大8銘柄、1銘柄12.5%の固定配分で算出します。これらはユーザー未確認の既定値です。セクター上限、100株単位、ADVによる発注制限は未実装です。終値欠損は前方補完せず、その日のequityと期間のMax Drawdownを欠損にします。最終日のequityが不明ならCAGRも欠損です。CAGRとMax Drawdownは十分なsnapshot蓄積後にのみ意味を持ちます。
 

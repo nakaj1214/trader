@@ -8,7 +8,8 @@
 
 ### スコープ
 - 含むもの: 急騰イベントの定義と段階別到達の測定、historical への OVEREXTENDED 群の追加、forward への control 群の追加（別経路）。
-- 含まないもの: proposal の「保留中」の全項目（重み・閾値の見直し、信用残の取得、約定モデル、試行台帳、PSY など）。合否判定の数値（「初期」の許容値・通知上限）。`inflection_learning.py` への CONTROL 接続。forward 側での OVEREXTENDED 群の追加（[rebuild_inflection_forward_validation.py:323](../../scripts/rebuild_inflection_forward_validation.py#L323) の群は EARLY/WATCH/NONE のまま。必要なら別件）。
+- 含まないもの: proposal の「保留中」の全項目（重み・閾値の見直し、信用残の取得、約定モデル、試行台帳、PSY など）。合否判定の数値（「初期」の許容値・通知上限）。`inflection_learning.py` への CONTROL 接続。
+- 追記（2026-10-22）: 当初はスコープ外とした forward 側の OVEREXTENDED 群は、M2（除外判断の妥当性）を本番の蓄積データで測るために必要と判断し、群ループへ追加した（portfolio・recall・hash は不変）。
 
 ### 確認した現状（調査結果）
 - `select_and_evaluate`（[inflection_live.py:660](../../src/screening/inflection_live.py#L660)）の一次選別（流動性 → `_pre_score` 順位）は関数の内側の局所変数で、順位を外に出していない。段階別の判定には抽出が要る（Step 1）。

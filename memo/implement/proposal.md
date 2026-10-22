@@ -1,6 +1,8 @@
 # 実装要件書: 一次選別の測定と評価の接続（Codex G01/G02 + Claude M1/M2）
 
 > このファイルは create-plan の入力です。
+> 番号の注意: 本書の REQ-001〜003 は、過去の [proposal_req001-036.md](proposal_req001-036.md) の REQ-001〜003 とは別物。
+> 実装状況（2026-10-22）: REQ-001〜003 は実装済み。forward の OVEREXTENDED 群も追加した（[対応表](../../.harness/reports/trader-gap-verification-claude/implementation-trace.md)、[review.md](review.md)）。
 > 日時: 2026-10-21 / 入力: ユーザー依頼「測定から始め、順序どおりに作る」（会話）。`memo/implement/prompt.md` は別件（2026-10-13 の保守課題）のため入力に使っていない。
 > 根拠: [Codex 調査](../../.harness/reports/trader-gap-research/gap-analysis.md)（G01・G02）、[Claude 検証](../../.harness/reports/trader-gap-verification-claude/verification.md)（M1・M2）。
 > 前の proposal.md（D1〜D3: 比較不能・未評価の扱い）は上書きした。内容は git 履歴（`da7b4f3` 時点）に残る。実装状況は今回確認していない。

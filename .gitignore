@@ -17,6 +17,8 @@ credentials.json
 !archive/legacy/dashboard-v2/package.json
 !archive/legacy/dashboard-v2/package-lock.json
 !archive/legacy/dashboard-v2/tsconfig.json
+# 日次 scan の通知状態。workflow が commit し、次の run が pending の再送に使う
+!/dashboard/data/inflection/digest_state.json
 .data/
 
 # IDE

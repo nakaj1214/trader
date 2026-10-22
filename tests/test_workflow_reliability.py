@@ -144,3 +144,25 @@ def test_every_workflow_states_its_token_permissions_instead_of_inheriting_the_r
         assert re.search(r"(?m)^permissions:\n(?:  [a-z-]+: (?:read|none)\n)+", top_level), (
             f"{path.name} has no explicit read-only top-level permissions"
         )
+
+
+def test_the_scan_commits_its_digest_state_so_the_next_run_can_read_it() -> None:
+    """Each Actions run starts from a fresh checkout: a pending digest is only retried if its state was committed."""
+    import subprocess
+
+    import pytest
+
+    from scripts.run_inflection_shadow import DIGEST_STATE
+
+    root = WORKFLOWS.parents[1]
+    state = DIGEST_STATE.relative_to(root).as_posix()
+    persist = (WORKFLOWS / "inflection_shadow.yml").read_text().split("id: persist", 1)[1].split("\n\n", 1)[0]
+    assert f"git add {state.rsplit('/', 1)[0]}/ " in persist
+
+    # `git add <dir>` skips ignored files without an error, so an ignore rule would silently drop the state.
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "-q", state], cwd=root, capture_output=True, timeout=30, check=False,
+    )
+    if result.returncode == 128:
+        pytest.skip("not a git checkout")
+    assert result.returncode == 1, f"{state} is git-ignored, so the scan never commits it"

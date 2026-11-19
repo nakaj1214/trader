@@ -71,15 +71,62 @@ def test_cause_specific_failure_already_delivered_does_not_generate_a_second_dea
         assert watchdog_alerts(NOW, tmp_path, ["failure:position_monitor.yml:1"]) == []
 
 
-@pytest.mark.parametrize("day", ["2026-10-10", "2026-10-11", "2026-10-12"])
-def test_weekends_and_exchange_holidays_do_not_require_a_monitor_or_scan(day: str) -> None:
+@pytest.mark.parametrize(("day", "friday"), [
+    ("2026-10-03", "2026-10-02"), ("2026-10-10", "2026-10-09"),
+    ("2026-10-11", "2026-10-09"), ("2026-10-12", "2026-10-09"),
+])
+def test_weekends_and_exchange_holidays_check_the_previous_market_day(day: str, friday: str) -> None:
     expected = _expected_runs(datetime.fromisoformat(f"{day}T20:10:00+09:00"))
-    assert set(expected) == {"forward_validation.yml"}
+    assert expected["position_monitor.yml"] == datetime.fromisoformat(f"{friday}T15:50:00+09:00")
+    assert expected["inflection_shadow.yml"] == datetime.fromisoformat(f"{friday}T16:40:00+09:00")
+    assert "forward_validation.yml" in expected
 
 
 def test_scheduler_grace_avoids_alerting_before_a_run_is_expected() -> None:
     expected = _expected_runs(NOW.replace(hour=16))
-    assert "position_monitor.yml" not in expected and "inflection_shadow.yml" not in expected
+    assert expected["position_monitor.yml"] == NOW.replace(day=7, hour=15, minute=50)
+    assert expected["inflection_shadow.yml"] == NOW.replace(day=7, hour=16, minute=40)
+    expected = _expected_runs(NOW.replace(hour=17, minute=50))
+    assert expected["position_monitor.yml"] == NOW.replace(hour=15, minute=50)
+    assert expected["inflection_shadow.yml"] == NOW.replace(day=7, hour=16, minute=40)
+
+
+def test_overnight_watchdog_does_not_resend_the_previous_sessions_alerts(tmp_path: Path) -> None:
+    weekly = _success("2026-11-15T09:40:00+09:00")
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: weekly if w == "forward_validation.yml" else []):
+        evening = watchdog_alerts(datetime(2026, 11, 18, 20, 10, tzinfo=JST), tmp_path, [])
+        keys = [alert["key"] for alert in evening]
+        morning = watchdog_alerts(datetime(2026, 11, 19, 4, 22, tzinfo=JST), tmp_path, keys)
+    assert set(keys) == {
+        "deadman:position_monitor.yml:2026-11-18T15:50:00+09:00",
+        "deadman:inflection_shadow.yml:2026-11-18T16:40:00+09:00",
+    }
+    assert morning == evening and any("kind=not_started_snapshot_missing" in a["text"] for a in morning)
+    state = tmp_path / "alerts.json"
+    state.write_text(json.dumps(keys))
+    assert notify_once(morning, state, "") == 0
+
+
+@pytest.mark.parametrize(("now", "session"), [
+    (datetime(2026, 11, 19, 17, 0, tzinfo=JST), "2026-11-18"),
+    (datetime(2026, 11, 3, 20, 10, tzinfo=JST), "2026-11-02"),  # weekday exchange holiday
+])
+@pytest.mark.parametrize(("workflow", "first_cron", "closing_cron"), [
+    ("position_monitor.yml", "09:20", "15:50"), ("inflection_shadow.yml", "16:40", "16:40"),
+])
+@pytest.mark.parametrize(("overnight", "conclusion"), [(True, "success"), (False, "success"), (False, "failure")])
+def test_daily_run_attribution_ends_at_the_next_weekday_cron(
+    tmp_path: Path, now: datetime, session: str, workflow: str, first_cron: str, closing_cron: str,
+    overnight: bool, conclusion: str,
+) -> None:
+    (tmp_path / f"{session}.enc").touch()
+    start = "04:00" if overnight else first_cron
+    run = {**_success(f"{now.date()}T{start}:00+09:00")[0], "conclusion": conclusion}
+    sent = [f"failure:{workflow}:1"] if conclusion == "failure" else []
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: [run] if w == workflow else []):
+        alerts = watchdog_alerts(now, tmp_path, sent)
+    keys = [alert["key"] for alert in alerts if alert["key"].startswith(f"deadman:{workflow}:")]
+    assert keys == ([] if overnight else [f"deadman:{workflow}:{session}T{closing_cron}:00+09:00"])
 
 
 def test_delivered_alert_is_persisted_once_and_a_rerun_sends_nothing(tmp_path: Path) -> None:
@@ -112,6 +159,16 @@ def test_notification_timeout_or_500_is_visible_safe_and_not_marked_delivered(
     logs = capsys.readouterr().out
     assert "workflow health failed" in logs and type(error).__name__ in logs
     assert "private-webhook" not in logs and "9999.T" not in logs and "2026-08-04" not in logs
+
+
+@pytest.mark.parametrize("details", [{}, {"retry_exhausted": "true"}])
+def test_cancelled_job_is_reported_as_cancelled(monkeypatch: pytest.MonkeyPatch, details: dict) -> None:
+    monkeypatch.setenv("WORKFLOW_NAME", "inflection_shadow.yml")
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    monkeypatch.setenv("FAILURE_STAGE", "cancelled")
+    monkeypatch.setenv("RETRY_DETAILS_JSON", json.dumps(details))
+    assert failure_alert()["text"].splitlines()[0] == "workflow=inflection_shadow.yml kind=cancelled"
 
 
 def test_rerun_attempts_share_one_failure_identity_and_keep_retry_details(monkeypatch: pytest.MonkeyPatch) -> None:

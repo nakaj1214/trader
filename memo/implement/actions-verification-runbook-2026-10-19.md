@@ -36,7 +36,7 @@
 前日分が `pending` でなければ起きないので、機会があったときに確認する（人為的に作らない）。
 
 - ログに `digest_recovery=sent:1,failed:0,skipped:0` が出て、Slack に前日付のダイジェストが 1 通届く。次の run では再送されない。
-- `::warning title=Recovered digest state not saved` が出たら、送信済みだが状態が保存できていない。次の run で重複するので、`dashboard/data/inflection/digest_state.json` を確認する（`digest_state.json` は repo 内。手で `succeeded` にする場合は別途相談）。
+- `::warning title=Recovered digest state not saved` が出たら、送信済みだが状態が保存できていない。再送で重複する可能性がある。今回の修正以降は scan が snapshot と一緒に `dashboard/data/inflection/digest_state.json` を commit するので、main の対象日が `pending` かを確認する。手で `succeeded` にする場合は別途相談。
 - `::warning title=Daily digest state not saved`（当日分）も同様。
 
 ## 5. Forward Validation（main）— 要約の取得

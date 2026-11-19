@@ -195,7 +195,7 @@ jobs:
       - name: Notify classified workflow failure
         id: notify
         env:
-          FAILURE_STAGE: ${{ (needs.validate.result == 'failure' || needs.validate.result == 'cancelled') && needs.validate.outputs.failure_stage || needs.persist-price-hashes.outputs.failure_stage || 'forward' }}
+          FAILURE_STAGE: ${{ (needs.validate.result == 'cancelled' || needs.persist-price-hashes.result == 'cancelled') && 'cancelled' || needs.validate.result == 'failure' && needs.validate.outputs.failure_stage || needs.persist-price-hashes.outputs.failure_stage || 'forward' }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           WORKFLOW_NAME: forward_validation.yml

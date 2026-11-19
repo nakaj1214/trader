@@ -35,7 +35,8 @@ Use this flow when a command, container operation, PHP process, JavaScript reque
 The daily scan job runs on `main` only: a manual run from another branch is skipped before it can use the production API key, snapshot key or Slack webhook, or push a snapshot to that branch, and a skipped run raises no failure alert. Check a branch locally or with the tests instead.
 
 The daily digest records `pending` or `succeeded` by market date in
-`dashboard/data/inflection/digest_state.json`. A pending day is retried by the next normal run of the same market day, and a normal run also sends again,
+`dashboard/data/inflection/digest_state.json`. The scan commits this file with the encrypted snapshot so the next runner receives the delivery state.
+A pending day is retried by the next normal run of the same market day, and a normal run also sends again,
 from its saved snapshot, any digest still `pending` from the last three market days (weekends and holidays do not count; the log shows
 `digest_recovery=sent:N,failed:N,skipped:N`). A day older than that, or one with no usable snapshot, is left `pending` and needs a manual look;
 `workflow_dispatch` with `resend_digest=true` forces a retry. Delivery is best-effort, not exactly

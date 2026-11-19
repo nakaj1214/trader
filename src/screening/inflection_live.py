@@ -793,6 +793,15 @@ def scan_japan_inflection(
 ) -> dict[str, Any]:
     if control_sample_size < 0:
         raise ValueError("control_sample_size must not be negative")
+    started = time.monotonic()
+
+    def log_stage(stage: str, event: str, **counts: int) -> None:
+        print(
+            f"SCAN_STAGE: stage={stage} event={event} elapsed={time.monotonic() - started:.1f}",
+            *(f"{key}={value}" for key, value in counts.items()),
+            flush=True,
+        )
+
     generated_at = datetime.now(UTC).isoformat()
     expected_date = expected_tse_session_date(generated_at)
     retry_waits = _price_retry_waits()
@@ -801,6 +810,7 @@ def scan_japan_inflection(
     if not client.is_available():
         raise RuntimeError("JQUANTS_API_KEY is required for the production JP universe")
 
+    log_stage("master", "start")
     master = [row for row in client.listed_issues() if str(row.get("Mkt") or "") in JP_MARKET_CODES]
     ticker_meta: dict[str, dict[str, Any]] = {}
     for row in master:
@@ -822,7 +832,10 @@ def scan_japan_inflection(
             raise RuntimeError(f"DATA_HEALTH: unexpected market code: {market_code}") from exc
 
     provider_failures: dict[str, int] = {}
+    log_stage("master", "end", universe=len(tickers))
+    log_stage("prices", "start", requested=len(tickers))
     prices = fetch_price_data(tickers, lookback_days, diagnostics=provider_failures)
+    log_stage("prices", "end", fetched=len(prices))
     latest_dates: dict[str, str] = {}
     dropped_future: set[str] = set()
     for attempt in range(len(retry_waits) + 1):
@@ -853,7 +866,8 @@ def scan_japan_inflection(
                     "DATA_HEALTH_RECOVERED: "
                     f"attempt={attempt} universe={len(tickers)} missing={len(tickers) - price_data} "
                     f"price_data={price_data} price_coverage={price_coverage:.1%} "
-                    f"fresh={fresh} latest_coverage={latest_coverage:.1%}"
+                    f"fresh={fresh} latest_coverage={latest_coverage:.1%}",
+                    flush=True,
                 )
             break
 
@@ -891,10 +905,14 @@ def scan_japan_inflection(
             f"price_data={price_data} price_coverage={price_coverage:.1%} "
             f"fresh={fresh} latest_coverage={latest_coverage:.1%} "
             f"failed_gate={','.join(failed_gates)} wait={wait:g}s "
-            f"latest_dates={histogram} dropped_future_bars={len(dropped_future)}"
+            f"latest_dates={histogram} dropped_future_bars={len(dropped_future)}",
+            flush=True,
         )
         time.sleep(wait)
-        prices.update(fetch_price_data(retry_tickers, lookback_days, diagnostics=provider_failures))
+        log_stage("price_retry", "start", requested=len(retry_tickers))
+        retry_prices = fetch_price_data(retry_tickers, lookback_days, diagnostics=provider_failures)
+        prices.update(retry_prices)
+        log_stage("price_retry", "end", fetched=len(retry_prices))
 
     # Price coverage per market (the technical features are computed in select_and_evaluate).
     for ticker, df in prices.items():
@@ -914,6 +932,7 @@ def scan_japan_inflection(
     fundamental_limitation += "。API取得可能時刻は未記録のため、遅延境界日・時刻不明の開示は使用しない"
     holder_filings = None
     if os.getenv("EDINET_API_KEY", "").strip():
+        log_stage("edinet", "start")
         try:
             holder_filings = fetch_live_holder_filings(expected_date)
             # Validate all filing metadata before evaluating either candidate pool.
@@ -922,6 +941,10 @@ def scan_japan_inflection(
         except EdinetError as exc:
             holder_filings = None
             print(f"EDINET_UNAVAILABLE: {type(exc).__name__} days=60")
+            log_stage("edinet", "end", unavailable=1)
+        else:
+            log_stage("edinet", "end", filings=len(holder_filings))
+    log_stage("selection", "start")
     selection = select_and_evaluate(
         prices,
         ticker_meta,
@@ -936,6 +959,7 @@ def scan_japan_inflection(
     )
     candidates = selection.candidates
     control_sample = selection.control_sample
+    log_stage("selection", "end", deep=len(candidates), control=len(control_sample))
     technical_usable_count = len(selection.technical_usable_tickers)
     liquid_candidate_count = selection.liquid_candidate_count
     for ticker in selection.technical_usable_tickers:

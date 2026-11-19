@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.data.session_gaps import (
+    expected_snapshot_missing,
     latest_settled_session,
     missing_sessions,
     previous_session_missing,
@@ -117,17 +118,10 @@ def test_session_coverage_counts_and_the_empty_case(tmp_path: Path) -> None:
 
 
 def test_watchdog_requires_an_expected_snapshot_even_when_none_has_ever_existed(tmp_path: Path) -> None:
-    from src.data import session_gaps
-
-    now = datetime(2026, 10, 2, 11, 10, tzinfo=UTC)
-    check = getattr(session_gaps, "expected_snapshot_missing", None)
-    result = check(tmp_path, now) if check else missing_sessions(tmp_path, latest_settled_session(now))
-    assert result == "2026-10-02"
+    assert expected_snapshot_missing(tmp_path, date(2026, 10, 2)) == "2026-10-02"
 
 
-@pytest.mark.parametrize("stamp", ["2026-10-02T14:00:00+09:00", "2026-10-03T20:00:00+09:00",
-                                   "2026-10-12T20:00:00+09:00"])
-def test_snapshot_deadman_ignores_preclose_weekends_and_holidays(tmp_path: Path, stamp: str) -> None:
-    from src.data.session_gaps import expected_snapshot_missing
-
-    assert expected_snapshot_missing(tmp_path, datetime.fromisoformat(stamp)) is None
+def test_snapshot_deadman_checks_only_the_requested_session(tmp_path: Path) -> None:
+    directory = make_dir(tmp_path, ["2026-10-02", "2026-10-06"])
+    assert expected_snapshot_missing(directory, date(2026, 10, 5)) == "2026-10-05"
+    assert expected_snapshot_missing(directory, date(2026, 10, 6)) is None

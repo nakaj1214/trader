@@ -1,102 +1,103 @@
-# 実装要件書: 一次選別の測定と評価の接続（Codex G01/G02 + Claude M1/M2）
+# 実装要件書: 日次スキャンの欠測と、監視・通知状態の修正（2026-11-19）
 
 > このファイルは create-plan の入力です。
-> 番号の注意: 本書の REQ-001〜003 は、過去の [proposal_req001-036.md](proposal_req001-036.md) の REQ-001〜003 とは別物。
-> 実装状況（2026-10-22）: REQ-001〜003 は実装済み。forward の OVEREXTENDED 群も追加した（[対応表](../../.harness/reports/trader-gap-verification-claude/implementation-trace.md)、[review.md](review.md)）。
-> 日時: 2026-10-21 / 入力: ユーザー依頼「測定から始め、順序どおりに作る」（会話）。`memo/implement/prompt.md` は別件（2026-10-13 の保守課題）のため入力に使っていない。
-> 根拠: [Codex 調査](../../.harness/reports/trader-gap-research/gap-analysis.md)（G01・G02）、[Claude 検証](../../.harness/reports/trader-gap-verification-claude/verification.md)（M1・M2）。
-> 前の proposal.md（D1〜D3: 比較不能・未評価の扱い）は上書きした。内容は git 履歴（`da7b4f3` 時点）に残る。実装状況は今回確認していない。
+> 入力: [prompt.md](prompt.md) → [inflection_scan_and_scoring_review_2026-11-19.md](../analysis/inflection_scan_and_scoring_review_2026-11-19.md)（以下「調査メモ」）。作成 2026-11-19、HEAD `7ca257b`。
+> 調査メモの 3 項目と係数・閾値の判断は、現行コードと集計 JSON（`.harness/runtime/pull-review-20261119/`）で確認した。数値（学習集計の 286/130/0/0 件、52 週高値圏の 123 件・−1.30%・0.47 倍・q 0.325、20 営業日の分類別の表）はすべて JSON と一致した。Actions のログは手元から読めないため、タイムアウトの時刻は調査メモの記載に従う。
+> 調査メモに無い問題として、REQ-001 の「ログが即時出力されない」、REQ-002（時間切れが別の失敗として通知される）、REQ-003 の Position Monitor への波及、REQ-004 の文書の誤りを追加した。
+> 前の proposal.md（一次選別の測定 REQ-001〜003、実装済み）は git `92576d8` に残る。
 
 ---
 
-## 目的と順序
+## 順序
 
-目的: 「爆発的に伸びる株を初期に見つける」という理念に対し、今の一次選別が何を取り、何を取りこぼすかを、価格データだけで測れるようにする。重み・閾値を変える前の物差しを作る。
+1. REQ-001 日次スキャンの停止箇所を特定して復旧する（最優先。他と独立）
+2. REQ-002 時間切れを、失敗通知で他の失敗と区別する
+3. REQ-003 日付をまたいだ監視でも、直近の取引日の欠測を検出する
+4. REQ-004 ダイジェストの送信状態を Git に保存する
 
-順序（上から。前が終わってから次へ。同時に直さない）:
-1. REQ-001 全市場の急騰イベントに対する初期発見の評価
-2. REQ-002 OVEREXTENDED 群を historical 評価に入れる
-3. REQ-003 CONTROL を forward 評価へ別経路で接続する
-
-データ蓄積（日次 scan・snapshot）は止めず、待たない。REQ-001/002 は既存のローカル日足キャッシュ（`.data/jquants`）で作れる。60/120 日成績の判定は標本が溜まってから（本スコープ外）。
+REQ-002〜004 は小さく、REQ-001 と並行してもよい。ただし 1 件ずつ実装・検証する。
 
 ## 全要件共通の制約
 
-- スコア・閾値・重み・EARLY/WATCH の基準・Q06 閾値（ticker 10 / signal date 5 / 最大業種比率 50%）を変更しない。
-- 外部 API・実 Slack・実 Sheets・暗号化 snapshot の復号・永続キャッシュへの書込みをしない。検証は fake / synthetic と一時ディレクトリ、およびローカル日足キャッシュの読取りのみ。
-- 既存の出力キーは変えず、追加のみにする。正常入力の既存数値が変わる場合は、意図どおりかを説明して記録する。
-- 既存テストを新実装に合わせて書き換えるだけの修正は禁止。
+- スコア係数・EARLY 70 / WATCH 52・過熱除外・Q06 閾値（ticker 10 / signal date 5 / 最大業種比率 50%）を変更しない。
+- 価格の品質基準（`MIN_PRICE_COVERAGE`・`MIN_LATEST_DATE_COVERAGE`）を緩めて保存を通さない。深掘り件数（25）と対照群の件数（25）も変えない（結果が変わるため）。
+- 外部 API・実 Slack・実 snapshot の復号・永続キャッシュへの書込みをテストで行わない。検証は fake と一時ディレクトリで行う。Actions 上の確認は main で行う。
+- 公開ログに ticker・会社名・URL・鍵を出さない。
 
 ---
 
 ## 要件一覧
 
-### REQ-001: 全市場の急騰イベントに対する初期発見の評価
+### REQ-001: 日次スキャンの停止箇所を特定して復旧する
 
-- **画面**: なし（評価スクリプト・レポート）
-- **対象ファイル**: 新規 `src/evaluation/inflection_event_recall.py`（既存 [inflection_recall.py](../../src/evaluation/inflection_recall.py) は変更しない）。一次選別は [inflection_live.py](../../src/screening/inflection_live.py) の `_technical_features`・`_pre_score`・流動性条件を再利用し、重複実装しない。入口は [run_inflection_historical_backtest.py](../../scripts/run_inflection_historical_backtest.py) に追加（既存出力は変えない）。試作: `.harness/reports/trader-gap-verification-claude/analysis/exemplar_funnel.py`（J-Quants 調整済み終値の近似。本番は yfinance Adj Close）。
-- **Before（現状）**: Recall は deep_candidates に一度でも入った銘柄だけが分母（[inflection_recall.py:70](../../src/evaluation/inflection_recall.py#L70) の注記）。+50% 到達前に EARLY/WATCH が一度出れば検出扱いで、「何倍に上がってから見つけたか」が分からない。旧 summary では pool 内 Recall 25%（19/76）。
-- **After（期待）**: 対象市場（Prime/Standard/Growth の普通株）全体から、日次ラベルを連続した上昇イベントにまとめ、イベントごとに次を出す。
-  - 選別の段階別の到達: 価格あり → 流動性通過（20 日平均売買代金 ≥ 1 億円）→ pre_score 上位 25 → EARLY/WATCH（財務込みの分類は既存 historical の signal を使う）。
-  - 初めて各段階に入った日の「イベント底からの上昇倍率」と、+50% 到達日との前後。
-  - 1 日あたりの通知件数（EARLY+WATCH）。
-  - 次に買える始値から一定保有（60 営業日）の純損益。
-  - 起点の底は事後ラベルでよいが、選別側の入力には将来値を入れない。
+- **画面**: なし（`JP Inflection Shadow Scan` workflow のログと snapshot）
+- **対象ファイル**: [inflection_live.py](../../src/screening/inflection_live.py)（`scan_japan_inflection` :786）、[run_inflection_shadow.py](../../scripts/run_inflection_shadow.py)（`main`）、[inflection_shadow.yml](../../.github/workflows/inflection_shadow.yml)（`timeout-minutes: 45` :29、scan step :71-79）
+- **Before（現状）**:
+  - 11/4〜11/18 の 11 回すべてで、scan step が 45 分 00〜09 秒でキャンセルされ、保存まで進まなかった。最後の snapshot は 11/02。9/14〜11/18 の 43 営業日のうち、snapshot があるのは 27 日。欠測 16 日のうち、9/28・10/5・10/8・10/13・10/19 の 5 日は散発的に欠け、原因は確認していない。
+  - 処理は「銘柄一覧（J-Quants）→ 価格（yfinance、50 銘柄ずつ）→ 品質基準を満たすまで 180 秒・420 秒待って再取得 → EDINET 60 日分 → 財務（J-Quants、深掘り 25 件と対照群 25 件）」の順。段階ごとの開始・経過時間・件数を出していないので、どこで止まったか分からない。
+  - J-Quants の呼出しは 12.2 秒以上の間隔を空ける（[jquants_v2_client.py:55](../../src/data/jquants_v2_client.py#L55)）。財務だけで 50 回以上（約 10 分以上）かかる。
+  - **調査メモに無い問題**: ログは `print` で、`flush` も `PYTHONUNBUFFERED` も無い。Actions では標準出力がまとめて書き出されるため、キャンセルされたときに直前のログが残らないことがある。段階ログを足しても、このままでは止まった箇所が見えない可能性がある。
+- **After（期待）**:
+  - 段階 A（計測）: 各段階（銘柄一覧・価格の初回取得・各再取得と待機・EDINET・財務の評価）の開始・経過秒・処理件数が、その時点でログに出る（バッファに溜めない）。件数だけを出し、ticker や本文は出さない。
+  - 段階 B（復旧）: 段階 A のログで遅い段階を特定し、その段階の待機・再試行を見直す。品質基準を満たした当日分の snapshot が、45 分以内に保存・commit される。 [要確認: 具体的な修正は原因の特定後に記述する。`verify-before-fix` で扱うことを推奨]
 - **受入条件**:
-  1. 合成データで、「100→149 まで上がってから WATCH → 翌日 150」は、検出済みでも上昇倍率 1.49 として記録される（現行 Recall は 100% と表示するケース）。
-  2. 観測一覧に無い急騰銘柄も分母に入る。
-  3. 将来の価格を変えても、その日以前の段階判定は変わらない（先読みなしのテスト）。
-  4. ローカル日足キャッシュの読取りだけで実行でき、例示 8 銘柄（キオクシア等）の段階別到達日を出力する。試作 `exemplar_funnel.py` の変形 B は**正解値ではなく比較資料**とする。変形 B は上場済み銘柄の 52 週高値加点を 60 本から判定するが、現行実装（`_technical_features`）は 252 本必須で、本要件は現行ロジックを変えず再利用する。到達日が変形 B と食い違う場合は、一致させず、差の理由（高値加点の判定本数・調整価格の違い）を出力に記録する。
-  5. 既存の `tracked_pool_explosion_recall` と既存テストは不変。
+  1. fake の client と provider で `scan_japan_inflection` を実行すると、段階ログがこの順に出て、ticker・会社名・URL が含まれない（テスト）。
+  2. ログが即時に出る。`flush=True`、または workflow の `PYTHONUNBUFFERED=1` を静的テストで確認する。
+  3. 段階 A を入れた main の run のログで、止まった段階が分かる（Actions 上で確認）。
+  4. 段階 B の後、main の通常実行で当日の snapshot が commit される（Actions 上で確認）。
 - **備考**:
-  - **イベント定義（確定）**:
-    - 成立: ある日 H の終値が、H の直前 120 営業日の最安終値の 2 倍以上になった最初の日。
-    - 底: その 120 営業日の窓の最安終値の日（同値なら最も早い日）。
-    - 重複: 同一銘柄は、成立した底から 120 営業日が経つまで次のイベントを作らない（長く続く上昇は 1 件にまとめる）。
-    - 初期: 底から終値 +50% に達する日の**前日まで**。+50% 到達当日は含めない（終値で判定して翌始値で買うので、当日は買えない。既存 Recall も `< explosion_date` と厳密に前で、揃える）。
-    - 段階への到達は、その日の終値で判定し、買える価格は翌営業日の始値で測る。
-  - **評価できる期間を分ける**:
-    - 価格だけの段階（価格あり → 流動性 → 上位 25）は、日足が 21 本以上ある日から評価する。52 週高値の加点は 252 本が溜まるまで効かないため、`high_bonus_available=false` の期間を出力で区別する。
-    - EARLY/WATCH の段階は、既存 historical の開始日（`default_signal_start`: 252 本の価格履歴と財務の準備期間 `FINS_WARMUP_DAYS` を満たす日、[inflection_historical.py:395](../../src/evaluation/inflection_historical.py#L395)）以降だけ評価する。
-    - 開始日より前に起点があるイベントは、EARLY/WATCH の段階を「未評価」とし、検出にも未検出にも数えず、別の件数で出す。
-  - [要確認: 受入の合否基準] 「初期」の上昇率の許容値、許容損失、通知上限の数値はプロジェクトの受入条件として別途決める（Codex G01 も同じ指摘）。本要件は測定までで、合否判定は含まない。
-  - 注意: 試作は J-Quants の分割調整済み終値で、本番の yfinance Adj Close（配当込み）と異なる。historical の既存注記（[inflection_historical.py:379](../../src/evaluation/inflection_historical.py#L379)）と同様に限界として出力へ記す。
-  - 受入条件 1 の例（100→149 で WATCH）は、上の定義では「+50% 到達の前日までに検出」となり、検出済みで記録される。そのうえで上昇倍率 1.49 が出力に残ることを確認する。
+  - [要確認: 時間切れの延長] `timeout-minutes` を延ばすのは、原因が直せない場合の最後の手段とするか。延ばす場合も上限を決める。
+  - 散発的な 5 日の欠測も、同じ段階ログで原因を確認する。原因が別なら、別の要件にする。
 
-### REQ-002: OVEREXTENDED 群を historical 評価に入れる
+### REQ-002: 時間切れを、失敗通知で他の失敗と区別する（調査メモに無い問題）
 
-- **画面**: なし（評価レポート）
-- **対象ファイル**: [inflection_historical.py](../../src/evaluation/inflection_historical.py)（`GROUPS` は :376、群の評価は :733 付近）。forward 側は既に OVEREXTENDED を読む（[rebuild_inflection_forward_validation.py:208](../../scripts/rebuild_inflection_forward_validation.py#L208)）ので揃える。
-- **Before（現状）**: `GROUPS = ("EARLY_CANDIDATE", "WATCH", "NONE", "CONTROL")`。旧 summary では signal 4,700 件のうち 152 件がどの群にも入らず、評価されていない。「+50% 超を除外する判断」（[inflection_live.py:461](../../src/screening/inflection_live.py#L461)）の妥当性が historical で測れない。
-- **After（期待）**: historical レポートに `overextended` 群が追加され、他群と同じ指標（h5〜h252 の成績・+50% 到達率・MFE/MAE 等）が出る。
+- **画面**: なし（失敗通知の Slack 文面）
+- **対象ファイル**: [inflection_shadow.yml](../../.github/workflows/inflection_shadow.yml)（`failure_stage` :33、`FAILURE_STAGE` :125）、[check_workflow_health.py](../../scripts/check_workflow_health.py)（`STAGES` :24、`failure_alert` :60）。`notify-failure` を持つ他の 3 workflow（[position_monitor.yml](../../.github/workflows/position_monitor.yml) :25/:83、[forward_validation.yml](../../.github/workflows/forward_validation.yml) :29/:141/:198、[reliability_watchdog.yml](../../.github/workflows/reliability_watchdog.yml) :19/:102）も同じ作りなので揃える。
+- **Before（現状）**: job がキャンセルされると、scan の出力に `failure_stage` が無いため、`'data_acquisition'` に置き換わる。11 回の時間切れは、Slack では `kind=data_acquisition`（データ取得の失敗）として届いたはず。API の失敗と時間切れを通知から区別できない。他の 3 workflow も、キャンセル時は `monitor`・`forward`・`watchdog` という汎用の段階になる。
+- **After（期待）**: `needs.<job>.result == 'cancelled'` のとき、通知の kind が `cancelled`（時間切れ、または手動の取消）になる。GitHub の結果では、時間切れと手動の取消は区別できない。
 - **受入条件**:
-  1. 群の件数の合計が signal 総数と一致する（欠けなし）。
-  2. 既存 4 群の数値は変わらない（追加キーのみ）。変わる場合は理由を記録。
-  3. 合成データで OVEREXTENDED が `overextended` 群に入るテストがある。
-- **備考**: 評価の追加のみ。分類基準（r20 ≥ 50%・r60 ≥ 100%）は変えない。Monitor の「過熱」警告は対象外。
+  1. `FAILURE_STAGE=cancelled` で `failure_alert` を呼ぶと、`kind=cancelled` の文面になる（テスト）。
+  2. 4 workflow で、キャンセル時に `cancelled` が渡ることを静的テストで確認する。
+  3. 既存の失敗の分類（`price_retry_exhausted` など）と既存テストは変わらない。
 
-### REQ-003: CONTROL を forward 評価へ別経路で接続する
+### REQ-003: 日付をまたいだ監視でも、直近の取引日の欠測を検出する
 
-- **画面**: なし（forward 評価レポート）
-- **対象ファイル**: [inflection_forward.py](../../src/evaluation/inflection_forward.py)（loader は :89 付近で `candidates` のみ読む）、[rebuild_inflection_forward_validation.py](../../scripts/rebuild_inflection_forward_validation.py)。learning への接続は含めない（[inflection_learning.py:139](../../src/evaluation/inflection_learning.py#L139) は現状維持）。
-- **Before（現状）**: snapshot の `control_sample` は保存されているが、forward 評価は読まない。historical だけが CONTROL を評価している。
-- **After（期待）**: forward レポートに、同じ日・保有期間・コスト条件の `control` 群が別キーで追加される。既存の candidate 系列には混ぜない。
+- **画面**: なし（Reliability Watchdog の Slack 通知）
+- **対象ファイル**: [check_workflow_health.py](../../scripts/check_workflow_health.py)（`_expected_runs` :103、`watchdog_alerts` :124）、[session_gaps.py](../../src/data/session_gaps.py)（`expected_snapshot_missing` :35）
+- **Before（現状）**: watchdog（cron は 20:10 JST）の 11/18 分は、11/19 の 04:22 JST に起動した。`_expected_runs` は「今日（JST）が取引日で、今日の予定時刻から 2 時間たったか」だけを見る。04:22 の時点では、11/19 の scan はまだ対象外になる。`expected_snapshot_missing` も、直近の確定取引日（11/18）が今日（11/19）でなければ `None` を返す。このため 11/18 の欠測を検出できなかった。
+  - **調査メモに無い問題**: 同じ関数が Position Monitor（15:50 JST）も判定しているので、Monitor の欠測も同じ条件で見逃す。土曜の watchdog も、金曜の分を確認しない。
+- **After（期待）**: workflow ごとに、「予定時刻から 2 時間の猶予が過ぎた、直近の取引日」を求める。その日の実行結果と snapshot（scan のみ）を照合する。翌日の早朝や週末に起動しても、前の取引日の欠測を検出する。同じ欠測は 1 回だけ通知する（既存の `deadman:{workflow}:{予定時刻}` の key と、送信済みの一覧で重複を防ぐ）。
 - **受入条件**:
-  1. `control_sample` を持つ snapshot（schema 5）で control 群が出る。持たない旧 schema では群が空で、エラーにならない。
-  2. 既存の EARLY/WATCH/NONE/OVEREXTENDED の数値は変わらない（学習・評価の入力に混ぜない: [project-overview.md:66](../project-overview.md) の方針を維持）。
-  3. fake の snapshot で、control 群が candidate 群と同じ entry/exit 規則で計算されるテストがある。
-- **備考**: 実 snapshot は復号しない。検証は fake と一時ディレクトリで行う。
+  1. now = 11/19 04:22 JST で 11/18 の snapshot と成功した run が無い場合、11/18 分の通知が 1 件出る（テスト）。
+  2. 同じ key が送信済みなら、次の watchdog では再通知しない（テスト）。
+  3. 既存のケース（当日 20:10 の起動、休日、初回 snapshot の前）の結果が変わらない。Position Monitor の判定も同じ規則で通る（テスト）。
+- **備考**: 照合するのは直近の 1 取引日だけにする。過去の欠測をさかのぼって通知することはしない（調査メモの範囲）。
+
+### REQ-004: ダイジェストの送信状態を Git に保存する
+
+- **画面**: なし（Slack ダイジェストの再送）
+- **対象ファイル**: [.gitignore](../../.gitignore)（`*.json` :15）、[inflection_shadow.yml](../../.github/workflows/inflection_shadow.yml)（`git add dashboard/data/inflection/` :87）、[tests/test_workflow_reliability.py](../../tests/test_workflow_reliability.py)。文書: [project-overview.md:70](../project-overview.md)、[docs/playbooks.md](../../docs/playbooks.md)（:38-45）、[actions-verification-runbook-2026-10-19.md](actions-verification-runbook-2026-10-19.md)（:39）。
+- **Before（現状）**:
+  - `*.json` の除外設定で、`dashboard/data/inflection/digest_state.json` は `git add` から外れる（`git check-ignore` で確認済み。履歴にも一度も入っていない）。runner は毎回この状態ファイルなしで始まる。
+  - そのため、送信に失敗した日の `pending` は次の run に引き継がれない。前の取引日の再送（`_recover_pending_digests`、ISSUE-18）は、Actions 上では一度も働かない。同じ日の再実行も `skipped:legacy-no-state` になる。10 月の修正（ISSUE-06・16・18）は、ローカルのテストでしか確認されていなかった。
+  - **調査メモに無い問題（文書）**: project-overview.md:70 に、10 月に削除したはずの記述「状態ファイルの初回保存失敗は run を失敗させます」が残っている（ISSUE-20 は英語の playbooks だけを直した）。runbook :39 は「`digest_state.json` は repo 内」と書いているが、実際は repo に無い。
+- **After（期待）**: 除外設定に `!dashboard/data/inflection/digest_state.json` を加え、scan の Commit step で snapshot と一緒に commit される。中身は日付と `pending`/`succeeded` だけで、銘柄は含まない。文書は実際の動作と一致する。
+- **受入条件**:
+  1. `git check-ignore dashboard/data/inflection/digest_state.json` が「除外されない」になる（静的テスト。他の `*.json` の除外は維持）。
+  2. fake の webhook で、1 回目は送信失敗（`pending` が残る）、2 回目は同じ状態ファイルから再送して `succeeded` になる。状態ファイルが一時 Git リポジトリの `git add dashboard/data/inflection/` で stage される（テスト）。
+  3. 既存の通知テストが変わらずに PASS する。
+  4. project-overview.md・playbooks.md・runbook の digest 状態の記述が、互いに、また現行の動作と矛盾しない（`grep` で確認）。
+- **備考**: 状態ファイルは、次に成功した scan で初めて commit される。過去分を補う必要は無い（調査メモによると、今回の pull で追加された 8 日分はログ上すべて送信成功）。
 
 ---
 
 ## 完了済み・保留中
 
 ### 完了済み
-- なし（前の proposal の D1〜D3 は git 履歴を参照。今回は実装状況未確認）。
+- なし。
 
 ### 保留中（今回のスコープ外）
-- 重み・閾値の変更、52 週高値の加点の見直し（M5）。REQ-001〜003 の結果が出てから判断する。
-- 信用残・日々公表・空売りの取得（M3）。J-Quants スタンダード（月 3,300 円）が前提で、契約判断は REQ-001 の結果後。
-- 売買単位 100 株・約定可否・ストップ高の扱い（G07）、出口別の資金推移（G06）、試行台帳と確認期間（G04）、依存を反映した区間（G05）。
-- 爆発的価格の検定（PSY）・暴落確率の特徴量（M4）、注目・テーマ（M6）、新規上場銘柄の高値判定（M7）。いずれも測定結果を見てから。
-- 60/120 日成績による EARLY の収益性判定（標本待ち）。
+- **52 週高値圏の加点（+10 点）の検証**: スキャンの復旧（REQ-001）の後に行う。同じ日・同じ銘柄集合で、この加点だけを変え、上位 25 銘柄の入れ替わりと急騰前の発見率を比べる（調査メモの方針）。実装では、52 週高値圏と上場来高値圏が同じ加点を共有している（[inflection_live.py:216](../../src/screening/inflection_live.py#L216)）。上場来高値圏は 5 営業日で独立 3 件しか無いので、分けて評価できるかも確認する。
+- **EARLY 70 / WATCH 52・過熱除外**: 維持する（調査メモの判断。20 営業日の 95% 区間が EARLY・WATCH ともゼロをまたぐ）。
+- **60・120 営業日の成績**: 独立観測が 0 件。標本が溜まるのを待つ。
+- 5・20 営業日で、成熟したのに価格不足で判定できない観測が各 4 件ある（`price_unavailable`）。昇格判定の保留の原因だが、銘柄の終了理由が分からないので、今回は扱わない。

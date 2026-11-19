@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from unittest.mock import patch
 
 import pandas as pd
@@ -480,6 +481,37 @@ def test_scan_reports_market_coverage_by_stable_market_code() -> None:
     assert report["price_data_count"] == 3
     assert report["technical_usable_count"] == 1
     assert report["latest_price_date_count"] == 3
+
+
+@pytest.mark.parametrize(("edinet_error", "edinet_count"), [
+    (None, " filings=0"),
+    (EdinetError("https://private.test/1111.T"), " unavailable=1"),
+])
+def test_scan_logs_each_provider_stage_and_only_aggregate_counts(
+    edinet_error: EdinetError | None, edinet_count: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    current = _price_frame()
+    with (
+        patch.dict("os.environ", {"EDINET_API_KEY": "private-test-key", "INFLECTION_PRICE_RETRY_COUNT": "1",
+                                  "INFLECTION_PRICE_RETRY_WAIT_SECONDS": "0"}),
+        patch("src.screening.inflection_live.expected_tse_session_date", return_value=str(current.index[-1].date())),
+        patch("src.screening.inflection_live.fetch_price_data",
+              side_effect=[{"1111.T": current.iloc[:-1]}, {"1111.T": current}]),
+        patch("src.screening.inflection_live.fetch_live_holder_filings", return_value=[], side_effect=edinet_error),
+    ):
+        scan_japan_inflection(client=FakeJQuantsClient(), min_turnover_jpy=0)
+
+    output = capsys.readouterr().out
+    assert all(private not in output for private in ("1111.T", "Test Corp", "https://", "private-test-key"))
+    assert re.findall(r"^SCAN_STAGE: stage=(\w+) event=(\w+) elapsed=\d+\.\d+(.*)$", output, re.MULTILINE) == [
+        ("master", "start", ""), ("master", "end", " universe=1"),
+        ("prices", "start", " requested=1"), ("prices", "end", " fetched=1"),
+        ("price_retry", "start", " requested=1"), ("price_retry", "end", " fetched=1"),
+        ("edinet", "start", ""), ("edinet", "end", edinet_count),
+        ("selection", "start", ""), ("selection", "end", " deep=1 control=1"),
+    ]
+    assert output.index("DATA_HEALTH_RETRY:") < output.index("stage=price_retry event=start")
+    assert output.index("stage=price_retry event=end") < output.index("DATA_HEALTH_RECOVERED:")
 
 
 def test_scan_retries_only_stale_tickers_and_recovers() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -295,6 +297,24 @@ def test_pending_digest_is_retried_and_success_is_not_resent(tmp_path: Path) -> 
         assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "skipped:already-succeeded"
     send.assert_called_once()
     assert '"2026-09-30": "succeeded"' in state.read_text(encoding="utf-8")
+
+
+def test_failed_digest_is_staged_and_retried_from_the_saved_state(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    shutil.copyfile(Path(__file__).resolve().parents[1] / ".gitignore", tmp_path / ".gitignore")
+    state_path = Path("dashboard/data/inflection/digest_state.json")
+    state = tmp_path / state_path
+    report = make_report()
+    with patch.object(shadow, "send_daily_digest", return_value="failed:Timeout"):
+        assert shadow._deliver_digest(report, snapshot_created=True, state_path=state) == "failed:Timeout"
+    assert json.loads(state.read_text()) == {report["latest_price_date"]: "pending"}
+
+    subprocess.run(["git", "add", "dashboard/data/inflection/"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "ls-files", "--cached", "--error-unmatch", str(state_path)], cwd=tmp_path, check=True)
+    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
+        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "sent"
+    send.assert_called_once()
+    assert json.loads(state.read_text()) == {report["latest_price_date"]: "succeeded"}
 
 
 def test_manual_resend_sends_a_succeeded_digest(tmp_path: Path) -> None:

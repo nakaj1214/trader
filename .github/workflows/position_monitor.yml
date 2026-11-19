@@ -80,7 +80,7 @@ jobs:
       - name: Notify classified workflow failure
         id: notify
         env:
-          FAILURE_STAGE: ${{ needs.monitor.outputs.failure_stage || 'monitor' }}
+          FAILURE_STAGE: ${{ needs.monitor.result == 'cancelled' && 'cancelled' || needs.monitor.outputs.failure_stage || 'monitor' }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           WORKFLOW_NAME: position_monitor.yml

@@ -13,6 +13,7 @@ venv/
 .env
 credentials.json
 *.json
+!dashboard/data/inflection/digest_state.json
 !archive/legacy/dashboard/data/*.json
 !archive/legacy/dashboard-v2/package.json
 !archive/legacy/dashboard-v2/package-lock.json

@@ -1,6 +1,7 @@
 """Lock the production scheduling and notification boundaries without running Actions."""
 
 import re
+import subprocess
 from pathlib import Path
 
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -52,6 +53,36 @@ def test_failures_are_reported_by_separate_jobs_and_missing_runs_by_a_watchdog()
         assert "always()" in workflow
         assert "check_workflow_health.py --notify-failure" in workflow
     assert (WORKFLOWS / "reliability_watchdog.yml").exists()
+
+
+def test_scan_step_writes_unbuffered_logs() -> None:
+    workflow = (WORKFLOWS / "inflection_shadow.yml").read_text()
+    scan = workflow.split("id: scan\n", 1)[1].split("run: python scripts/run_inflection_shadow.py", 1)[0]
+    assert "PYTHONUNBUFFERED: '1'" in scan
+
+
+def test_failure_notifications_prioritize_each_cancelled_job() -> None:
+    for filename, jobs in {
+        "inflection_shadow.yml": ["scan"],
+        "position_monitor.yml": ["monitor"],
+        "reliability_watchdog.yml": ["watchdog"],
+        "forward_validation.yml": ["validate", "persist-price-hashes"],
+    }.items():
+        notification = (WORKFLOWS / filename).read_text().split("\n  notify-failure:", 1)[1]
+        expression = notification.split("FAILURE_STAGE:", 1)[1].splitlines()[0]
+        conditions = " || ".join(f"needs.{job}.result == 'cancelled'" for job in jobs)
+        if len(jobs) > 1:
+            conditions = f"({conditions})"
+        assert expression.strip().startswith("${{ " + conditions + " && 'cancelled' ||"), filename
+
+
+def test_only_the_digest_state_is_exempt_from_the_snapshot_json_ignore_rule() -> None:
+    repo = WORKFLOWS.parents[1]
+    for filename, expected in [("digest_state.json", 1), ("other.json", 0)]:
+        result = subprocess.run(
+            ["git", "check-ignore", "--no-index", "-q", f"dashboard/data/inflection/{filename}"], cwd=repo, check=False,
+        )
+        assert result.returncode == expected
 
 
 def _job_header(workflow: str, job: str) -> str:

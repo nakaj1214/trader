@@ -99,7 +99,7 @@ jobs:
       - name: Notify watchdog failure
         id: notify
         env:
-          FAILURE_STAGE: ${{ needs.watchdog.outputs.failure_stage || 'watchdog' }}
+          FAILURE_STAGE: ${{ needs.watchdog.result == 'cancelled' && 'cancelled' || needs.watchdog.outputs.failure_stage || 'watchdog' }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           WORKFLOW_NAME: reliability_watchdog.yml

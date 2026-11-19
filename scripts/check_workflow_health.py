@@ -9,7 +9,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -22,7 +22,7 @@ from src.data.quiet_output import suppress_provider_output
 STATE = ROOT / ".harness" / "state" / "workflow-alerts.json"
 WORKFLOWS = ("inflection_shadow.yml", "position_monitor.yml", "forward_validation.yml", "reliability_watchdog.yml")
 STAGES = {"authentication", "checkout", "setup", "install", "data_acquisition", "data_validation",
-          "snapshot_save", "git_push", "forward", "monitor", "watchdog", "notification", "workflow_failure"}
+          "snapshot_save", "git_push", "forward", "monitor", "watchdog", "notification", "cancelled", "workflow_failure"}
 HTTP_TIMEOUT_SECONDS = 10
 
 
@@ -71,7 +71,7 @@ def failure_alert() -> dict[str, str]:
         stage = "workflow_failure"
     details = json.loads(os.getenv("RETRY_DETAILS_JSON") or "{}")
     lines = [f"workflow={workflow} kind={stage}", f"run=https://github.com/{_repository()}/actions/runs/{run_id}"]
-    if isinstance(details, dict) and details.get("retry_exhausted") == "true":
+    if stage != "cancelled" and isinstance(details, dict) and details.get("retry_exhausted") == "true":
         lines[0] = f"workflow={workflow} kind=price_retry_exhausted"
         for key in ("expected_date", "universe", "missing", "price_data", "price_coverage", "latest_coverage",
                     "latest_dates", "dropped_future_bars", "failed_gate", "attempts"):
@@ -100,21 +100,27 @@ def _github_runs(workflow: str) -> list[dict[str, Any]]:
     return list(runs)
 
 
-def _expected_runs(now: datetime) -> dict[str, datetime]:
-    import exchange_calendars as xcals
+# First and closing weekday cron times (JST). Only the closing run is required.
+DAILY_CRON_TIMES = {
+    "position_monitor.yml": (time(9, 20), time(15, 50)),
+    "inflection_shadow.yml": (time(16, 40), time(16, 40)),
+}
 
-    from src.data.market_calendar import TSE_CALENDAR
+
+def _expected_runs(now: datetime) -> dict[str, datetime]:
+    from src.data.session_gaps import sessions_between
 
     if now.tzinfo is None:
         raise ValueError("watchdog time must include a timezone")
     japan = now.astimezone(JST)
     expected: dict[str, datetime] = {}
-    # Two hours of scheduler grace; the deadman check never labels an in-flight normal run missing.
-    if bool(xcals.get_calendar(TSE_CALENDAR).is_session(japan.date().isoformat())):
-        for workflow, hour, minute in (("position_monitor.yml", 15, 50), ("inflection_shadow.yml", 16, 40)):
-            scheduled = japan.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    sessions = sessions_between(japan.date() - timedelta(days=14), japan.date())
+    for workflow, (_, closing_time) in DAILY_CRON_TIMES.items():
+        for session in reversed(sessions):
+            scheduled = datetime.combine(session, closing_time, JST)
             if japan >= scheduled + timedelta(hours=2):
                 expected[workflow] = scheduled
+                break
     sunday = (japan - timedelta(days=(japan.weekday() + 1) % 7)).replace(hour=9, minute=30, second=0, microsecond=0)
     if japan >= sunday + timedelta(hours=2):
         expected["forward_validation.yml"] = sunday
@@ -129,16 +135,21 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
         runs = _github_runs(workflow)
         relevant = []
         events = ("schedule",) if workflow == "forward_validation.yml" else ("schedule", "workflow_dispatch")
+        next_cron = None
+        if workflow in DAILY_CRON_TIMES:
+            # GitHub schedules weekday runs even when the exchange observes a holiday.
+            next_weekday = expected.date() + timedelta(days=3 if expected.weekday() == 4 else 1)
+            next_cron = datetime.combine(next_weekday, DAILY_CRON_TIMES[workflow][0], JST)
         for run in runs:
             if run.get("head_branch") != "main" or run.get("event") not in events:
                 continue
             started = datetime.fromisoformat(str(run.get("run_started_at") or run.get("created_at")))
             if started.tzinfo is None:
                 raise ValueError("GitHub workflow timestamp lacks timezone")
-            if expected <= started <= now:
+            if expected <= started <= now and (next_cron is None or started < next_cron):
                 relevant.append(run)
         success = any(run.get("conclusion") == "success" for run in relevant)
-        snapshot_missing = (expected_snapshot_missing(snapshot_dir, now) is not None
+        snapshot_missing = (expected_snapshot_missing(snapshot_dir, expected.date()) is not None
                             if workflow == "inflection_shadow.yml" else False)
         if success and not snapshot_missing:
             continue

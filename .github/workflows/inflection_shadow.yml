@@ -71,6 +71,7 @@ jobs:
       - name: Run JP inflection shadow scan
         id: scan
         env:
+          PYTHONUNBUFFERED: '1'
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -78,7 +79,7 @@ jobs:
           RESEND_DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resend_digest || false }}
         run: python scripts/run_inflection_shadow.py
 
-      # Intentional direct push: this step writes encrypted generated data only, never source code.
+      # The scan publishes its encrypted reports and the digest delivery state for the next run.
       - name: Commit encrypted immutable market-day snapshot
         id: persist
         run: |
@@ -122,7 +123,7 @@ jobs:
       - name: Notify classified workflow failure
         id: notify
         env:
-          FAILURE_STAGE: ${{ needs.scan.outputs.failure_stage || 'data_acquisition' }}
+          FAILURE_STAGE: ${{ needs.scan.result == 'cancelled' && 'cancelled' || needs.scan.outputs.failure_stage || 'data_acquisition' }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           RETRY_DETAILS_JSON: ${{ toJSON(needs.scan.outputs) }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

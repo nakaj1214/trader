@@ -158,8 +158,8 @@ def simulate_exit_rule(
     score = float(signal.get("score", 0.0))
     opens, closes = _series(history, "Open"), _series(history, "Close")
     highs, lows = _series(history, "High"), _series(history, "Low")
-    entry_date, window, has_full_horizon, diagnostics = _evaluation_window(
-        history, opens, closes, signal_date, holding_days, market_calendar
+    entry_date, window, has_full_horizon, diagnostics, market_calendar = _evaluation_window(
+        history, opens, closes, signal_date, holding_days, market_calendar, available_at=signal.get("available_at"),
     )
     entry_price = float(opens.loc[entry_date]) if entry_date is not None else None
     if diagnostics["missing_sessions"]:
@@ -292,6 +292,7 @@ def simulate_exit_rule(
         metric_highs=metric_highs,
         metric_lows=metric_lows,
         closes=closes,
+        market_calendar=market_calendar,
         has_full_horizon=has_full_horizon,
         round_trip_cost_pct=round_trip_cost_pct,
         apply_tax=apply_tax,

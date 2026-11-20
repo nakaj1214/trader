@@ -251,10 +251,8 @@ def _recover_pending(
             if previous and _stored_triggered(previous) and previous.get("last_notified_at"):
                 return dict(previous)
             return {**asdict(status), "status": "recovered", "error": "",
-                    "exit_reason": f"recovered_{status.exit_reason}", "triggered_at": status.touch_at,
+                    "exit_reason": f"recovered_{status.exit_reason}", "triggered_at": status.touch_at or session.isoformat(),
                     "last_notified_at": ""}
-        if daily is None and datetime.fromisoformat(quote.as_of_at) < close:
-            raise IncompleteQuoteError("pending historical session end is not yet confirmed")
     return None
 
 
@@ -479,17 +477,15 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 in_session=in_market_window,
             )
             result = {**asdict(status), "status": "ok", "error": ""}
-            close = calendar.session_close(current.date().isoformat()).to_pydatetime().astimezone(JST)
-            if not status.triggered and current >= close and datetime.fromisoformat(status.as_of_at) < close:
-                result.update(status="incomplete", error="session end is not yet confirmed")
             was_triggered = _stored_triggered(previous)
             if previous and was_triggered:
                 result["triggered"] = True
                 result["exit_reason"] = previous.get("exit_reason", status.exit_reason)
             if result["triggered"]:
                 result["triggered_at"] = (
-                    previous.get("triggered_at") if previous and was_triggered else current.isoformat()
-                ) or current.isoformat()
+                    previous.get("triggered_at", "") if previous and was_triggered
+                    else status.touch_at or current.date().isoformat()
+                )
                 result["last_notified_at"] = previous.get("last_notified_at", "") if previous and was_triggered else ""
                 if not result["last_notified_at"]:
                     notifications.append(result)
@@ -542,7 +538,10 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
         details = "\n".join(
             f"• {row['ticker']}: "
             + ("過去の未評価区間の接触回収 " if row["status"] == "recovered" else "現在の接触 ")
-            + f"{row['exit_reason']} at={row['triggered_at']} current={row['current_price']} stop={row['stop_price']}"
+            + f"{row['exit_reason']} "
+            + (f"接触の可能性（{str(row['triggered_at'])[:10]}・時刻不明）"
+               if str(row["exit_reason"]).endswith("daily_possible_touch") else f"at={row['triggered_at']}")
+            + f" current={row['current_price']} stop={row['stop_price']}"
             for row in notifications
         )
         try:

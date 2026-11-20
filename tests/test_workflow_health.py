@@ -126,7 +126,10 @@ def test_daily_run_attribution_ends_at_the_next_weekday_cron(
     with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: [run] if w == workflow else []):
         alerts = watchdog_alerts(now, tmp_path, sent)
     keys = [alert["key"] for alert in alerts if alert["key"].startswith(f"deadman:{workflow}:")]
-    assert keys == ([] if overnight else [f"deadman:{workflow}:{session}T{closing_cron}:00+09:00"])
+    holiday_skip = workflow == "position_monitor.yml" and now.date().isoformat() == "2026-11-03" and overnight
+    assert keys == ([] if overnight and not holiday_skip else [f"deadman:{workflow}:{session}T{closing_cron}:00+09:00"])
+    if holiday_skip:
+        assert any("position_monitor.yml kind=no_successful_run" in alert["text"] for alert in alerts)
 
 
 def test_delivered_alert_is_persisted_once_and_a_rerun_sends_nothing(tmp_path: Path) -> None:
@@ -169,6 +172,16 @@ def test_cancelled_job_is_reported_as_cancelled(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setenv("FAILURE_STAGE", "cancelled")
     monkeypatch.setenv("RETRY_DETAILS_JSON", json.dumps(details))
     assert failure_alert()["text"].splitlines()[0] == "workflow=inflection_shadow.yml kind=cancelled"
+
+
+@pytest.mark.parametrize(("stage", "kind"), [("configuration", "configuration"), ("unrecognized", "workflow_failure")])
+def test_failure_alert_classifies_configuration_errors(monkeypatch: pytest.MonkeyPatch, stage: str, kind: str) -> None:
+    monkeypatch.setenv("WORKFLOW_NAME", "inflection_shadow.yml")
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    monkeypatch.setenv("FAILURE_STAGE", stage)
+    monkeypatch.delenv("RETRY_DETAILS_JSON", raising=False)
+    assert failure_alert()["text"].splitlines()[0] == f"workflow=inflection_shadow.yml kind={kind}"
 
 
 def test_rerun_attempts_share_one_failure_identity_and_keep_retry_details(monkeypatch: pytest.MonkeyPatch) -> None:

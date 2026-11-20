@@ -15,8 +15,10 @@ from dataclasses import asdict, dataclass
 from statistics import mean, median
 from typing import Any
 
+import exchange_calendars as xcals
 import pandas as pd
 
+from src.data.market_calendar import JST, TSE_CALENDAR
 from src.evaluation.explosion import FIXED_MAX_RETURN_PCT
 
 BOOTSTRAP_SEED = 1234
@@ -127,13 +129,24 @@ def _evaluation_window(
     history: pd.DataFrame, opens: pd.Series, closes: pd.Series, signal_date: pd.Timestamp,
     holding_days: int, market_calendar: pd.DatetimeIndex | None,
     prepared_calendar: pd.DatetimeIndex | None = None,
-) -> tuple[pd.Timestamp | None, pd.Series, bool, dict[str, Any]]:
+    *, available_at: str | None = None,
+) -> tuple[pd.Timestamp | None, pd.Series, bool, dict[str, Any], pd.DatetimeIndex | None]:
     calendar = (prepare_calendar(pd.DatetimeIndex(history.index if market_calendar is None else market_calendar))
                 if prepared_calendar is None else prepared_calendar.copy(deep=True))
     cutoff = calendar[-1] if len(calendar) else signal_date
     after_open = opens[(opens.index > signal_date) & (opens.index <= cutoff)] if not opens.empty else opens
+    eligible_sessions = calendar[calendar > signal_date]
+    if available_at is not None:
+        known = pd.Timestamp(available_at)
+        if known.tzinfo is None:
+            raise ValueError("available_at must include a timezone")
+        first_open = xcals.get_calendar(TSE_CALENDAR).next_open(known.floor("min"))
+        first_session = pd.Timestamp(first_open.tz_convert(JST).date())
+        eligible_sessions = eligible_sessions[eligible_sessions >= first_session]
+        if not after_open.empty:
+            after_open = after_open[after_open.index >= first_session]
     entry = pd.Timestamp(after_open.index[0]) if len(after_open) else None
-    sessions = calendar[calendar >= entry] if entry is not None else calendar[calendar > signal_date]
+    sessions = eligible_sessions[eligible_sessions >= entry] if entry is not None else eligible_sessions
     required = sessions[:holding_days]
     matured = len(required) == holding_days
     diagnostics = _price_diagnostics(closes, calendar, required, history.attrs.get("price_status"))
@@ -141,7 +154,7 @@ def _evaluation_window(
     diagnostics["expected_exit_date"] = str(required[-1].date()) if matured else None
     if market_calendar is not None and entry is not None:
         # A stock without a bar at the next market session enters at its next open (Stage 1 / C05); say so.
-        delay = int(((calendar > signal_date) & (calendar < entry)).sum())
+        delay = int((eligible_sessions < entry).sum())
         if delay:
             diagnostics["entry_delay_sessions"] = delay
     window = closes.reindex(required).dropna()
@@ -159,7 +172,7 @@ def _evaluation_window(
     if reason is None and not matured:
         reason = "right_censored" if market_calendar is not None else "market_calendar_unavailable"
     diagnostics["unevaluated_reason"] = reason
-    return entry, window, matured, diagnostics
+    return entry, window, matured, diagnostics, calendar if market_calendar is not None else None
 
 
 def _true_max_drawdown_pct(entry_price: float, closes: pd.Series) -> float | None:
@@ -187,6 +200,7 @@ def _finalize_trade(
     metric_highs: list[float],
     metric_lows: list[float],
     closes: pd.Series,
+    market_calendar: pd.DatetimeIndex | None,
     has_full_horizon: bool,
     round_trip_cost_pct: float,
     apply_tax: bool,
@@ -218,12 +232,14 @@ def _finalize_trade(
         peak_giveback = (peak_price - exit_price) / peak_price * 100.0
         if mfe > 0:
             peak_capture = net / mfe
-    future_after_exit = closes[closes.index > exit_date]
+    sessions = closes.index if market_calendar is None else market_calendar
+    future_sessions = sessions[sessions > exit_date]
 
     def early_exit_return(days: int) -> float | None:
-        if len(future_after_exit) < days or exit_price <= 0:
+        if len(future_sessions) < days or exit_price <= 0:
             return None
-        return (float(future_after_exit.iloc[days - 1]) / exit_price - 1.0) * 100.0
+        close = closes.get(future_sessions[days - 1])
+        return (float(close) / exit_price - 1.0) * 100.0 if close is not None else None
 
     return TradeResult(
         ticker=ticker,
@@ -288,8 +304,9 @@ def simulate_signal(
     score = float(signal.get("score", 0.0))
     opens, closes, highs, lows = (prepare_price_series(history) if prepared_series is None
                                  else copy_price_series(prepared_series))
-    entry_date, window, has_full_horizon, diagnostics = _evaluation_window(
+    entry_date, window, has_full_horizon, diagnostics, market_calendar = _evaluation_window(
         history, opens, closes, signal_date, holding_days, market_calendar, prepared_calendar=prepared_calendar,
+        available_at=signal.get("available_at"),
     )
     entry_price = float(opens.loc[entry_date]) if entry_date is not None else None
     if entry_date is None or window.empty or (trailing_stop_pct is None and diagnostics["unevaluated_reason"]):
@@ -395,6 +412,7 @@ def simulate_signal(
         metric_highs=metric_highs,
         metric_lows=metric_lows,
         closes=closes,
+        market_calendar=market_calendar,
         has_full_horizon=has_full_horizon,
         round_trip_cost_pct=round_trip_cost_pct,
         apply_tax=apply_tax,

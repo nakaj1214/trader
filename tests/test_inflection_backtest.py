@@ -464,6 +464,23 @@ def test_peak_and_early_exit_metrics_flow_into_summary() -> None:
     assert summary["median_early_exit_return_60d_pct"] == 10.0
 
 
+@pytest.mark.parametrize(("missing", "expected"), [("2026-11-09", 10.0), ("2026-11-12", None)])
+def test_post_exit_return_uses_the_exact_fifth_session_for_both_simulators(missing, expected) -> None:
+    from src.evaluation.exit_rules import TrailingRule, simulate_exit_rule
+
+    calendar = pd.bdate_range("2026-11-04", "2026-11-13")
+    data = pd.DataFrame({"Open": 100.0, "High": 200.0, "Low": 99.0, "Close": 100.0}, index=calendar)
+    data.loc[["2026-11-12", "2026-11-13"], "Close"] = [110.0, 200.0]
+    data = data.drop(missing)
+    signal = {"ticker": "A.T", "signal_date": "2026-11-04"}
+    trades = [
+        simulate_signal(signal, data, holding_days=1, market_calendar=calendar),
+        simulate_exit_rule(signal, data, TrailingRule(15), holding_days=1, market_calendar=calendar),
+    ]
+    assert all(trade.exit_date == "2026-11-05" and trade.early_exit_return_5d_pct == expected for trade in trades)
+    assert simulate_signal(signal, data, holding_days=1).early_exit_return_5d_pct == 100.0
+
+
 def test_peak_giveback_is_defined_when_mfe_is_zero() -> None:
     index = pd.bdate_range("2026-01-01", periods=8)
     history = pd.DataFrame(

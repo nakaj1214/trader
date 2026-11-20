@@ -32,6 +32,7 @@ from src.evaluation.inflection_forward import (
     BENCHMARK_TICKER,
     SnapshotLoadError,
     paired_benchmark_returns,
+    snapshot_available_at,
 )
 from src.evaluation.inflection_report import BENCHMARK_ROUND_TRIP_COST_PCT
 from src.evaluation.regime import regime_labels
@@ -136,6 +137,7 @@ def load_inflection_learning_observations(
         ):
             raise SnapshotLoadError(f"Invalid snapshot metadata/schema: {path.name}")
 
+        available_at = snapshot_available_at(payload, path)
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
             raise SnapshotLoadError(f"Invalid candidates payload: {path.name}")
@@ -208,6 +210,8 @@ def load_inflection_learning_observations(
                 "pre_score": float(pre_score) if pre_score is not None else None,
                 "sector33_code": str(sector33_code) if sector33_code else None,
             }
+            if available_at is not None:
+                observations[key]["available_at"] = available_at
 
     return sorted(observations.values(), key=lambda row: (str(row["signal_date"]), str(row["ticker"])))
 
@@ -530,11 +534,11 @@ def _independence_evidence(label: str, factor_rows: list[dict[str, Any]]) -> dic
     # A row without an identity cannot be shown to be distinct, so it adds nothing to these counts.
     tickers = {str(row["ticker"]) for row in factor_rows if row.get("ticker")}
     dates = {str(row["signal_date"]) for row in factor_rows if row.get("signal_date")}
-    sectors = [row.get("sector33_code") for row in factor_rows]
+    sectors = Counter(row["sector33_code"] for row in factor_rows if row.get("sector33_code"))
     top_share = None
     # A sector factor is concentrated by construction; unknown sectors are reported as unknown, not as diversified.
-    if not label.startswith("sector33:") and sectors and all(sectors):
-        top_share = max(Counter(sectors).values()) / len(sectors) * 100.0
+    if not label.startswith("sector33:") and sectors:
+        top_share = max(sectors.values()) / len(factor_rows) * 100.0
     insufficient = (
         len(tickers) < PROMOTION_MIN_DISTINCT_TICKERS
         or len(dates) < PROMOTION_MIN_SIGNAL_DATES

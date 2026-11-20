@@ -109,6 +109,16 @@ def test_load_inflection_signals_rejects_filename_market_date_mismatch(tmp_path)
         load_inflection_signals(snapshot_dir, encryption_secret=SECRET)
 
 
+@pytest.mark.parametrize("value", [None, "unreadable", "2026-09-09T11:00:00"])
+def test_snapshot_with_invalid_saved_time_fails_closed_even_without_candidates(tmp_path, value) -> None:
+    payload = _payload()
+    payload.update(candidates=[], generated_at="2026-09-08T16:40:00+09:00")
+    payload["storage"]["available_at"] = value
+    (tmp_path / "2026-09-08.enc").write_text(encrypt_json(payload, SECRET))
+    with pytest.raises(SnapshotLoadError, match="availability"):
+        load_inflection_control_signals(tmp_path, encryption_secret=SECRET)
+
+
 @pytest.mark.parametrize("schema_version", [None, True, "3", 0])
 def test_load_inflection_signals_rejects_invalid_schema_version(tmp_path, schema_version: object) -> None:
     snapshot_dir = tmp_path / "inflection"
@@ -434,6 +444,24 @@ def test_unavailable_control_keeps_hash_baseline_until_recovery(tmp_path) -> Non
     recovered = {"9999.T": {"split_only": {"2026-09-09": "revised-control"}}}
     assert _persist_price_hashes(path, candidate | recovered, SECRET) == [
         {"ticker": "9999.T", "price_basis": "split_only", "date": "2026-09-09"},
+    ]
+
+
+def test_partial_price_outage_preserves_the_missing_date_and_basis(tmp_path) -> None:
+    path = tmp_path / "hashes.enc"
+    days = pd.date_range("2026-11-04", periods=3)
+    history = pd.DataFrame(100.0, index=days, columns=["Open", "High", "Low", "Close"])
+    original = _history_row_hashes(history)
+    initial = {"1111.T": {"split_only": original, "total_return_adjusted": original}}
+    _persist_price_hashes(path, initial, SECRET)
+    partial = _history_row_hashes(history.drop(days[1]))
+    assert _persist_price_hashes(path, {"1111.T": {"split_only": partial}}, SECRET) == []
+    assert decrypt_json(path.read_text(), SECRET)["hashes"] == initial
+
+    history.loc[days[1], "High"] = 110.0
+    recovered = {"1111.T": {"split_only": _history_row_hashes(history)}}
+    assert _persist_price_hashes(path, recovered, SECRET) == [
+        {"ticker": "1111.T", "price_basis": "split_only", "date": "2026-11-05"}
     ]
 
 

@@ -324,28 +324,67 @@ def _reference_path(*, touch: bool = False, high_update: bool = False) -> pd.Dat
     return frame
 
 
-def _evaluate_reference(frame: pd.DataFrame):
+def _evaluate_reference(frame: pd.DataFrame, evaluated_at: datetime = datetime(2026, 9, 8, 10, 0, tzinfo=JST)):
     from src.data.live_quote import build_today_quote
 
     quote = build_today_quote(frame)
     assert quote is not None
     return evaluate_position(
         100.0, "2026-09-07", pd.Series(dtype=float), pd.Series(dtype=float), quote, frame, 15.0,
-        datetime(2026, 9, 8, 10, 0, tzinfo=JST), "1111.T", in_session=True,
+        evaluated_at, "1111.T", in_session=True,
     )
 
 
-@pytest.mark.parametrize("case", ["stop_bar", "high_bar", "opening", "latest_only", "daily_high", "daily_low"])
-def test_fresh_final_timestamp_does_not_prove_a_complete_minute_path(case: str) -> None:
+@pytest.mark.parametrize(("case", "possible"), [
+    ("stop_bar", True), ("high_bar", True), ("opening", False), ("latest_only", False),
+    ("daily_high", True), ("daily_low", True), ("daily_close", True),
+])
+def test_unobserved_daily_prices_are_checked_for_a_possible_stop(case: str, possible: bool) -> None:
     frame = _reference_path(touch=case == "stop_bar", high_update=case == "high_bar")
     if case in ("stop_bar", "high_bar"):
+        assert _evaluate_reference(frame).touch_at == frame.index[1 if case == "stop_bar" else 2].isoformat()
         frame = frame.drop(frame.index[1])
     elif case == "opening":
         frame = frame.iloc[1:]
     elif case == "latest_only":
         frame = frame.iloc[-1:]
+    elif case == "daily_close":
+        frame.iloc[-1, frame.columns.get_loc("High")] = 120.0
+        frame.iloc[-1, frame.columns.get_loc("Close")] = 115.0
+        frame.attrs["daily_bar"]["High"] = 120.0
     else:
         frame.attrs["daily_bar"]["High" if case == "daily_high" else "Low"] = 150.0 if case == "daily_high" else 70.0
+    status = _evaluate_reference(frame)
+    assert status.triggered == possible
+    assert status.exit_reason == ("daily_possible_touch" if possible else None)
+    assert status.touch_at is None
+
+
+def test_unobserved_opening_precedes_the_first_minute() -> None:
+    frame = _reference_path().iloc[-1:].copy()
+    frame.attrs["daily_bar"].update(Open=125.0, High=125.0)
+    status = _evaluate_reference(frame)
+    assert (status.exit_reason, status.stop_price, status.touch_at) == ("trailing_gap", 106.25, frame.index[0].isoformat())
+    frame.attrs["daily_bar"].update(Open=80.0, Low=80.0)
+    status = _evaluate_reference(frame)
+    assert (status.exit_reason, status.touch_at) == ("trailing_gap", "2026-09-08T09:00:00+09:00")
+
+
+def test_first_observed_minute_can_reopen_at_the_unobserved_auction_price() -> None:
+    frame = _reference_path().iloc[1:].copy()
+    frame.index = pd.DatetimeIndex(["2026-09-08 09:05", "2026-09-08 09:59"], tz=JST)
+    frame.iloc[0] = [120.0, 120.0, 99.0, 100.0, 10.0]
+    frame.attrs["daily_bar"].update(Open=120.0, High=120.0, Low=99.0)
+    status = _evaluate_reference(frame)
+    assert (status.stop_price, status.exit_reason, status.touch_at) == (102.0, "trailing_stop", frame.index[0].isoformat())
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("High", 99.0), ("Low", 101.0), ("Open", 101.0), ("Close", float("nan")), ("Volume", 0.0),
+])
+def test_invalid_daily_reference_is_incomplete(field: str, value: float) -> None:
+    frame = _reference_path()
+    frame.attrs["daily_bar"][field] = value
     with pytest.raises(IncompleteQuoteError):
         _evaluate_reference(frame)
 
@@ -375,13 +414,31 @@ def test_lunch_break_is_not_a_missing_price_interval() -> None:
     assert result.triggered is False
 
 
-def test_halted_interval_is_accepted_only_when_all_daily_trades_are_accounted_for() -> None:
+def test_a_volume_difference_alone_does_not_invalidate_a_flat_price_path() -> None:
     frame = _reference_path().iloc[[0, 2]].copy()
     frame.attrs["daily_bar"]["Volume"] = 20.0
     assert _evaluate_reference(frame).triggered is False
     frame.attrs["daily_bar"]["Volume"] = 30.0
-    with pytest.raises(IncompleteQuoteError):
-        _evaluate_reference(frame)
+    assert _evaluate_reference(frame).triggered is False
+
+
+def test_volume_shortfall_does_not_apply_a_new_stop_to_an_earlier_low() -> None:
+    frame = pd.DataFrame(
+        {"Open": [1000, 1050, 1100, 1190], "High": [1050, 1200, 1190, 1190],
+         "Low": [990, 1050, 1010, 1190], "Close": [1050, 1100, 1190, 1190], "Volume": [10, 10, 10, 10]},
+        index=pd.DatetimeIndex(["2026-09-08 09:05", "2026-09-08 13:00", "2026-09-08 14:00", "2026-09-08 15:24"], tz=JST),
+    )
+    frame.attrs = {"requested_date": "2026-09-08", "daily_bar": {
+        "Open": 1000, "High": 1200, "Low": 990, "Close": 1190, "Volume": 40,
+    }}
+    at = datetime(2026, 9, 8, 15, 50, tzinfo=JST)
+    confirmed = _evaluate_reference(frame, at)
+    assert (confirmed.exit_reason, confirmed.touch_at) == ("trailing_stop", frame.index[2].isoformat())
+    partial = frame.drop(frame.index[2])
+    for daily_volume in (30, 40):
+        partial.attrs["daily_bar"]["Volume"] = daily_volume
+        status = _evaluate_reference(partial, at)
+        assert (status.triggered, status.exit_reason, status.stop_price) == (False, None, 1020.0)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -1.0])
@@ -402,6 +459,20 @@ def test_zero_trade_padding_cannot_raise_high_water_before_the_first_actual_trad
     frame.attrs["daily_bar"] = {"Open": 150.0, "High": 180.0, "Low": 110.0, "Close": 180.0, "Volume": 20.0}
     status = _evaluate_reference(frame)
     assert status.triggered is False and status.high_water_mark == 180.0
+
+
+@pytest.mark.parametrize(("opening", "low", "gap"), [(80.0, 80.0, True), (120.0, 99.0, False)])
+def test_first_actual_opening_trade_sets_the_gap_time_and_stop_order(opening: float, low: float, gap: bool) -> None:
+    frame = _reference_path()
+    frame.index = pd.DatetimeIndex(["2026-09-08 09:00", "2026-09-08 09:05", "2026-09-08 09:06"], tz=JST)
+    frame.loc[:, ["Open", "High", "Low", "Close", "Volume"]] = [
+        [opening, opening, opening, opening, 0.0], [opening, opening, low, opening, 10.0],
+        [opening, opening, opening, opening, 10.0],
+    ]
+    frame.attrs["daily_bar"] = {"Open": opening, "High": opening, "Low": low, "Close": opening, "Volume": 20}
+    status = _evaluate_reference(frame, datetime(2026, 9, 8, 9, 7, tzinfo=JST))
+    assert status.triggered == gap
+    assert status.touch_at == (frame.index[1].isoformat() if gap else None)
 
 
 def test_a_verified_closing_path_is_still_usable_when_the_closing_job_is_delayed() -> None:

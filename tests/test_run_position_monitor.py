@@ -126,7 +126,7 @@ def test_dry_run_writes_triggered_status_without_slack(monkeypatch: pytest.Monke
     row = deps["write"].call_args.args[0][0]
     assert row["status"] == "ok"
     assert row["triggered"] is True
-    assert row["triggered_at"] == NOW.isoformat()
+    assert row["triggered_at"] == BAR_INDEX[-1].isoformat()
     assert row["last_notified_at"] == ""
     deps["post"].assert_not_called()
     deps["fetch_bars"].assert_called_once_with("1111.T")
@@ -143,6 +143,7 @@ def test_trigger_and_partial_error_send_slack(monkeypatch: pytest.MonkeyPatch) -
     assert rows[1]["last_notified_at"] == NOW.isoformat()
     assert deps["post"].call_count == 2
     assert "検証用アラート" in deps["post"].call_args_list[0].kwargs["json"]["text"]
+    assert f"at={BAR_INDEX[-1].isoformat()}" in deps["post"].call_args_list[0].kwargs["json"]["text"]
     assert "一部銘柄" in deps["post"].call_args_list[1].kwargs["json"]["text"]
     assert deps["response"].raise_for_status.call_count == 2
 
@@ -276,25 +277,26 @@ def test_slack_http_failure_saves_retryable_state_then_propagates(
 
 
 @pytest.mark.parametrize(
-    ("quote_time", "expected_status"),
+    ("evaluated_at", "quote_time", "expected_status"),
     [
-        (datetime(2026, 9, 8, 14, 40, tzinfo=JST), "stale"),
-        (datetime(2026, 9, 8, 15, 30, tzinfo=JST), "ok"),
+        (datetime(2026, 9, 8, 15, 20, tzinfo=JST), datetime(2026, 9, 8, 14, 40, tzinfo=JST), "stale"),
+        (datetime(2026, 9, 8, 15, 35, tzinfo=JST), datetime(2026, 9, 8, 15, 30, tzinfo=JST), "ok"),
+        (datetime(2026, 9, 8, 15, 50, tzinfo=JST), datetime(2026, 9, 8, 15, 24, tzinfo=JST), "ok"),
     ],
 )
-def test_run_uses_twenty_minute_threshold_during_close_grace(
+def test_run_checks_quote_freshness_before_close_and_uses_daily_after_close(
     monkeypatch: pytest.MonkeyPatch,
+    evaluated_at: datetime,
     quote_time: datetime,
     expected_status: str,
 ) -> None:
     monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
-    evaluated_at = datetime(2026, 9, 8, 15, 35, tzinfo=JST)
     bars = pd.DataFrame(
         {"Open": [100.0], "High": [105.0], "Low": [95.0], "Close": [100.0]},
         index=pd.DatetimeIndex([quote_time]),
     )
     quote = TodayQuote(100.0, 105.0, 95.0, 100.0, quote_time.isoformat())
-    with _dependencies([HOLDING], bars=bars, quote=quote, market_window=False) as deps:
+    with _dependencies([HOLDING], bars=bars, quote=quote, market_window=evaluated_at.minute < 30) as deps:
         if expected_status == "stale":
             with pytest.raises(RuntimeError, match="no holdings"):
                 run(dry_run=True, evaluated_at=evaluated_at)
@@ -574,21 +576,17 @@ def _close_bars(day: str, *, touched: bool) -> pd.DataFrame:
     return frame
 
 
-def test_unpublished_close_remains_pending_with_an_evaluation_checkpoint() -> None:
-    at = datetime(2026, 9, 8, 15, 35, tzinfo=JST)
-    bars = _close_bars("2026-09-08", touched=False).iloc[:1].copy()
-    bars.index = pd.DatetimeIndex(["2026-09-08 15:20"], tz=JST)
-    bars.attrs["daily_bar"]["Volume"] = 10.0
+def test_closing_check_uses_the_daily_bar_and_keeps_the_last_minute_checkpoint() -> None:
+    at = datetime(2026, 9, 8, 15, 50, tzinfo=JST)
+    bars = _close_bars("2026-09-08", touched=False).iloc[:2].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 09:05", "2026-09-08 15:24"], tz=JST)
+    bars.attrs["daily_bar"].update(Open=99.0, Low=99.0, Close=101.0, High=101.0)
     quote = TodayQuote(100.0, 100.0, 100.0, 100.0, bars.index[-1].isoformat())
     with _dependencies([HOLDING], bars=bars, quote=quote) as deps:
-        try:
-            run(dry_run=True, evaluated_at=at)
-        except RuntimeError:
-            pass
+        assert run(dry_run=True, evaluated_at=at) == 0
     row = _written(deps)[0]
-    assert row["status"] == "incomplete"
+    assert row["status"] == "ok" and row["triggered"] is False
     assert row["as_of_at"] == quote.as_of_at
-    assert "session end" in row["error"]
 
 
 @pytest.mark.parametrize("final_failed", [False, True])
@@ -662,6 +660,7 @@ def test_recovery_does_not_advance_past_a_missing_historical_session() -> None:
 def test_incomplete_current_path_keeps_the_checkpoint_for_next_run() -> None:
     previous = [{**HOLDING, "triggered": False, "as_of_at": "2026-09-08T09:00:00+09:00"}]
     bars = _close_bars("2026-09-08", touched=True).iloc[[0, 2]].copy()
+    del bars.attrs["daily_bar"]
     at = datetime(2026, 9, 8, 15, 45, tzinfo=JST)
     quote = TodayQuote(100.0, 100.0, 100.0, 100.0, bars.index[-1].isoformat())
     with (_dependencies([HOLDING], previous=previous, bars=bars, quote=quote) as deps,
@@ -673,13 +672,18 @@ def test_incomplete_current_path_keeps_the_checkpoint_for_next_run() -> None:
     assert row["last_notified_at"] == ""
 
 
-def test_missed_whole_day_is_replayed_when_the_final_monitor_never_started(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("missing_touch_bar", [False, True])
+def test_missed_whole_day_is_replayed_when_the_final_monitor_never_started(
+    monkeypatch: pytest.MonkeyPatch, missing_touch_bar: bool,
+) -> None:
     from src.data.live_quote import build_today_quote
 
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
     today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
     index = pd.DatetimeIndex(["2026-09-08"], tz=JST)
     historical = _close_bars("2026-09-08", touched=True)
+    if missing_touch_bar:
+        historical = historical.iloc[[0, 2]]
     with (
         _dependencies([HOLDING], previous=[{**HOLDING, "triggered": False}]) as deps,
         patch("scripts.run_position_monitor.fetch_session_bars", return_value=historical) as fetch,
@@ -690,7 +694,27 @@ def test_missed_whole_day_is_replayed_when_the_final_monitor_never_started(monke
         deps["build_quote"].side_effect = build_today_quote
         assert run(dry_run=False, evaluated_at=today) == 0
     fetch.assert_called_once_with("1111.T", "2026-09-08")
-    assert _written(deps)[0]["exit_reason"] == "recovered_trailing_stop"
+    reason = _written(deps)[0]["exit_reason"]
+    assert reason == ("recovered_daily_possible_touch" if missing_touch_bar else "recovered_trailing_stop")
+    if missing_touch_bar:
+        assert "時刻不明" in deps["post"].call_args.kwargs["json"]["text"]
+
+
+def test_current_daily_possible_touch_is_recorded_and_sent_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    at = datetime(2026, 9, 8, 15, 50, tzinfo=JST)
+    bars = _close_bars("2026-09-08", touched=True).iloc[[0, 2]].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 09:05", "2026-09-08 15:24"], tz=JST)
+    quote = TodayQuote(100.0, 100.0, 100.0, 100.0, bars.index[-1].isoformat())
+    with _dependencies([HOLDING], bars=bars, quote=quote) as deps:
+        assert run(dry_run=False, evaluated_at=at) == 0
+    row = _written(deps)[0]
+    assert (row["exit_reason"], row["triggered_at"]) == ("daily_possible_touch", "2026-09-08")
+    deps["post"].assert_called_once()
+    assert "接触の可能性（2026-09-08・時刻不明）" in deps["post"].call_args.kwargs["json"]["text"]
+    with _dependencies([HOLDING], bars=bars, quote=quote, previous=[row]) as retry:
+        assert run(dry_run=False, evaluated_at=at) == 0
+    retry["post"].assert_not_called()
 
 
 @pytest.mark.parametrize("branch", ["refs/heads/feature", "refs/tags/release", ""])

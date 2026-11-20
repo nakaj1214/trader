@@ -21,7 +21,7 @@ from src.data.quiet_output import suppress_provider_output
 
 STATE = ROOT / ".harness" / "state" / "workflow-alerts.json"
 WORKFLOWS = ("inflection_shadow.yml", "position_monitor.yml", "forward_validation.yml", "reliability_watchdog.yml")
-STAGES = {"authentication", "checkout", "setup", "install", "data_acquisition", "data_validation",
+STAGES = {"authentication", "configuration", "checkout", "setup", "install", "data_acquisition", "data_validation",
           "snapshot_save", "git_push", "forward", "monitor", "watchdog", "notification", "cancelled", "workflow_failure"}
 HTTP_TIMEOUT_SECONDS = 10
 
@@ -128,12 +128,13 @@ def _expected_runs(now: datetime) -> dict[str, datetime]:
 
 
 def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[dict[str, str]]:
-    from src.data.session_gaps import expected_snapshot_missing
+    from src.data.session_gaps import expected_snapshot_missing, sessions_between
 
     alerts: list[dict[str, str]] = []
     for workflow, expected in _expected_runs(now).items():
         runs = _github_runs(workflow)
         relevant = []
+        success = False
         events = ("schedule",) if workflow == "forward_validation.yml" else ("schedule", "workflow_dispatch")
         next_cron = None
         if workflow in DAILY_CRON_TIMES:
@@ -148,7 +149,11 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
                 raise ValueError("GitHub workflow timestamp lacks timezone")
             if expected <= started <= now and (next_cron is None or started < next_cron):
                 relevant.append(run)
-        success = any(run.get("conclusion") == "success" for run in relevant)
+                if run.get("conclusion") == "success":
+                    started_day = started.astimezone(JST).date()
+                    # A monitor started on a closed day exits successfully without evaluating holdings.
+                    if workflow != "position_monitor.yml" or sessions_between(started_day, started_day):
+                        success = True
         snapshot_missing = (expected_snapshot_missing(snapshot_dir, expected.date()) is not None
                             if workflow == "inflection_shadow.yml" else False)
         if success and not snapshot_missing:

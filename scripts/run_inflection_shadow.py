@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from datetime import date as calendar_date
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -218,6 +218,7 @@ def persist_report(
         "encrypted": True,
         "key_id": key_id(encryption_secret),
         "snapshot_date_basis": "latest_price_date",
+        "available_at": datetime.now(UTC).isoformat(),
     }
     payload = encrypt_json(stored_report, encryption_secret)
 
@@ -261,8 +262,16 @@ def _mark_digest_pending(path: Path, market_date: str) -> None:
         pass  # _deliver_digest reports the state problem; it will not send what it cannot track
 
 
+def _saved_digest_report(snapshot_dir: Path, day: str, secret: str) -> dict[str, Any] | None:
+    try:
+        report = decrypt_json((snapshot_dir / f"{day}.enc").read_text(encoding="utf-8"), secret)
+    except (OSError, ValueError, TypeError):
+        return None
+    return report if report.get("latest_price_date") == day else None
+
+
 def _deliver_digest(
-    report: dict[str, Any], *, snapshot_created: bool, state_path: Path | None = None, resend: bool = False
+    report: dict[str, Any], *, secret: str, snapshot_created: bool, state_path: Path | None = None, resend: bool = False
 ) -> str:
     """Persist pending/succeeded around best-effort delivery; Git publication is a later step.
 
@@ -280,6 +289,11 @@ def _deliver_digest(
         return "skipped:already-succeeded"
     if not resend and state is None and not snapshot_created:
         return "skipped:legacy-no-state"
+    if not resend and not snapshot_created:
+        saved = _saved_digest_report(OUT_DIR, market_date, secret)
+        if saved is None:
+            return "failed:digest-snapshot-unavailable"
+        report = saved
     states[market_date] = "pending"
     try:
         _write_digest_state(state_path, states)
@@ -323,12 +337,8 @@ def _recover_pending_digests(
     for day in _recent_sessions(market_date):
         if states.get(day) != "pending":
             continue
-        try:
-            report = decrypt_json((snapshot_dir / f"{day}.enc").read_text(encoding="utf-8"), secret)
-        except (OSError, ValueError, TypeError):
-            skipped += 1
-            continue
-        if str(report.get("latest_price_date")) != day:
+        report = _saved_digest_report(snapshot_dir, day, secret)
+        if report is None:
             skipped += 1
             continue
         if send_daily_digest(report, snapshot_dir=snapshot_dir, webhook=webhook) != "sent":
@@ -387,6 +397,7 @@ def main() -> None:
     try:
         digest_status = _deliver_digest(
             report,
+            secret=encryption_secret,
             snapshot_created=snapshot_created,
             resend=os.getenv("RESEND_DIGEST", "false").lower() == "true",
         )

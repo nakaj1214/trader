@@ -1,6 +1,7 @@
 """Load encrypted JP inflection snapshots and support benchmark-aware forward validation."""
 from __future__ import annotations
 
+from datetime import datetime
 from math import isfinite
 from pathlib import Path
 from statistics import mean, median
@@ -35,6 +36,20 @@ def _schema_family(version: int) -> frozenset[int]:
 
 class SnapshotLoadError(RuntimeError):
     """Raised when an encrypted inflection snapshot cannot be trusted."""
+
+
+def snapshot_available_at(payload: dict[str, Any], path: Path) -> str | None:
+    """Read the immutable save time, or the scan start from an older snapshot."""
+    storage = payload["storage"]
+    if "available_at" not in storage and "generated_at" not in payload:
+        return None
+    raw = storage.get("available_at", payload.get("generated_at"))
+    try:
+        if not isinstance(raw, str) or datetime.fromisoformat(raw).tzinfo is None:
+            raise ValueError
+    except ValueError as exc:
+        raise SnapshotLoadError(f"Invalid snapshot availability timestamp: {path.name}") from exc
+    return raw
 
 
 def load_inflection_signals(
@@ -110,6 +125,7 @@ def _load_inflection_rows(
         elif strategy_version != expected_strategy_version or _schema_family(schema_version) != expected_schema_family:
             raise SnapshotLoadError(f"Mixed strategy/schema versions: {path.name}")
 
+        available_at = snapshot_available_at(payload, path)
         label = "control" if source == "control_sample" else "candidate"
         candidates = payload.get(source, [] if source == "control_sample" else None)
         if not isinstance(candidates, list):
@@ -152,6 +168,8 @@ def _load_inflection_rows(
                 ),
                 "runtime_versions": payload.get("runtime_versions"),
             }
+            if available_at is not None:
+                signals[key]["available_at"] = available_at
 
     return sorted(signals.values(), key=lambda row: (row["signal_date"], row["ticker"]))
 

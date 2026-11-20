@@ -209,6 +209,7 @@ def test_snapshot_date_uses_japan_calendar_date() -> None:
 def test_persist_report_uses_market_data_date_not_execution_date(tmp_path) -> None:
     out_dir = tmp_path / "inflection"
     latest = tmp_path / "latest.enc"
+    before_save = datetime.now(UTC)
     snapshot, created = persist_report(
         _healthy_report(), encryption_secret=SECRET, out_dir=out_dir, latest_path=latest
     )
@@ -217,6 +218,7 @@ def test_persist_report_uses_market_data_date_not_execution_date(tmp_path) -> No
     stored = decrypt_json(snapshot.read_text(encoding="utf-8"), SECRET)
     assert stored["latest_price_date"] == "2026-09-07"
     assert stored["storage"]["snapshot_date_basis"] == "latest_price_date"
+    assert before_save <= datetime.fromisoformat(stored["storage"]["available_at"]) <= datetime.now(UTC)
 
 
 def test_persist_report_does_not_overwrite_same_market_day_snapshot(tmp_path) -> None:

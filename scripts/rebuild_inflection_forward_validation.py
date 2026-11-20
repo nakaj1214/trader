@@ -137,10 +137,17 @@ def _persist_price_hashes(
     changed = _changed_price_rows(previous, hashes)
     for basis, count in sorted(Counter(row["price_basis"] for row in changed).items()):
         print(json.dumps({"price_basis": basis, "changed_count": count}))
+    merged = previous.get("hashes", {})
+    for ticker, bases in hashes.items():
+        if not isinstance(merged.get(ticker), dict):
+            merged[ticker] = {}
+        for basis, dates in bases.items():
+            old_dates = merged[ticker].get(basis)
+            merged[ticker][basis] = {**old_dates, **dates} if isinstance(old_dates, dict) else dates
     payload: dict[str, Any] = {
         "schema_version": PRICE_HASH_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
-        "hashes": {**previous.get("hashes", {}), **hashes},
+        "hashes": merged,
         "revisions": changed,
     }
     atomic_write_text(path, encrypt_json(payload, secret))
@@ -313,7 +320,7 @@ def main() -> int:
             "liquidation cost; missing closes leave valuation unknown without forced liquidation. Initial "
             "capital, maximum positions, and allocation are unconfirmed defaults; see config."
         ),
-        "entry_rule": "next_trading_day_open",
+        "entry_rule": "first trading open after the signal date and snapshot availability",
         "price_adjustment": {
             "horizons": TOTAL_RETURN_ADJUSTED,
             "exit_strategies": SPLIT_ONLY,
@@ -335,7 +342,7 @@ def main() -> int:
         "benchmark": {
             "ticker": BENCHMARK_TICKER,
             "name": "NEXT FUNDS TOPIX ETF",
-            "entry_rule": "same next-trading-day open",
+            "entry_rule": "benchmark open on the stock entry date",
             "cost_rule": (
                 f"fixed {BENCHMARK_ROUND_TRIP_COST_PCT}% round-trip regardless of base/stress scenario"
             ),

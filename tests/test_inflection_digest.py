@@ -288,15 +288,26 @@ def test_a_failed_digest_never_fails_the_scan_and_nothing_sensitive_is_printed(
         assert secret not in captured.out and secret not in captured.err
 
 
-def test_pending_digest_is_retried_and_success_is_not_resent(tmp_path: Path) -> None:
+def test_pending_digest_is_retried_and_success_is_not_resent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_shadow_health import SECRET, _healthy_report
+
     state = tmp_path / "digest_state.json"
-    state.write_text('{"2026-09-30": "pending"}\n', encoding="utf-8")
-    report = make_report()
-    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "sent"
-        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "skipped:already-succeeded"
-    send.assert_called_once()
-    assert '"2026-09-30": "succeeded"' in state.read_text(encoding="utf-8")
+    directory = tmp_path / "v3"
+    monkeypatch.setattr(shadow, "OUT_DIR", directory)
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", WEBHOOK)
+    with patch("src.notify.slack.requests.post", side_effect=[requests.Timeout(), Mock()]) as post:
+        for ticker, expected in (("1111.T", "failed:Timeout"), ("2222.T", "sent")):
+            report = {**_healthy_report(), "deep_candidate_count": 1, "candidates": [candidate(ticker, "EARLY_CANDIDATE")]}
+            _, created = shadow.persist_report(
+                report, encryption_secret=SECRET, out_dir=directory, latest_path=tmp_path / "latest.enc", digest_state=state,
+            )
+            assert shadow._deliver_digest(report, secret=SECRET, snapshot_created=created, state_path=state) == expected
+        again = shadow._deliver_digest(report, secret=SECRET, snapshot_created=False, state_path=state)
+        assert again == "skipped:already-succeeded"
+    assert post.call_count == 2
+    text = post.call_args.kwargs["json"]["text"]
+    assert "1111.T" in text and "2222.T" not in text
+    assert json.loads(state.read_text()) == {report["latest_price_date"]: "succeeded"}
 
 
 def test_failed_digest_is_staged_and_retried_from_the_saved_state(tmp_path: Path) -> None:
@@ -305,14 +316,18 @@ def test_failed_digest_is_staged_and_retried_from_the_saved_state(tmp_path: Path
     state_path = Path("dashboard/data/inflection/digest_state.json")
     state = tmp_path / state_path
     report = make_report()
+    _write_snapshot(state.parent / "v3", report["latest_price_date"])
     with patch.object(shadow, "send_daily_digest", return_value="failed:Timeout"):
-        assert shadow._deliver_digest(report, snapshot_created=True, state_path=state) == "failed:Timeout"
+        assert shadow._deliver_digest(report, secret="secret", snapshot_created=True, state_path=state) == "failed:Timeout"
     assert json.loads(state.read_text()) == {report["latest_price_date"]: "pending"}
 
     subprocess.run(["git", "add", "dashboard/data/inflection/"], cwd=tmp_path, check=True)
     subprocess.run(["git", "ls-files", "--cached", "--error-unmatch", str(state_path)], cwd=tmp_path, check=True)
-    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        assert shadow._deliver_digest(report, snapshot_created=False, state_path=state) == "sent"
+    with (
+        patch.object(shadow, "OUT_DIR", state.parent / "v3"),
+        patch.object(shadow, "send_daily_digest", return_value="sent") as send,
+    ):
+        assert shadow._deliver_digest(report, secret="secret", snapshot_created=False, state_path=state) == "sent"
     send.assert_called_once()
     assert json.loads(state.read_text()) == {report["latest_price_date"]: "succeeded"}
 
@@ -321,18 +336,20 @@ def test_manual_resend_sends_a_succeeded_digest(tmp_path: Path) -> None:
     state = tmp_path / "digest_state.json"
     state.write_text('{"2026-09-30": "succeeded"}\n', encoding="utf-8")
     with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        assert shadow._deliver_digest(make_report(), snapshot_created=False, state_path=state, resend=True) == "sent"
+        assert shadow._deliver_digest(make_report(), secret="secret", snapshot_created=False, state_path=state, resend=True) == "sent"
     send.assert_called_once()
 
 
 def test_success_followed_by_state_failure_is_classified_for_possible_duplicate(tmp_path: Path) -> None:
     state = tmp_path / "digest_state.json"
     state.write_text('{"2026-09-30": "pending"}\n', encoding="utf-8")
+    _write_snapshot(tmp_path / "v3", "2026-09-30")
     with (
+        patch.object(shadow, "OUT_DIR", tmp_path / "v3"),
         patch.object(shadow, "send_daily_digest", return_value="sent"),
         patch.object(shadow, "_write_digest_state", side_effect=[None, OSError("stopped")]),
     ):
-        status = shadow._deliver_digest(make_report(), snapshot_created=False, state_path=state)
+        status = shadow._deliver_digest(make_report(), secret="secret", snapshot_created=False, state_path=state)
     assert status == "sent:state-save-failed"
     assert '"pending"' in state.read_text(encoding="utf-8")
 
@@ -399,8 +416,11 @@ def test_a_failed_latest_write_after_the_snapshot_still_leaves_the_digest_pendin
     snapshot, created = shadow.persist_report(
         report, encryption_secret=SECRET, out_dir=out_dir, latest_path=latest, digest_state=state,
     )
-    with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        status = shadow._deliver_digest(report, snapshot_created=created, state_path=state)
+    with (
+        patch.object(shadow, "OUT_DIR", out_dir),
+        patch.object(shadow, "send_daily_digest", return_value="sent") as send,
+    ):
+        status = shadow._deliver_digest(report, secret=SECRET, snapshot_created=created, state_path=state)
 
     assert created is False and snapshot.exists()
     assert status == "sent" and send.call_count == 1  # not "skipped:legacy-no-state"
@@ -420,7 +440,7 @@ def test_an_existing_snapshot_without_state_stays_a_legacy_snapshot(tmp_path: Pa
 
     assert not state.exists()  # no "pending" is invented for a snapshot that was already there
     with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        assert shadow._deliver_digest(_healthy_report(), snapshot_created=False, state_path=state) == (
+        assert shadow._deliver_digest(_healthy_report(), secret="secret", snapshot_created=False, state_path=state) == (
             "skipped:legacy-no-state"
         )
     send.assert_not_called()
@@ -431,7 +451,7 @@ def test_a_corrupt_digest_state_is_reported_not_raised_and_never_rewritten(tmp_p
     state = tmp_path / "digest_state.json"
     state.write_text(content, encoding="utf-8")
     with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+        status = shadow._deliver_digest(make_report(), secret="secret", snapshot_created=True, state_path=state)
 
     assert status == "failed:digest-state-invalid"
     send.assert_not_called()  # an untracked send could be repeated tomorrow
@@ -444,7 +464,7 @@ def test_an_unwritable_pending_state_blocks_the_send_without_raising(tmp_path: P
         patch.object(shadow, "_write_digest_state", side_effect=OSError("read-only")),
         patch.object(shadow, "send_daily_digest", return_value="sent") as send,
     ):
-        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+        status = shadow._deliver_digest(make_report(), secret="secret", snapshot_created=True, state_path=state)
 
     assert status == "failed:digest-state-unwritable"
     send.assert_not_called()
@@ -609,7 +629,7 @@ def test_a_digest_state_value_of_any_type_is_reported_as_invalid_without_sending
     state = tmp_path / "digest_state.json"
     state.write_text(f'{{"2026-09-30": {value}}}', encoding="utf-8")
     with patch.object(shadow, "send_daily_digest", return_value="sent") as send:
-        status = shadow._deliver_digest(make_report(), snapshot_created=True, state_path=state)
+        status = shadow._deliver_digest(make_report(), secret="secret", snapshot_created=True, state_path=state)
 
     assert status == "failed:digest-state-invalid"
     send.assert_not_called()
@@ -705,10 +725,15 @@ def test_a_day_without_a_usable_snapshot_stays_pending_without_an_error(tmp_path
     (directory / "2026-09-30.enc").write_text("not an encrypted snapshot", encoding="utf-8")
     state_path = directory.parent / "digest_state.json"
     state_path.write_text('{"2026-09-29": "pending", "2026-09-30": "pending", "2026-10-01": "pending"}', encoding="utf-8")
-    with patch.object(shadow, "send_daily_digest", Mock(return_value="sent")) as post:
+    with patch.object(shadow, "send_daily_digest", Mock(return_value="sent")) as post, patch.object(shadow, "OUT_DIR", directory):
         summary = shadow._recover_pending_digests(
             "2026-10-02", state_path=state_path, snapshot_dir=directory, secret="secret", webhook=WEBHOOK,
         )
+        for day in json.loads(state_path.read_text()):
+            status = shadow._deliver_digest(
+                make_report(latest_price_date=day), secret="secret", snapshot_created=False, state_path=state_path,
+            )
+            assert status == "failed:digest-snapshot-unavailable"
 
     assert summary == "sent:0,failed:0,skipped:3"  # no file / undecryptable / wrong day
     post.assert_not_called()

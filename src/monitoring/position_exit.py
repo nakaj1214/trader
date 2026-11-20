@@ -78,7 +78,13 @@ def _return_20d_pct(closes: pd.Series, current_price: float) -> float | None:
     return (current_price / float(closes.iloc[-20]) - 1.0) * 100.0
 
 
-def _minute_bars(values: pd.DataFrame, quote_at: datetime, evaluated_at: datetime) -> pd.DataFrame:
+def _below(left: float, right: float) -> bool:
+    return left < right and not math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def _minute_bars(
+    values: pd.DataFrame, quote_at: datetime, evaluated_at: datetime,
+) -> tuple[pd.DataFrame, dict[str, float]]:
     required = {"Open", "High", "Low", "Close"}
     if values.empty or not required.issubset(values.columns):
         raise ValueError("today_bars must contain OHLC rows")
@@ -119,11 +125,11 @@ def _minute_bars(values: pd.DataFrame, quote_at: datetime, evaluated_at: datetim
             raise ValueError
         if any(not math.isfinite(float(value)) or value < 0 for value in volume):
             raise ValueError
-        actual = {"Open": float(frame["Open"].iloc[0]), "High": float(frame["High"].max()),
-                  "Low": float(frame["Low"].min()), "Close": float(frame["Close"].iloc[-1]),
-                  "Volume": float(volume.sum())}
-        if any(not math.isclose(actual[key], daily[key], rel_tol=1e-9, abs_tol=1e-9) for key in required_daily):
-            raise IncompleteQuoteError("minute path does not reconcile with daily OHLC and volume")
+        if (_below(min(daily["Open"], daily["Close"], float(frame["Low"].min())), daily["Low"])
+                or _below(daily["High"], max(daily["Open"], daily["Close"], float(frame["High"].max())))):
+            raise IncompleteQuoteError("daily range does not contain the daily and minute prices")
+        if daily["Volume"] == 0 and (volume.gt(0).any() or daily["High"] != daily["Low"]):
+            raise IncompleteQuoteError("zero-volume daily bar contains trading activity")
         calendar = xcals.get_calendar(TSE_CALENDAR)
         session = quote_at.date().isoformat()
         opening, closing = calendar.session_open(session), calendar.session_close(session)
@@ -141,7 +147,7 @@ def _minute_bars(values: pd.DataFrame, quote_at: datetime, evaluated_at: datetim
         if isinstance(exc, IncompleteQuoteError):
             raise
         raise IncompleteQuoteError("price path reference or volume is invalid") from None
-    return frame
+    return frame, daily
 
 
 def evaluate_position(
@@ -182,8 +188,11 @@ def evaluate_position(
     stale_minutes = (
         STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION if in_session else STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION
     )
-    closing = xcals.get_calendar(TSE_CALENDAR).session_close(quote_at.date().isoformat())
-    if age > timedelta(minutes=stale_minutes) and pd.Timestamp(quote_at) < closing:
+    calendar = xcals.get_calendar(TSE_CALENDAR)
+    session = quote_at.date().isoformat()
+    if age > timedelta(minutes=stale_minutes) and (
+        quote_at.date() != evaluated_at.date() or evaluated_at < calendar.session_close(session)
+    ):
         raise StaleQuoteError("quote is stale")
 
     opening = _positive(today_quote.open, "quote open")
@@ -192,7 +201,7 @@ def evaluate_position(
     last = _positive(today_quote.last_price, "quote last")
     if not low <= min(opening, last) <= max(opening, last) <= high:
         raise ValueError("quote OHLC values are inconsistent")
-    bars = _minute_bars(today_bars, quote_at, evaluated_at)
+    bars, daily = _minute_bars(today_bars, quote_at, evaluated_at)
     if bars.index[-1] != pd.Timestamp(quote_at):
         raise ValueError("today_bars and quote timestamps do not match")
 
@@ -204,10 +213,22 @@ def evaluate_position(
     stop_price = high_water * (1.0 - stop_pct / 100.0)
     triggered, exit_reason = False, None
     touch_at = None
-    if purchase_date < evaluated_at.date():
-        for bar in bars.itertuples():
-            if bar.Volume == 0:
-                continue
+    if purchase_date < evaluated_at.date() and daily["Volume"] > 0:
+        trades = bars.loc[bars["Volume"] > 0]
+        session_open = calendar.session_open(session)
+        observed_volume = float(trades["Volume"].sum())
+        # On thin stocks the opening trade can be later than the exchange's scheduled open.
+        opening_observed = (not trades.empty and math.isclose(daily["Open"], float(trades["Open"].iloc[0]))
+                            and (observed_volume == daily["Volume"] or trades.index[0] == session_open))
+        if daily["Open"] <= stop_price:
+            triggered, exit_reason = True, "trailing_gap"
+            touch_at = (trades.index[0] if opening_observed else session_open.tz_convert(JST)).isoformat()
+        elif not opening_observed:
+            # The opening auction preceded this partial minute path.
+            high_water = max(high_water, daily["Open"])
+        for bar in trades.itertuples():
+            if triggered:
+                break
             stop_price = high_water * (1.0 - stop_pct / 100.0)
             if bar.Open <= stop_price:
                 triggered, exit_reason = True, "trailing_gap"
@@ -219,7 +240,15 @@ def evaluate_position(
                 break
             high_water = max(high_water, float(bar.High))
         if not triggered:
+            high_water = max(high_water, daily["High"])
             stop_price = high_water * (1.0 - stop_pct / 100.0)
+            unseen_extreme = trades.empty or _below(float(trades["High"].max()), daily["High"]) or _below(
+                daily["Low"], float(trades["Low"].min())
+            )
+            unseen_close = trades.empty or not math.isclose(daily["Close"], float(trades["Close"].iloc[-1]))
+            # A volume shortfall gives no price or time for the omitted trades.
+            if (unseen_extreme and daily["Low"] <= stop_price) or (unseen_close and daily["Close"] <= stop_price):
+                triggered, exit_reason = True, "daily_possible_touch"
 
     realized_closes = pd.concat([closes, pd.Series([last], index=[pd.Timestamp(quote_at)], dtype=float)])
     drawdown = _true_max_drawdown_pct(adjusted_entry, realized_closes)

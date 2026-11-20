@@ -10,7 +10,12 @@ import pytest
 
 from scripts.rebuild_inflection_learning import main as rebuild_main
 from src.data.snapshot_crypto import FORMAT_HEADER, _fernet
-from src.evaluation.inflection_forward import SnapshotLoadError
+from src.evaluation.exit_rules import TrailingRule, simulate_exit_rule
+from src.evaluation.inflection_forward import (
+    SnapshotLoadError,
+    load_inflection_control_signals,
+    load_inflection_signals,
+)
 from src.evaluation.inflection_learning import (
     _bucket,
     _factor_statistics,
@@ -182,6 +187,36 @@ def test_loader_uses_all_candidates_and_current_high_factors(tmp_path: Path) -> 
     assert "near_52w_high:True" in factor_labels(observations[0])
     assert "near_listing_high:True" in factor_labels(observations[1])
     assert all("breakout_52w" not in label for row in observations for label in factor_labels(row))
+
+
+@pytest.mark.parametrize(("saved_at", "generated_at", "entry", "price"), [
+    ("2026-11-19T02:00:00Z", "2026-11-18T16:40:00+09:00", "2026-11-20", 120.0),
+    ("2026-11-18T17:30:00+09:00", None, "2026-11-19", 110.0),
+    (None, "2026-11-19T09:00:00+09:00", "2026-11-20", 120.0),
+    (None, "2026-11-19T08:59:59+09:00", "2026-11-19", 110.0),
+])
+def test_snapshot_availability_aligns_forward_controls_exit_rules_and_learning(
+    tmp_path: Path, saved_at, generated_at, entry, price,
+) -> None:
+    payload = _payload("2026-11-18")
+    payload["control_sample"] = [{"ticker": "control", "score": 30}]
+    if saved_at is not None:
+        payload["storage"]["available_at"] = saved_at
+    if generated_at is not None:
+        payload["generated_at"] = generated_at
+    _write_snapshot(tmp_path, payload)
+    sessions = pd.to_datetime(["2026-11-18", "2026-11-19", "2026-11-20", "2026-11-24",
+                               "2026-11-25", "2026-11-26", "2026-11-27"])
+    frame = _history([100, 110, 120, 125, 130, 135, 140])
+    frame.index = sessions
+    for loader in (load_inflection_signals, load_inflection_control_signals):
+        signal, = loader(tmp_path, encryption_secret=SECRET)
+        trade = simulate_exit_rule(signal, frame, TrailingRule(15), holding_days=5, market_calendar=sessions)
+        assert (trade.signal_date, trade.entry_date, trade.entry_price) == ("2026-11-18", entry, price)
+        assert "entry_delay_sessions" not in trade.price_diagnostics
+    learning = load_inflection_learning_observations(tmp_path, encryption_secret=SECRET)
+    row, = evaluate_learning_observations(learning, {"1111.T": frame}, frame, horizons=(5,))
+    assert row["horizons"]["h5"]["entry_date"] == row["horizons"]["h5"]["benchmark_entry_date"] == entry
 
 
 def test_loader_allows_multiple_strategy_versions_with_schema_four(tmp_path: Path) -> None:
@@ -1109,6 +1144,17 @@ def test_sector_concentration_and_unknown_sector_are_reported_distinctly() -> No
     assert spread["independence_status"] == "sufficient" and spread["top_sector_share_pct"] is None
     assert _independence_evidence("f", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "insufficient"
     assert _independence_evidence("sector33:A", _independence_rows(30, same_day=False, sector="A"))["independence_status"] == "sufficient"
+
+
+def test_one_unknown_sector_does_not_hide_concentration_from_promotion() -> None:
+    from src.evaluation.inflection_learning import _factor_statistics
+
+    rows = _independence_rows(30, same_day=False)
+    rows[-1]["sector33_code"] = None
+    stat = _factor_statistics(rows, horizon=5, baseline={"explosion_rate_pct": 10.0})[0]
+    assert stat["top_sector_share_pct"] == 96.667
+    assert stat["independence_status"] == "insufficient"
+    assert stat["uncorrected_direction"] == "positive_candidate" and stat["promotion_status"] == "hold"
 
 
 # --- the benchmark's round-trip cost is the fixed 0.05% used by forward validation, whatever the trade cost ------

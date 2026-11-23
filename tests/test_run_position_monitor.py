@@ -15,7 +15,7 @@ import pytest
 import requests
 
 from scripts.run_position_monitor import is_in_session, run
-from src.data.live_quote import SplitAdjustedHistory, TodayQuote
+from src.data.live_quote import SplitAdjustedHistory, TodayQuote, build_today_quote
 from src.data.live_quote import fetch_session_bars as live_fetch_session_bars
 from src.data.live_quote import fetch_today_bars as live_fetch_today_bars
 
@@ -587,6 +587,142 @@ def test_closing_check_uses_the_daily_bar_and_keeps_the_last_minute_checkpoint()
     row = _written(deps)[0]
     assert row["status"] == "ok" and row["triggered"] is False
     assert row["as_of_at"] == quote.as_of_at
+
+
+@pytest.mark.parametrize("padding", [80.0, 103.0])
+def test_auction_gap_without_minute_trades_survives_replay_and_notifies_once(
+    monkeypatch: pytest.MonkeyPatch, padding: float,
+) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    holding = {**HOLDING, "trailing_stop_pct": 15.0}
+    day = "2026-09-08"
+    bars = _close_bars(day, touched=False)
+    bars.loc[:, ["Open", "High", "Low", "Close"]] = padding
+    bars["Volume"] = 0.0
+    if padding == 103:
+        bars = pd.concat([bars, bars.iloc[-1:]])  # duplicate padding has no trade identity
+    bars.attrs["daily_bar"] = {"Open": 80, "High": 80, "Low": 80, "Close": 80, "Volume": 100}
+    with _dependencies([holding], bars=bars) as deps:
+        deps["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=datetime(2026, 9, 8, 15, 50, tzinfo=JST)) == 0
+    rows = _written(deps)
+    row = rows[0]
+    assert (row["exit_reason"], row["stop_price"], row["evaluated_session"]) == ("trailing_gap", 85.0, day)
+    assert row["current_price"] is row["as_of_at"] is row["distance_to_stop_pct"] is None
+    deps["post"].assert_called_once()
+    assert "current=" not in deps["post"].call_args.kwargs["json"]["text"]
+
+    today = datetime(2026, 9, 9, 9, 20, tzinfo=JST)
+    current = _close_bars("2026-09-09", touched=False).iloc[:1]
+    prior = pd.Series([80.0], index=pd.DatetimeIndex([day], tz=JST))
+    for previous in (rows, []):
+        with _dependencies([holding], previous=previous, bars=current) as retry, patch(
+            "scripts.run_position_monitor.fetch_session_bars", return_value=bars,
+        ):
+            retry["fetch_history"].return_value = SplitAdjustedHistory(100, prior, prior)
+            retry["build_quote"].side_effect = build_today_quote
+            assert run(dry_run=False, evaluated_at=today) == 0
+        recovered = _written(retry)[0]
+        assert recovered["triggered"] and recovered["triggered_at"] == row["triggered_at"]
+        assert retry["post"].call_count == (0 if previous else 1)
+        assert recovered["evaluated_session"] == (today.date().isoformat() if previous else day)
+
+
+@pytest.mark.parametrize("observed_trade", [False, True])
+def test_padding_cannot_produce_a_proximity_warning(observed_trade: bool) -> None:
+    bars = _close_bars("2026-09-08", touched=False)
+    bars.index = pd.DatetimeIndex(["2026-09-08 09:06", "2026-09-08 10:48", "2026-09-08 10:49"], tz=JST)
+    bars.iloc[:] = [[110, 120, 103, 116, 10 if observed_trade else 0], [103, 103, 103, 103, 0], [103, 103, 103, 103, 0]]
+    bars.attrs["daily_bar"] = {"Open": 110, "High": 120, "Low": 103, "Close": 116, "Volume": 20}
+    with _dependencies([{**HOLDING, "trailing_stop_pct": 15.0}], bars=bars) as deps:
+        deps["build_quote"].side_effect = build_today_quote
+        with pytest.raises(RuntimeError, match="no holdings"):
+            run(dry_run=True, evaluated_at=datetime(2026, 9, 8, 10, 50, tzinfo=JST))
+    row = _written(deps)[0]
+    assert row["status"] == "stale" and not row["triggered"] and not row["last_warned_at"]
+    assert row.get("distance_to_stop_pct") is None
+
+
+@pytest.mark.parametrize("missing_minutes", [True, False])
+def test_proven_touch_is_not_lost_when_the_current_price_is_unavailable(missing_minutes: bool) -> None:
+    bars = _close_bars("2026-09-08", touched=False).iloc[:1].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 09:06"], tz=JST)
+    opening = 80 if missing_minutes else 100
+    bars.iloc[0] = [opening, 100, 80, 100, 10]
+    daily = pd.DataFrame([[opening, 100, 80, 100, 10]], index=bars.index.normalize(), columns=bars.columns)
+    history = SplitAdjustedHistory(100, pd.Series(dtype=float), pd.Series(dtype=float), daily)
+    with _dependencies([HOLDING], bars=None if missing_minutes else bars) as deps:
+        deps["build_quote"].side_effect = build_today_quote
+        deps["fetch_history"].return_value = history
+        assert run(dry_run=True, evaluated_at=datetime(2026, 9, 8, 10, 50, tzinfo=JST)) == 0
+    row = _written(deps)[0]
+    assert row["triggered"] and row["exit_reason"] == ("trailing_gap" if missing_minutes else "trailing_stop")
+    assert row["current_price"] is None and row["distance_to_stop_pct"] is None
+
+
+def test_zero_volume_range_is_pending_until_the_minute_closes() -> None:
+    bars = _close_bars("2026-09-08", touched=False).iloc[:2].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 13:00", "2026-09-08 13:01"], tz=JST)
+    bars.iloc[1] = [100, 101, 99, 100, 0]
+    bars.attrs["daily_bar"].update(High=101, Low=99)
+    previous = []
+    for clock, expected in (("13:01:20", "ok"), ("13:02:00", "incomplete")):
+        with _dependencies([HOLDING], previous=previous, bars=bars) as deps:
+            deps["build_quote"].side_effect = build_today_quote
+            at = datetime.fromisoformat(f"2026-09-08T{clock}+09:00")
+            if expected == "ok":
+                assert run(dry_run=True, evaluated_at=at) == 0
+            else:
+                with pytest.raises(RuntimeError, match="no holdings"):
+                    run(dry_run=True, evaluated_at=at)
+        previous = _written(deps)
+        assert previous[0]["status"] == expected
+        assert previous[0]["as_of_at"] == bars.index[0].isoformat()
+
+
+@pytest.mark.parametrize("volume", [0, 10])
+def test_live_fetch_crossing_a_minute_boundary_keeps_a_proven_touch(volume: int) -> None:
+    bars = _close_bars("2026-09-08", touched=False).iloc[:2].copy()
+    bars.index = pd.DatetimeIndex(["2026-09-08 13:00", "2026-09-08 13:01"], tz=JST)
+    bars.iloc[0] = [80, 80, 80, 80, 10]
+    bars.iloc[1] = [99, 100, 98, 99, volume]
+    bars.attrs["daily_bar"].update(Open=80, Low=80)
+    start = datetime(2026, 9, 8, 13, 0, 59, tzinfo=JST)
+    bars.attrs["fetched_at"] = start + timedelta(seconds=2)
+    for evaluation in (None, start):
+        with _dependencies([HOLDING], bars=bars) as deps, patch("scripts.run_position_monitor.datetime", wraps=datetime) as clock:
+            clock.now.return_value = start
+            deps["build_quote"].side_effect = build_today_quote
+            if evaluation is not None and volume:
+                with pytest.raises(RuntimeError, match="no holdings"):
+                    run(dry_run=True, evaluated_at=evaluation)
+                assert _written(deps)[0]["status"] == "stale"
+                continue
+            assert run(dry_run=True, evaluated_at=evaluation) == 0
+        assert _written(deps)[0]["exit_reason"] == "trailing_gap"
+
+
+@pytest.mark.parametrize("after_high", [False, True])
+def test_only_a_low_after_the_new_high_triggers_the_raised_stop(monkeypatch: pytest.MonkeyPatch, after_high: bool) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.test/hook")
+    bars = pd.DataFrame(
+        [[1000, 1050, 990, 1050, 10], [1050, 1200, 1050, 1150, 10],
+         [1150, 1150, 1020 if after_high else 1140, 1140, 10]],
+        columns=["Open", "High", "Low", "Close", "Volume"],
+        index=pd.DatetimeIndex(["2026-09-08 09:05", "2026-09-08 13:00", "2026-09-08 13:10"], tz=JST),
+    )
+    bars.attrs = {"requested_date": "2026-09-08", "daily_bar": {
+        "Open": 1000, "High": 1200, "Low": 990, "Close": 1140, "Volume": 50,
+    }}
+    holding = {**HOLDING, "entry_price": 1000, "trailing_stop_pct": 15}
+    with _dependencies([holding], bars=bars) as deps:
+        deps["fetch_history"].return_value = SplitAdjustedHistory(1000, pd.Series(dtype=float), pd.Series(dtype=float))
+        deps["build_quote"].side_effect = build_today_quote
+        assert run(dry_run=False, evaluated_at=datetime(2026, 9, 8, 13, 15, tzinfo=JST)) == 0
+    row = _written(deps)[0]
+    assert row["triggered"] is after_high and row["stop_price"] == 1020
+    assert row["triggered_at"] == (bars.index[-1].isoformat() if after_high else "")
+    assert deps["post"].call_count == int(after_high)
 
 
 @pytest.mark.parametrize("final_failed", [False, True])

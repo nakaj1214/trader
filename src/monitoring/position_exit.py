@@ -15,6 +15,7 @@ from src.data.live_quote import (
     STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION,
     STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION,
     TodayQuote,
+    traded_bars,
 )
 from src.data.market_calendar import TSE_CALENDAR
 
@@ -38,14 +39,14 @@ class PositionStatus:
     ticker: str
     entry_date: str
     entry_price: float
-    as_of_at: str
+    as_of_at: str | None
     quote_source: str
-    current_price: float
+    current_price: float | None
     high_water_mark: float
     stop_price: float
     trailing_stop_pct: float
-    unrealized_pct: float
-    distance_to_stop_pct: float
+    unrealized_pct: float | None
+    distance_to_stop_pct: float | None
     max_drawdown_pct: float | None
     triggered: bool
     exit_reason: str | None
@@ -82,72 +83,75 @@ def _below(left: float, right: float) -> bool:
     return left < right and not math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9)
 
 
+def _daily_prices(reference: object) -> dict[str, float]:
+    if not isinstance(reference, dict):
+        raise IncompleteQuoteError("price path lacks daily reference evidence")
+    try:
+        daily = {key: float(reference[key]) for key in ("Open", "High", "Low", "Close", "Volume")}
+    except (KeyError, TypeError, ValueError):
+        raise IncompleteQuoteError("daily reference is invalid") from None
+    if not all(math.isfinite(value) for value in daily.values()) or daily["Volume"] < 0 or not (
+        0 < daily["Low"] <= min(daily["Open"], daily["Close"]) <= max(daily["Open"], daily["Close"]) <= daily["High"]
+    ):
+        raise IncompleteQuoteError("daily reference is invalid")
+    if daily["Volume"] == 0 and daily["High"] != daily["Low"]:
+        raise IncompleteQuoteError("zero-volume daily bar contains trading activity")
+    return daily
+
+
 def _minute_bars(
-    values: pd.DataFrame, quote_at: datetime, evaluated_at: datetime,
-) -> tuple[pd.DataFrame, dict[str, float]]:
-    required = {"Open", "High", "Low", "Close"}
-    if values.empty or not required.issubset(values.columns):
+    values: pd.DataFrame, evaluated_at: datetime, daily: dict[str, float],
+) -> tuple[pd.DataFrame, pd.Timestamp | None]:
+    required = ["Open", "High", "Low", "Close"]
+    if not set(required).issubset(values.columns):
         raise ValueError("today_bars must contain OHLC rows")
+    if "Volume" not in values or values.attrs.get("requested_date") != evaluated_at.date().isoformat():
+        raise IncompleteQuoteError("price path lacks full-session request or volume evidence")
     index = pd.DatetimeIndex(values.index)
     if index.tz is None:
         raise ValueError("today_bars timestamps must include a timezone")
-    if index.has_duplicates:
-        raise ValueError("today_bars timestamps must be unique")
-    frame = values.loc[:, ["Open", "High", "Low", "Close"]].copy()
+    frame = values.loc[:, [*required, "Volume"]].copy()
     frame.index = index.tz_convert(JST)
-    if quote_at.date() != evaluated_at.date() or any(
-        timestamp.date() != evaluated_at.date() for timestamp in frame.index
-    ):
+    frame = frame.sort_index()
+    frame["Volume"] = pd.to_numeric(frame["Volume"], errors="coerce")
+    try:
+        trades = traded_bars(frame).copy()
+    except ValueError as exc:
+        raise IncompleteQuoteError(str(exc)) from None
+    if trades.index.has_duplicates:
+        raise ValueError("today_bars trade timestamps must be unique")
+    if any(timestamp.date() != evaluated_at.date() for timestamp in trades.index):
         raise ValueError("today_bars must be from the evaluation date")
-    if any(timestamp > quote_at or timestamp > evaluated_at for timestamp in frame.index):
-        raise ValueError("today_bars must not contain future rows")
+    if (trades.index > evaluated_at).any():
+        raise ValueError("today_bars must not contain future trades")
+    calendar = xcals.get_calendar(TSE_CALENDAR)
+    session = evaluated_at.date().isoformat()
+    opening, closing = calendar.session_open(session), calendar.session_close(session)
+    morning_end, afternoon_start = calendar.session_break_start(session), calendar.session_break_end(session)
+    for timestamp in trades.index:
+        if not (opening <= timestamp <= morning_end or afternoon_start <= timestamp <= closing):
+            raise IncompleteQuoteError("minute path contains rows outside TSE trading hours")
+    if trades.empty:
+        return trades, None
+
+    # Only closed minutes after the first trade can expose a gap in the provider's trade path.
+    closed_zeros = frame.loc[(frame["Volume"] == 0) & (frame.index > trades.index[0])
+                             & (frame.index + timedelta(minutes=1) <= evaluated_at), required]
+    moved = closed_zeros.apply(pd.to_numeric, errors="coerce").nunique(axis=1) > 1
+    gaps = closed_zeros.index[moved]
     for column in required:
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    if frame.isna().any().any() or any(
-        not math.isfinite(float(value)) or float(value) <= 0 for value in frame.to_numpy().ravel()
+        trades[column] = pd.to_numeric(trades[column], errors="coerce")
+    if trades[required].isna().any().any() or any(
+        not math.isfinite(float(value)) or float(value) <= 0 for value in trades[required].to_numpy().ravel()
     ):
         raise ValueError("today_bars must contain only finite positive prices")
-    if any(row.Low > min(row.Open, row.Close) or max(row.Open, row.Close) > row.High for row in frame.itertuples()):
+    if any(row.Low > min(row.Open, row.Close) or max(row.Open, row.Close) > row.High for row in trades.itertuples()):
         raise ValueError("today_bars OHLC values are inconsistent")
-    frame = frame.sort_index()
-    reference = values.attrs.get("daily_bar")
-    if values.attrs.get("requested_date") != quote_at.date().isoformat() or not isinstance(reference, dict):
-        raise IncompleteQuoteError("price path lacks full-session request or daily reference evidence")
-    required_daily = required | {"Volume"}
-    if not required_daily.issubset(reference) or "Volume" not in values:
-        raise IncompleteQuoteError("price path lacks daily OHLC and volume evidence")
-    try:
-        daily = {key: float(reference[key]) for key in required_daily}
-        volume = pd.to_numeric(values["Volume"], errors="coerce")
-        if any(not math.isfinite(value) or value <= 0 for key, value in daily.items() if key != "Volume"):
-            raise ValueError
-        if daily["Volume"] < 0 or not math.isfinite(daily["Volume"]):
-            raise ValueError
-        if any(not math.isfinite(float(value)) or value < 0 for value in volume):
-            raise ValueError
-        if (_below(min(daily["Open"], daily["Close"], float(frame["Low"].min())), daily["Low"])
-                or _below(daily["High"], max(daily["Open"], daily["Close"], float(frame["High"].max())))):
-            raise IncompleteQuoteError("daily range does not contain the daily and minute prices")
-        if daily["Volume"] == 0 and (volume.gt(0).any() or daily["High"] != daily["Low"]):
-            raise IncompleteQuoteError("zero-volume daily bar contains trading activity")
-        calendar = xcals.get_calendar(TSE_CALENDAR)
-        session = quote_at.date().isoformat()
-        opening, closing = calendar.session_open(session), calendar.session_close(session)
-        morning_end, afternoon_start = calendar.session_break_start(session), calendar.session_break_end(session)
-        for timestamp in frame.index:
-            if not (opening <= timestamp <= morning_end or afternoon_start <= timestamp <= closing):
-                raise IncompleteQuoteError("minute path contains rows outside TSE trading hours")
-        for position, bar in enumerate(frame.itertuples()):
-            if float(volume.loc[bar.Index]) == 0 and not bar.Open == bar.High == bar.Low == bar.Close:
-                raise IncompleteQuoteError("zero-volume minute has a changing price")
-            if float(volume.loc[bar.Index]) == 0 and position and bar.Open != frame["Close"].iloc[position - 1]:
-                raise IncompleteQuoteError("zero-volume minute changes the preceding price")
-        frame["Volume"] = volume.astype(float)
-    except (TypeError, ValueError) as exc:
-        if isinstance(exc, IncompleteQuoteError):
-            raise
-        raise IncompleteQuoteError("price path reference or volume is invalid") from None
-    return frame, daily
+    if _below(float(trades["Low"].min()), daily["Low"]) or _below(daily["High"], float(trades["High"].max())):
+        raise IncompleteQuoteError("daily range does not contain the daily and minute prices")
+    if daily["Volume"] == 0:
+        raise IncompleteQuoteError("zero-volume daily bar contains trading activity")
+    return trades, None if gaps.empty else gaps[0]
 
 
 def evaluate_position(
@@ -155,13 +159,14 @@ def evaluate_position(
     entry_date: str,
     prior_confirmed_highs: pd.Series,
     prior_confirmed_closes: pd.Series,
-    today_quote: TodayQuote,
-    today_bars: pd.DataFrame,
+    today_quote: TodayQuote | None,
+    today_bars: pd.DataFrame | None,
     trailing_stop_pct: float,
     evaluated_at: datetime,
     ticker: str,
     *,
     in_session: bool,
+    daily_reference: dict[str, Any] | None = None,
 ) -> PositionStatus:
     """Evaluate one position using the backtest's prior-HWM stop ordering."""
     purchase_date = date.fromisoformat(entry_date)
@@ -175,51 +180,56 @@ def evaluate_position(
     if purchase_date > evaluated_at.date():
         raise ValueError("entry_date must not be in the future")
 
-    try:
-        quote_at = datetime.fromisoformat(today_quote.as_of_at)
-    except ValueError as exc:
-        raise StaleQuoteError("quote timestamp is invalid") from exc
-    if quote_at.tzinfo is None:
-        raise StaleQuoteError("quote timestamp must include a timezone")
-    quote_at = quote_at.astimezone(JST)
-    age = evaluated_at - quote_at
-    if age < timedelta(0):
-        raise StaleQuoteError("quote timestamp is in the future")
-    stale_minutes = (
-        STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION if in_session else STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION
-    )
+    session = evaluated_at.date().isoformat()
     calendar = xcals.get_calendar(TSE_CALENDAR)
-    session = quote_at.date().isoformat()
-    if age > timedelta(minutes=stale_minutes) and (
-        quote_at.date() != evaluated_at.date() or evaluated_at < calendar.session_close(session)
-    ):
-        raise StaleQuoteError("quote is stale")
+    quote_at = None
+    last = None
+    if today_quote is not None:
+        try:
+            quote_at = datetime.fromisoformat(today_quote.as_of_at)
+        except ValueError as exc:
+            raise StaleQuoteError("quote timestamp is invalid") from exc
+        if quote_at.tzinfo is None:
+            raise StaleQuoteError("quote timestamp must include a timezone")
+        quote_at = quote_at.astimezone(JST)
+        if quote_at > evaluated_at or quote_at.date() != evaluated_at.date():
+            raise StaleQuoteError("quote timestamp is outside the evaluation period")
+        opening = _positive(today_quote.open, "quote open")
+        high = _positive(today_quote.high_so_far, "quote high")
+        low = _positive(today_quote.low_so_far, "quote low")
+        close = _positive(today_quote.last_price, "quote last")
+        if not low <= min(opening, close) <= max(opening, close) <= high:
+            raise ValueError("quote OHLC values are inconsistent")
+        limit = STALE_QUOTE_THRESHOLD_MINUTES_IN_SESSION if in_session else STALE_QUOTE_THRESHOLD_MINUTES_OUTSIDE_SESSION
+        if evaluated_at - quote_at <= timedelta(minutes=limit):
+            last = close
 
-    opening = _positive(today_quote.open, "quote open")
-    high = _positive(today_quote.high_so_far, "quote high")
-    low = _positive(today_quote.low_so_far, "quote low")
-    last = _positive(today_quote.last_price, "quote last")
-    if not low <= min(opening, last) <= max(opening, last) <= high:
-        raise ValueError("quote OHLC values are inconsistent")
-    bars, daily = _minute_bars(today_bars, quote_at, evaluated_at)
-    if bars.index[-1] != pd.Timestamp(quote_at):
+    path_missing = today_bars is None or today_bars.empty
+    if daily_reference is None and today_bars is not None:
+        daily_reference = today_bars.attrs.get("daily_bar")
+    if path_missing and daily_reference is None:
+        raise StaleQuoteError("current quote is missing or invalid")
+    daily = _daily_prices(daily_reference)
+    trades = pd.DataFrame()
+    gap_at = None
+    if today_bars is not None and not today_bars.empty:
+        trades, gap_at = _minute_bars(today_bars, evaluated_at, daily)
+    if (None if trades.empty else trades.index[-1]) != quote_at:
         raise ValueError("today_bars and quote timestamps do not match")
 
     highs = _prices(prior_confirmed_highs, "prior_confirmed_highs")
     closes = _prices(prior_confirmed_closes, "prior_confirmed_closes")
-    if any(timestamp.date() >= quote_at.date() for timestamp in highs.index.union(closes.index)):
+    if any(timestamp.date() >= evaluated_at.date() for timestamp in highs.index.union(closes.index)):
         raise ValueError("prior history must not include the current quote date")
     high_water = adjusted_entry if highs.empty else max(adjusted_entry, float(highs.max()))
     stop_price = high_water * (1.0 - stop_pct / 100.0)
     triggered, exit_reason = False, None
     touch_at = None
     if purchase_date < evaluated_at.date() and daily["Volume"] > 0:
-        trades = bars.loc[bars["Volume"] > 0]
         session_open = calendar.session_open(session)
-        observed_volume = float(trades["Volume"].sum())
         # On thin stocks the opening trade can be later than the exchange's scheduled open.
         opening_observed = (not trades.empty and math.isclose(daily["Open"], float(trades["Open"].iloc[0]))
-                            and (observed_volume == daily["Volume"] or trades.index[0] == session_open))
+                            and (trades["Volume"].sum() == daily["Volume"] or trades.index[0] == session_open))
         if daily["Open"] <= stop_price:
             triggered, exit_reason = True, "trailing_gap"
             touch_at = (trades.index[0] if opening_observed else session_open.tz_convert(JST)).isoformat()
@@ -227,7 +237,7 @@ def evaluate_position(
             # The opening auction preceded this partial minute path.
             high_water = max(high_water, daily["Open"])
         for bar in trades.itertuples():
-            if triggered:
+            if triggered or (gap_at is not None and bar.Index >= gap_at):
                 break
             stop_price = high_water * (1.0 - stop_pct / 100.0)
             if bar.Open <= stop_price:
@@ -239,7 +249,9 @@ def evaluate_position(
                 touch_at = pd.Timestamp(bar.Index).isoformat()
                 break
             high_water = max(high_water, float(bar.High))
-        if not triggered:
+        if not triggered and gap_at is not None:
+            raise IncompleteQuoteError("zero-volume minute has a changing price")
+        if not triggered and not path_missing:
             high_water = max(high_water, daily["High"])
             stop_price = high_water * (1.0 - stop_pct / 100.0)
             unseen_extreme = trades.empty or _below(float(trades["High"].max()), daily["High"]) or _below(
@@ -250,23 +262,30 @@ def evaluate_position(
             if (unseen_extreme and daily["Low"] <= stop_price) or (unseen_close and daily["Close"] <= stop_price):
                 triggered, exit_reason = True, "daily_possible_touch"
 
-    realized_closes = pd.concat([closes, pd.Series([last], index=[pd.Timestamp(quote_at)], dtype=float)])
-    drawdown = _true_max_drawdown_pct(adjusted_entry, realized_closes)
+    if not triggered and path_missing:
+        raise StaleQuoteError("current quote is missing or invalid")
+    if not triggered and last is None and evaluated_at < calendar.session_close(session):
+        raise StaleQuoteError("quote is stale")
+
+    drawdown = None
+    if last is not None:
+        realized_closes = pd.concat([closes, pd.Series([last], index=[pd.Timestamp(quote_at)], dtype=float)])
+        drawdown = _true_max_drawdown_pct(adjusted_entry, realized_closes)
     return PositionStatus(
         ticker=ticker,
         entry_date=entry_date,
         entry_price=round(adjusted_entry, 6),
-        as_of_at=quote_at.isoformat(),
-        quote_source=today_quote.source,
-        current_price=round(last, 6),
+        as_of_at=quote_at.isoformat() if quote_at is not None else None,
+        quote_source=today_quote.source if today_quote is not None else "daily_bar",
+        current_price=round(last, 6) if last is not None else None,
         high_water_mark=round(high_water, 6),
         stop_price=round(stop_price, 6),
         trailing_stop_pct=round(stop_pct, 6),
-        unrealized_pct=round((last / adjusted_entry - 1.0) * 100.0, 6),
-        distance_to_stop_pct=round((last / stop_price - 1.0) * 100.0, 6),
+        unrealized_pct=round((last / adjusted_entry - 1.0) * 100.0, 6) if last is not None else None,
+        distance_to_stop_pct=round((last / stop_price - 1.0) * 100.0, 6) if last is not None else None,
         max_drawdown_pct=round(drawdown, 6) if drawdown is not None else None,
         triggered=triggered,
         exit_reason=exit_reason,
-        return_20d_pct=_return_20d_pct(closes, last),
+        return_20d_pct=_return_20d_pct(closes, last) if last is not None else None,
         touch_at=touch_at,
     )

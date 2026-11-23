@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -28,7 +31,7 @@ def _success(start: str) -> list[dict]:
              "conclusion": "success"}]
 
 
-def _runs(workflow: str) -> list[dict]:
+def _runs(workflow: str, window: tuple[datetime, datetime] | None = None) -> list[dict]:
     times = {"position_monitor.yml": "2026-10-08T15:55:00+09:00",
              "inflection_shadow.yml": "2026-10-08T16:50:00+09:00",
              "forward_validation.yml": "2026-10-04T09:40:00+09:00"}
@@ -37,14 +40,14 @@ def _runs(workflow: str) -> list[dict]:
 
 def test_watchdog_detects_a_monitor_that_never_started_without_reading_sheets(tmp_path: Path) -> None:
     (tmp_path / "2026-10-08.enc").write_text("fake encrypted snapshot")
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: [] if w == "position_monitor.yml" else _runs(w)):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: [] if w == "position_monitor.yml" else _runs(w)):
         alerts = watchdog_alerts(NOW, tmp_path, [])
     assert len(alerts) == 1
     assert "position_monitor.yml kind=not_started" in alerts[0]["text"]
 
 
 def test_initial_state_without_snapshots_is_a_missing_scan_not_a_healthy_system(tmp_path: Path) -> None:
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: [] if w == "inflection_shadow.yml" else _runs(w)):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: [] if w == "inflection_shadow.yml" else _runs(w)):
         alerts = watchdog_alerts(NOW, tmp_path, [])
     assert len(alerts) == 1 and "not_started_snapshot_missing" in alerts[0]["text"]
 
@@ -58,7 +61,7 @@ def test_successful_rerun_and_committed_snapshot_recover_watchdog_health(tmp_pat
 def test_manual_forward_without_weekly_processing_does_not_satisfy_scheduled_run(tmp_path: Path) -> None:
     (tmp_path / "2026-10-08.enc").write_text("fake encrypted snapshot")
     manual = [{**_runs("forward_validation.yml")[0], "event": "workflow_dispatch"}]
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: manual if w == "forward_validation.yml" else _runs(w)):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: manual if w == "forward_validation.yml" else _runs(w)):
         alerts = watchdog_alerts(NOW, tmp_path, [])
     assert len(alerts) == 1
     assert "forward_validation.yml kind=not_started" in alerts[0]["text"]
@@ -67,7 +70,7 @@ def test_manual_forward_without_weekly_processing_does_not_satisfy_scheduled_run
 def test_cause_specific_failure_already_delivered_does_not_generate_a_second_deadman_alert(tmp_path: Path) -> None:
     (tmp_path / "2026-10-08.enc").write_text("fake encrypted snapshot")
     failed = [{**_runs("position_monitor.yml")[0], "conclusion": "failure"}]
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: failed if w == "position_monitor.yml" else _runs(w)):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: failed if w == "position_monitor.yml" else _runs(w)):
         assert watchdog_alerts(NOW, tmp_path, ["failure:position_monitor.yml:1"]) == []
 
 
@@ -93,7 +96,7 @@ def test_scheduler_grace_avoids_alerting_before_a_run_is_expected() -> None:
 
 def test_overnight_watchdog_does_not_resend_the_previous_sessions_alerts(tmp_path: Path) -> None:
     weekly = _success("2026-11-15T09:40:00+09:00")
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: weekly if w == "forward_validation.yml" else []):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: weekly if w == "forward_validation.yml" else []):
         evening = watchdog_alerts(datetime(2026, 11, 18, 20, 10, tzinfo=JST), tmp_path, [])
         keys = [alert["key"] for alert in evening]
         morning = watchdog_alerts(datetime(2026, 11, 19, 4, 22, tzinfo=JST), tmp_path, keys)
@@ -123,7 +126,7 @@ def test_daily_run_attribution_ends_at_the_next_weekday_cron(
     start = "04:00" if overnight else first_cron
     run = {**_success(f"{now.date()}T{start}:00+09:00")[0], "conclusion": conclusion}
     sent = [f"failure:{workflow}:1"] if conclusion == "failure" else []
-    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w: [run] if w == workflow else []):
+    with patch("scripts.check_workflow_health._github_runs", side_effect=lambda w, _: [run] if w == workflow else []):
         alerts = watchdog_alerts(now, tmp_path, sent)
     keys = [alert["key"] for alert in alerts if alert["key"].startswith(f"deadman:{workflow}:")]
     holiday_skip = workflow == "position_monitor.yml" and now.date().isoformat() == "2026-11-03" and overnight
@@ -206,7 +209,114 @@ def test_github_200_without_workflow_runs_is_not_treated_as_an_unstarted_monitor
     response.read.return_value = b'{"message":"invalid"}'
     with (patch("scripts.check_workflow_health.urllib.request.urlopen", return_value=response),
           pytest.raises(TypeError, match="workflow response")):
-        _github_runs("position_monitor.yml")
+        list(_github_runs("position_monitor.yml"))
+
+
+@pytest.mark.parametrize(("workflow", "events"), [
+    ("forward_validation.yml", ["schedule"]), ("position_monitor.yml", ["schedule", "workflow_dispatch"]),
+])
+def test_scheduled_runs_are_fetched_apart_from_manual_runs(
+    monkeypatch: pytest.MonkeyPatch, workflow: str, events: list[str],
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "private-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    response = Mock()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.read.return_value = b'{"total_count": 0, "workflow_runs": []}'
+    with patch("scripts.check_workflow_health.urllib.request.urlopen", return_value=response) as fetch:
+        list(_github_runs(workflow))
+    urls = [call.args[0].full_url for call in fetch.call_args_list]
+    assert [url.split("event=")[1].split("&")[0] for url in urls] == events
+    assert all("per_page=50" in url for url in urls)
+
+
+@pytest.mark.parametrize("newer_manual_runs", [49, 50, 51])
+def test_paginated_manual_recovery_counts_after_a_failed_friday_schedule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, newer_manual_runs: int,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "private-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    friday = datetime(2026, 10, 9, 15, 50, tzinfo=JST)
+    holiday = datetime(2026, 10, 12, 20, 10, tzinfo=JST)
+    scheduled = {**_success(friday.isoformat())[0], "created_at": friday.isoformat(), "conclusion": "failure"}
+    recovery = {**scheduled, "id": 2, "event": "workflow_dispatch", "conclusion": "success",
+                "created_at": (friday - timedelta(days=1)).isoformat(),
+                "run_started_at": (friday + timedelta(minutes=5)).isoformat()}
+    newer = [{**recovery, "id": 3 + i, "created_at": (friday + timedelta(minutes=i + 10)).isoformat(),
+              "run_started_at": holiday.isoformat()} for i in reversed(range(newer_manual_runs))]
+    attempts: list[int] = []
+
+    def fetch(request: Request, *, timeout: int) -> BytesIO:
+        query = parse_qs(urlsplit(request.full_url).query)
+        begin, end = map(datetime.fromisoformat, query["created"][0].split(".."))
+        assert end == holiday.replace(hour=9, minute=20)
+        manual = query["event"] == ["workflow_dispatch"]
+        rows = [run for run in (newer + [recovery] if manual else [scheduled])
+                if begin <= datetime.fromisoformat(run["created_at"]) <= end]
+        page = int(query["page"][0])
+        if manual:
+            attempts.append(page)
+        size = int(query["per_page"][0])
+        return BytesIO(json.dumps({"total_count": len(rows), "workflow_runs": rows[(page - 1) * size:page * size]}).encode())
+
+    with (patch("scripts.check_workflow_health._expected_runs", return_value={"position_monitor.yml": friday}),
+          patch("scripts.check_workflow_health.urllib.request.urlopen", side_effect=fetch)):
+        assert watchdog_alerts(holiday, tmp_path, []) == []
+    assert attempts == ([1] if newer_manual_runs == 49 else [1, 2])
+
+
+@pytest.mark.parametrize("failure", ["http", "missing_page", "search_limit"])
+def test_unreadable_history_does_not_emit_an_unstarted_alert(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture, failure: str,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "private-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    def fetch_page(request: Request, *, timeout: int) -> BytesIO:
+        query = parse_qs(urlsplit(request.full_url).query)
+        if query["event"] == ["workflow_dispatch"]:
+            return BytesIO(b'{"total_count": 0, "workflow_runs": []}')
+        page = int(query["page"][0])
+        if failure == "http" and page == 2:
+            raise urllib.error.HTTPError("https://example.test", 503, "unavailable", {}, None)
+        total = 1001 if failure == "search_limit" else 51
+        rows = [{**_runs("position_monitor.yml")[0], "id": page * 50 + i, "conclusion": "failure"} for i in range(50)]
+        if failure == "missing_page" and page == 2:
+            rows = []
+        return BytesIO(json.dumps({"total_count": total, "workflow_runs": rows}).encode())
+
+    with (patch("scripts.check_workflow_health.urllib.request.urlopen", side_effect=fetch_page) as fetch,
+          patch("scripts.check_workflow_health.notify_once") as notify):
+        assert main(["--state", str(tmp_path / "alerts.json")]) == 1
+    notify.assert_not_called()
+    assert fetch.call_count == (21 if failure == "search_limit" else 3)
+    output = capsys.readouterr().out
+    assert "stage=watchdog" in output and "not_started" not in output
+    if failure == "http":
+        assert "type=HTTPError http_status=503" in output
+
+
+@pytest.mark.parametrize("scheduled_error", [False, True])
+def test_success_on_first_page_settles_health_even_when_search_is_capped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scheduled_error: bool,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "private-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/trader")
+    expected = NOW.replace(hour=15, minute=50)
+
+    def fetch_page(request: Request, *, timeout: int) -> BytesIO:
+        query = parse_qs(urlsplit(request.full_url).query)
+        event = query["event"][0]
+        assert query["page"] == ["1"]
+        if scheduled_error and event == "schedule":
+            raise urllib.error.URLError("scheduled runs unavailable")
+        batch = [{**_success(expected.isoformat())[0], "id": i, "event": event} for i in range(50)]
+        return BytesIO(json.dumps({"total_count": 1500, "workflow_runs": batch}).encode())
+
+    with (patch("scripts.check_workflow_health._expected_runs", return_value={"position_monitor.yml": expected}),
+          patch("scripts.check_workflow_health.urllib.request.urlopen", side_effect=fetch_page) as fetch):
+        assert watchdog_alerts(NOW, tmp_path, []) == []
+    assert fetch.call_count == (2 if scheduled_error else 1)
 
 
 def test_new_success_without_expected_snapshot_is_not_hidden_by_an_older_failure(tmp_path: Path) -> None:

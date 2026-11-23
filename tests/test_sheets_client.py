@@ -127,8 +127,8 @@ def test_sheets_environment_is_required(monkeypatch: pytest.MonkeyPatch) -> None
         read_holdings()
 
 
-def test_last_warned_at_is_the_new_last_column_and_the_others_keep_their_order() -> None:
-    assert STATUS_COLUMNS[-1] == "last_warned_at"
+def test_session_checkpoint_is_appended_after_the_existing_columns() -> None:
+    assert STATUS_COLUMNS[-2:] == ("last_warned_at", "evaluated_session")
     assert STATUS_COLUMNS[:15] == (
         "ticker", "entry_date", "entry_price", "current_price", "high_water_mark", "stop_price",
         "trailing_stop_pct", "unrealized_pct", "distance_to_stop_pct", "triggered", "exit_reason",

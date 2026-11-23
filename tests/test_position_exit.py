@@ -202,7 +202,7 @@ def test_in_session_quote_uses_twenty_minute_stale_threshold() -> None:
 @pytest.mark.parametrize(
     "quote,evaluated_at",
     [
-        (_quote(as_of_at=(NOW - timedelta(minutes=61)).isoformat()), NOW),
+        (_quote(as_of_at=NOW.replace(hour=11, minute=29).isoformat()), NOW),
         (_quote(as_of_at=(NOW + timedelta(minutes=1)).isoformat()), NOW),
         (_quote(as_of_at="2026-09-08T12:34:00"), NOW),
     ],
@@ -328,7 +328,6 @@ def _evaluate_reference(frame: pd.DataFrame, evaluated_at: datetime = datetime(2
     from src.data.live_quote import build_today_quote
 
     quote = build_today_quote(frame)
-    assert quote is not None
     return evaluate_position(
         100.0, "2026-09-07", pd.Series(dtype=float), pd.Series(dtype=float), quote, frame, 15.0,
         evaluated_at, "1111.T", in_session=True,
@@ -439,6 +438,50 @@ def test_volume_shortfall_does_not_apply_a_new_stop_to_an_earlier_low() -> None:
         partial.attrs["daily_bar"]["Volume"] = daily_volume
         status = _evaluate_reference(partial, at)
         assert (status.triggered, status.exit_reason, status.stop_price) == (False, None, 1020.0)
+
+
+def _yahoo_minutes(rows: dict[str, tuple[float, float, float, float, float]]) -> pd.DataFrame:
+    frame = pd.DataFrame(list(rows.values()), columns=["Open", "High", "Low", "Close", "Volume"],
+                         index=pd.DatetimeIndex([f"2026-09-08 {time}" for time in rows], tz=JST))
+    frame.attrs = {"requested_date": "2026-09-08", "daily_bar": {
+        "Open": 100.0, "High": 101.0, "Low": 98.0, "Close": 100.0, "Volume": 50.0,
+    }}
+    return frame
+
+
+def test_untraded_minutes_never_supply_the_price_or_time() -> None:
+    from src.data.live_quote import build_today_quote
+
+    frame = _yahoo_minutes({"09:06": (116, 116, 116, 116, 10), "10:48": (103, 103, 103, 103, 0),
+                            "10:49": (103, 103, 103, 103, 0)})
+    frame.attrs["daily_bar"].update(Open=116, High=116, Low=116, Close=116)
+    quote = build_today_quote(frame)
+    assert quote is not None and (quote.last_price, quote.as_of_at[11:16]) == (116, "09:06")
+    with pytest.raises(StaleQuoteError):  # in session, freshness is measured from the last trade
+        _evaluate_reference(frame, datetime(2026, 9, 8, 10, 50, tzinfo=JST))
+
+
+@pytest.mark.parametrize("later_trade", [False, True])
+def test_an_untraded_minute_that_moves_after_trading_began_is_incomplete(later_trade: bool) -> None:
+    rows = {"09:05": (100, 101, 99, 100.5, 0), "13:00": (100, 100, 100, 100, 10), "13:01": (100, 101, 99, 100, 0),
+            "13:02": (100, 100, 100, 100, 0)}  # the pre-opening and flat untraded minutes alone are harmless
+    if later_trade:
+        rows["13:10"] = (100, 100, 100, 100, 10)
+    with pytest.raises(IncompleteQuoteError, match="zero-volume minute"):
+        _evaluate_reference(_yahoo_minutes(rows), datetime(2026, 9, 8, 13, 11 if later_trade else 10, tzinfo=JST))
+    del rows["13:01"]
+    assert _evaluate_reference(_yahoo_minutes(rows), datetime(2026, 9, 8, 13, 11, tzinfo=JST)).triggered is False
+
+
+def test_an_opening_auction_only_day_is_judged_from_the_daily_bar() -> None:
+    from src.data.live_quote import build_today_quote
+
+    frame = _yahoo_minutes({"09:05": (80, 81, 79, 80, 0)})  # no minute carries a trade
+    frame.attrs["daily_bar"] = {"Open": 80.0, "High": 81.0, "Low": 79.0, "Close": 80.0, "Volume": 100.0}
+    assert build_today_quote(frame) is None
+    status = _evaluate_reference(frame, datetime(2026, 9, 8, 15, 50, tzinfo=JST))
+    assert (status.exit_reason, status.touch_at) == ("trailing_gap", "2026-09-08T09:00:00+09:00")
+    assert status.current_price is None and status.as_of_at is None
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -1.0])

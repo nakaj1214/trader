@@ -135,6 +135,7 @@ def _preserve_previous_state(row: dict[str, Any], previous: dict[str, Any] | Non
     row["triggered_at"] = previous.get("triggered_at", "") if previous and triggered else ""
     row["last_notified_at"] = previous.get("last_notified_at", "") if previous and triggered else ""
     row["as_of_at"] = previous.get("as_of_at", "") if previous else ""
+    row["evaluated_session"] = previous.get("evaluated_session", "") if previous else ""
 
 
 def _daily_session_is_valid(daily: dict[str, Any]) -> bool:
@@ -190,7 +191,7 @@ def _recover_daily_only(
         "unrealized_pct": round((current_price / history.entry_price - 1.0) * 100.0, 6),
         "distance_to_stop_pct": round((current_price / stop_price - 1.0) * 100.0, 6),
         "triggered": True, "exit_reason": "recovered_daily_possible_touch", "as_of_at": close.isoformat(),
-        "quote_source": "daily_bar_conservative", "status": "recovered", "error": "",
+        "quote_source": "daily_bar_conservative", "evaluated_session": session.isoformat(), "status": "recovered", "error": "",
         "triggered_at": close.isoformat(), "last_notified_at": "",
     }
 
@@ -203,11 +204,13 @@ def _recover_pending(
     if previous and _stored_triggered(previous) and str(previous.get("exit_reason", "")).startswith("recovered_"):
         return dict(previous)
     checkpoint = None
-    if previous and previous.get("as_of_at"):
-        checkpoint = datetime.fromisoformat(str(previous["as_of_at"]))
-        if checkpoint.tzinfo is None:
+    if previous and previous.get("evaluated_session"):
+        checkpoint = date.fromisoformat(str(previous["evaluated_session"]))
+    elif previous and previous.get("as_of_at"):
+        legacy_checkpoint = datetime.fromisoformat(str(previous["as_of_at"]))
+        if legacy_checkpoint.tzinfo is None:
             raise IncompleteQuoteError("stored evaluation checkpoint lacks timezone")
-        checkpoint = checkpoint.astimezone(JST)
+        checkpoint = legacy_checkpoint.astimezone(JST).date()
     sessions = history.daily_bars.index if not history.daily_bars.empty else history.daily_highs.index
     for timestamp in sessions:
         session = timestamp.date()
@@ -215,7 +218,7 @@ def _recover_pending(
             continue
         close = calendar.session_close(session.isoformat()).to_pydatetime().astimezone(JST)
         # Recheck the checkpoint day itself: older monitor versions did not prove its path completeness.
-        if checkpoint is not None and session < checkpoint.date():
+        if checkpoint is not None and session < checkpoint:
             continue
         daily = _daily_reference(history, session)
         if daily is not None and daily.get("Volume") == 0 and all(
@@ -231,26 +234,24 @@ def _recover_pending(
             if recovered is None:
                 continue  # the daily bar proves there was no touch; nothing minute-level is left to replay
             if previous and _stored_triggered(previous) and previous.get("last_notified_at"):
-                return dict(previous)
+                continue
             return recovered
-        if bars is not None and daily is not None:
-            bars.attrs["daily_bar"] = daily
         quote = None if bars is None else build_today_quote(bars)
-        if quote is None or bars is None:
+        try:
+            status = evaluate_position(
+                history.entry_price, purchase_date.isoformat(),
+                history.daily_highs.loc[history.daily_highs.index.date < session],
+                history.daily_closes.loc[history.daily_closes.index.date < session],
+                quote, bars, stop_pct, close + timedelta(minutes=1), ticker, in_session=False, daily_reference=daily,
+            )
+        except StaleQuoteError as exc:
             raise IncompleteQuoteError(
                 "pending historical session data is unavailable" + (f" ({failure})" if failure else "")
-            )
-        status = evaluate_position(
-            history.entry_price, purchase_date.isoformat(),
-            history.daily_highs.loc[history.daily_highs.index.date < session],
-            history.daily_closes.loc[history.daily_closes.index.date < session],
-            quote, bars, stop_pct, datetime.fromisoformat(quote.as_of_at) + timedelta(minutes=1),
-            ticker, in_session=False,
-        )
+            ) from exc
         if status.triggered:
             if previous and _stored_triggered(previous) and previous.get("last_notified_at"):
-                return dict(previous)
-            return {**asdict(status), "status": "recovered", "error": "",
+                continue
+            return {**asdict(status), "status": "recovered", "evaluated_session": session.isoformat(), "error": "",
                     "exit_reason": f"recovered_{status.exit_reason}", "triggered_at": status.touch_at or session.isoformat(),
                     "last_notified_at": ""}
     return None
@@ -383,7 +384,6 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
     if not bool(calendar.is_session(current.date().isoformat())):
         print(f"position monitor skipped: non-TSE-session date={current.date().isoformat()}")
         return 0
-    in_market_window = is_in_session(calendar, current)
 
     history_starts: dict[str, str] = {}
     for holding in holdings:
@@ -448,22 +448,11 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 raise cached_bars
             bars = None if cached_bars is None else cached_bars.copy(deep=True)
             daily = _daily_reference(history, current.date())
-            if bars is not None and daily is not None:
-                bars.attrs["daily_bar"] = daily
             quote = None if bars is None else _private_call(build_today_quote, bars)
-            if bars is None or quote is None:
-                failed = _failure_row(
-                    ticker=ticker,
-                    entry_date=raw_date,
-                    entry_price=raw_price,
-                    trailing_stop_pct=stop_pct,
-                    status="stale",
-                    error="current quote is missing or invalid"
-                    + (f" ({today_failure[ticker]})" if bars is None and today_failure.get(ticker) else ""),
-                )
-                _preserve_previous_state(failed, previous)
-                rows.append(failed)
-                continue
+            # Price retrieval may span a minute boundary. Judge the snapshot at acquisition on a live run.
+            snapshot_at = current if evaluated_at is not None or bars is None else bars.attrs.get("fetched_at", current)
+            if snapshot_at.date() != current.date():
+                raise IncompleteQuoteError("minute snapshot belongs to a different session")
             status = evaluate_position(
                 history.entry_price,
                 purchase_date.isoformat(),
@@ -472,11 +461,12 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 quote,
                 bars,
                 stop_pct,
-                current,
+                snapshot_at,
                 ticker,
-                in_session=in_market_window,
+                in_session=is_in_session(calendar, snapshot_at),
+                daily_reference=daily,
             )
-            result = {**asdict(status), "status": "ok", "error": ""}
+            result = {**asdict(status), "status": "ok", "evaluated_session": current.date().isoformat(), "error": ""}
             was_triggered = _stored_triggered(previous)
             if previous and was_triggered:
                 result["triggered"] = True
@@ -507,7 +497,7 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
                 entry_price=raw_price,
                 trailing_stop_pct=stop_value,
                 status="stale",
-                error=str(exc),
+                error=str(exc) + (f" ({today_failure[ticker]})" if today_failure.get(ticker) else ""),
             )
             _preserve_previous_state(failed, previous)
             rows.append(failed)
@@ -541,7 +531,8 @@ def run(*, dry_run: bool, evaluated_at: datetime | None = None) -> int:
             + f"{row['exit_reason']} "
             + (f"接触の可能性（{str(row['triggered_at'])[:10]}・時刻不明）"
                if str(row["exit_reason"]).endswith("daily_possible_touch") else f"at={row['triggered_at']}")
-            + f" current={row['current_price']} stop={row['stop_price']}"
+            + (f" current={row['current_price']}" if row.get("current_price") not in (None, "") else "")
+            + f" stop={row['stop_price']}"
             for row in notifications
         )
         try:

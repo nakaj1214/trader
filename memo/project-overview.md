@@ -111,7 +111,7 @@ source .venv/bin/activate
 
 scheduleはbest-effortです。scanもMonitorもmain限定（scanはブランチから手動実行してもジョブがスキップされ、本番のsecret・Slack・pushを使いません。ブランチでの確認はローカル実行かテストで行います）で、concurrencyはscanがref別、Monitorが `position-monitor-production`、障害通知とWatchdogは `workflow-reliability-notifications` で直列化し、いずれも実行中のcancelをしません。Testはref別で古いrunをcancelします。Action参照はSHA固定、依存は `uv.lock` の `uv sync --frozen` から導入します。`contents: write` の明示付与はsnapshotをpushするscan jobと週次hash保存jobだけで、障害通知・Watchdogは `actions: read` / `contents: read`。Testにはworkflow/jobの明示permissions指定がありません。secretは必要stepへ渡し、`pull_request_target` は使いません。
 
-Monitorは前回の `as_of_at` を検証済みcheckpointとして、未評価区間のstop接触を回収します。寄付や大引けの1分足が欠けた場合は、有効な当日の日足で補います。寄付や分足で確認できた接触はその時刻を、日足だけから判断した接触の可能性（`daily_possible_touch`）は時刻不明として1回通知します。日足が欠けている場合や値が不整合な場合は未評価のまま再確認します。1分足の保持期間（30日）より古い未評価の営業日は日足で保守的に判定し、安値が stop 水準以下なら `recovered_daily_possible_touch`（接触の可能性。日中の順序は不明なので誤報があり得る）として1回だけ通知、上回っていれば接触なしとして先へ進みます。`triggered_at`・`last_notified_at`・`last_warned_at` を保持し、通知・Sheets保存の片方だけ成功した境界は手動確認が必要です。branch・通常のローカル実行はproduction writer制限で拒否されます。Watchdogの2時間grace、通知cache消失時の重複、Actions全体停止時の限界は `docs/playbooks.md` を参照してください。
+Monitorは前回の `evaluated_session`（旧形式では `as_of_at` の日本時間の日付）から未評価区間のstop接触を回収します。現在値と接近警告には直近の約定がある1分足を使います。寄付や大引けの1分足が欠けた場合は、有効な当日の日足で補います。寄付や分足で確認できた接触はその時刻を、日足だけから判断した接触の可能性（`daily_possible_touch`）は時刻不明として1回通知します。日足が欠けている場合や値が不整合な場合は未評価のまま再確認します。1分足の保持期間（30日）より古い未評価の営業日は日足で保守的に判定し、安値が stop 水準以下なら `recovered_daily_possible_touch`（接触の可能性。日中の順序は不明なので誤報があり得る）として1回だけ通知、上回っていれば接触なしとして先へ進みます。`triggered_at`・`last_notified_at`・`last_warned_at` を保持し、通知・Sheets保存の片方だけ成功した境界は手動確認が必要です。branch・通常のローカル実行はproduction writer制限で拒否されます。Watchdogの2時間grace、通知cache消失時の重複、Actions全体停止時の限界は `docs/playbooks.md` を参照してください。
 
 ローカルの主な確認コマンド:
 

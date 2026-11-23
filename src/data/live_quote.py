@@ -257,6 +257,7 @@ def fetch_today_bars(ticker: str, *, diagnostics: dict[str, int] | None = None) 
             _count(diagnostics, ProviderFailureCategory.EMPTY)  # nothing usable for today yet
             return None
         today.attrs["requested_date"] = now.date().isoformat()
+        today.attrs["fetched_at"] = now
         return today
     except Exception as exc:
         category = classify_provider_failure(exc)
@@ -294,13 +295,23 @@ def fetch_session_bars(
         return None
 
 
+def traded_bars(bars: pd.DataFrame) -> pd.DataFrame:
+    """Return only observed trades when the feed includes volume."""
+    if "Volume" not in bars:
+        return bars
+    volume = pd.to_numeric(bars["Volume"], errors="coerce")
+    if volume.isna().any() or not all(math.isfinite(value) and value >= 0 for value in volume):
+        raise ValueError("minute volume is invalid")
+    return bars.loc[volume > 0]
+
+
 def build_today_quote(bars: pd.DataFrame, *, diagnostics: dict[str, int] | None = None) -> TodayQuote | None:
     """Build a coherent aggregate quote from one-minute bars."""
     try:
         if bars.empty or not {"Open", "High", "Low", "Close"}.issubset(bars.columns):
             return None
-        frame = bars.sort_index()
-        if pd.DatetimeIndex(frame.index).tz is None:
+        frame = traded_bars(bars).sort_index()
+        if frame.empty or pd.DatetimeIndex(frame.index).tz is None:
             return None
         opening = _positive(frame["Open"].iloc[0])
         high = _positive(pd.to_numeric(frame["High"], errors="coerce").max())

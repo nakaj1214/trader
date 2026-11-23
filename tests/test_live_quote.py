@@ -178,10 +178,32 @@ def test_today_bars_are_filtered_sorted_and_aggregated() -> None:
 
     assert bars is not None
     assert bars.index.tolist() == sorted(index[[0, 2]].tolist())
+    assert bars.attrs["fetched_at"] == NOW
     quote = build_today_quote(bars)
     assert quote is not None
     assert (quote.open, quote.high_so_far, quote.low_so_far, quote.last_price) == (100.0, 110.0, 99.0, 108.0)
     assert quote.as_of_at == (NOW - timedelta(minutes=1)).isoformat()
+
+
+def test_today_quote_comes_from_the_last_traded_minute() -> None:
+    index = pd.DatetimeIndex([NOW - timedelta(minutes=2), NOW - timedelta(minutes=1)])
+    frame = pd.DataFrame(
+        {"Open": [116.0, 103.0], "High": [116.0, 103.0], "Low": [116.0, 103.0], "Close": [116.0, 103.0],
+         "Volume": [10.0, 0.0]},
+        index=index,
+    )
+    ticker = Mock()
+    ticker.history.return_value = frame
+    with (
+        patch("src.data.live_quote.yf.Ticker", return_value=ticker),
+        patch("src.data.live_quote._now_jst", return_value=NOW),
+    ):
+        bars = fetch_today_bars("1111.T")
+
+    assert bars is not None
+    quote = build_today_quote(bars)
+    assert quote is not None
+    assert (quote.last_price, quote.as_of_at) == (116.0, (NOW - timedelta(minutes=2)).isoformat())
 
 
 def test_today_quote_is_a_thin_bar_wrapper() -> None:

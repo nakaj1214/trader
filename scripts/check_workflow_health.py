@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -82,22 +85,58 @@ def failure_alert() -> dict[str, str]:
     return {"key": f"failure:{workflow}:{run_id}", "text": "\n".join(lines)}
 
 
-def _github_runs(workflow: str) -> list[dict[str, Any]]:
+def _github_runs(workflow: str, window: tuple[datetime, datetime] | None = None) -> Iterator[dict[str, Any]]:
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
         raise RuntimeError("GitHub read authentication is not configured")
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{_repository()}/actions/workflows/{workflow}/runs?branch=main&per_page=100",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-    )
-    with suppress_provider_output(), urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-        payload = json.loads(response.read(1_048_577))
-    if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
-        raise TypeError("GitHub workflow response is invalid")
-    runs = payload["workflow_runs"]
-    if any(not isinstance(run, dict) for run in runs):
-        raise TypeError("GitHub workflow run is invalid")
-    return list(runs)
+    url = f"https://api.github.com/repos/{_repository()}/actions/workflows/{workflow}/runs"
+    filters = {"branch": "main"}
+    if window is not None:
+        # GitHub filters by creation time. Queued runs and reruns can start later, within the 35-day workflow limit.
+        earliest = (window[0] - timedelta(days=35)).astimezone(UTC)
+        latest = window[1].astimezone(UTC)
+        filters["created"] = f"{earliest:%Y-%m-%dT%H:%M:%SZ}..{latest:%Y-%m-%dT%H:%M:%SZ}"
+    failure = None
+    for event in ("schedule",) if workflow == "forward_validation.yml" else ("schedule", "workflow_dispatch"):
+        try:
+            yield from _github_event_runs(url, token, {**filters, "event": event})
+        except (OSError, http.client.HTTPException, TypeError, ValueError) as exc:
+            failure = failure or exc  # A success from another event can still establish that the workflow ran.
+    if failure is not None:
+        raise failure
+
+
+def _github_event_runs(url: str, token: str, filters: dict[str, str]) -> Iterator[dict[str, Any]]:
+    seen: set[int] = set()
+    expected_total = None
+    for page in range(1, 21):  # GitHub exposes at most 1,000 runs per filtered search.
+        query = urlencode({**filters, "per_page": 50, "page": page})
+        request = urllib.request.Request(f"{url}?{query}", headers={
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+        })
+        with suppress_provider_output(), urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read(1_048_577))
+        if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
+            raise TypeError("GitHub workflow response is invalid")
+        total = payload.get("total_count")
+        batch = payload["workflow_runs"]
+        if type(total) is not int or total < 0:
+            raise ValueError("GitHub workflow search count is invalid")
+        if expected_total is not None and total != expected_total:
+            raise ValueError("GitHub workflow search changed during pagination")
+        expected_total = total
+        if any(not isinstance(run, dict) or type(run.get("id")) is not int or run.get("event") != filters["event"]
+               or run.get("head_branch") != "main" or "conclusion" not in run for run in batch):
+            raise TypeError("GitHub workflow run is invalid")
+        if len(batch) != min(50, total - len(seen)):
+            raise ValueError("GitHub workflow search is incomplete")
+        seen.update(run["id"] for run in batch)
+        if len(seen) != 50 * (page - 1) + len(batch):
+            raise ValueError("GitHub workflow search returned duplicate runs")
+        yield from batch
+        if len(seen) == total:
+            return
+    raise ValueError("GitHub workflow search exceeds the search limit")
 
 
 # First and closing weekday cron times (JST). Only the closing run is required.
@@ -132,7 +171,6 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
 
     alerts: list[dict[str, str]] = []
     for workflow, expected in _expected_runs(now).items():
-        runs = _github_runs(workflow)
         relevant = []
         success = False
         events = ("schedule",) if workflow == "forward_validation.yml" else ("schedule", "workflow_dispatch")
@@ -141,6 +179,7 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
             # GitHub schedules weekday runs even when the exchange observes a holiday.
             next_weekday = expected.date() + timedelta(days=3 if expected.weekday() == 4 else 1)
             next_cron = datetime.combine(next_weekday, DAILY_CRON_TIMES[workflow][0], JST)
+        runs = _github_runs(workflow, (expected, min(now, next_cron) if next_cron else now))
         for run in runs:
             if run.get("head_branch") != "main" or run.get("event") not in events:
                 continue
@@ -154,6 +193,7 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
                     # A monitor started on a closed day exits successfully without evaluating holdings.
                     if workflow != "position_monitor.yml" or sessions_between(started_day, started_day):
                         success = True
+                        break
         snapshot_missing = (expected_snapshot_missing(snapshot_dir, expected.date()) is not None
                             if workflow == "inflection_shadow.yml" else False)
         if success and not snapshot_missing:
@@ -164,8 +204,9 @@ def watchdog_alerts(now: datetime, snapshot_dir: Path, sent: list[str]) -> list[
         kind = "snapshot_missing" if snapshot_missing else "no_successful_run"
         if not relevant and not success:
             kind = "not_started" if not snapshot_missing else "not_started_snapshot_missing"
+        runs_found = f"runs>={len(relevant)}" if success else f"runs={len(relevant)}"
         alerts.append({"key": f"deadman:{workflow}:{expected.isoformat()}",
-                       "text": f"workflow={workflow} kind={kind} expected={expected.isoformat()} runs={len(relevant)}"})
+                       "text": f"workflow={workflow} kind={kind} expected={expected.isoformat()} {runs_found}"})
     return alerts
 
 

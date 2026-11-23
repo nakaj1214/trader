@@ -35,6 +35,7 @@ STATUS_COLUMNS = (
     "triggered_at",
     "last_notified_at",
     "last_warned_at",
+    "evaluated_session",
 )
 
 
